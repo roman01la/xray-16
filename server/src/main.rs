@@ -165,9 +165,9 @@ async fn main() -> Result<()> {
     let http: SocketAddr = std::env::var("ZONE_HTTP_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8082".into())
         .parse()?;
-    let udp: SocketAddr = std::env::var("ZONE_UDP_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:50000".into())
-        .parse()?;
+    let udp = zone_server::network::udp_bind_address(
+        &std::env::var("ZONE_UDP_ADDR").unwrap_or_else(|_| "127.0.0.1:50000".into()),
+    )?;
     let public: SocketAddr = std::env::var("ZONE_PUBLIC_ADDR")
         .unwrap_or_else(|_| udp.to_string())
         .parse()?;
@@ -723,7 +723,11 @@ async fn run(
     mut world: World,
     mut feeds: RuntimeFeeds,
 ) -> Result<()> {
-    let local = socket.local_addr()?;
+    // This single socket represents the advertised public ICE endpoint. Hosting
+    // NAT (including Fly's UDP ingress) rewrites its destination to the bound
+    // interface. Restore the logical destination used by our host candidate;
+    // passing the private/wildcard bind address makes ICE reject valid STUN.
+    let local = public;
     let mut scenes = zone_server::scene::SceneRegistry::default();
     let mut runtime_healthy = true;
     let mut auth_epoch = 0;

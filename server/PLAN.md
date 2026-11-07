@@ -33,11 +33,11 @@ They demonstrate authority and presentation; they do not define final game rules
 |---|---|---|---|
 | 1. Ownership and integration contract | Define authority, identity, versioning, coordinates, mode separation, engine interface and community hook mapping | Contract documented; incompatible sessions fail closed; mode/bridge tests pass | Complete |
 | 2. Two players in a CoP level | Separate entry/build; main-thread WebRTC to engine-worker bridge; remote actor lifecycle, transforms, stance/animation and interpolation | Two browsers join Zaton, see each other move, and remove disconnected actors without affecting single player | Rendering, stance and lifecycle gates passed |
-| 3. Authoritative movement | Collision export; server character movement; shared movement rules; prediction and reconciliation; terrain/stairs/crouch/jump | Movement behaves correctly under latency/loss and the server rejects impossible movement | Live map motor, shared WASM prediction and stance implemented; application delay/loss combat route passed; broad traversal and real WAN gates open |
-| 4. Replication performance | Acknowledged deltas; reliable lifecycle metadata; distance tiers; quantization; byte budgets and metrics | Sustained 100–200-client tests in spread/crowded scenes meet documented CPU, bandwidth and freshness budgets | Deltas, tiers, budgets and metadata implemented; persistent 200-peer spread and ten-minute crowded transfer runs passed; actual WAN gate open |
+| 3. Authoritative movement | Collision export; server character movement; shared movement rules; prediction and reconciliation; terrain/stairs/crouch/jump | Movement behaves correctly under latency/loss and the server rejects impossible movement | Live map motor, shared WASM prediction and stance implemented; application delay/loss combat route passed; rendered Zaton WAN smoke passed; broad traversal/impairment gates open |
+| 4. Replication performance | Acknowledged deltas; reliable lifecycle metadata; distance tiers; quantization; byte budgets and metrics | Sustained 100–200-client tests in spread/crowded scenes meet documented CPU, bandwidth and freshness budgets | Deltas, tiers, budgets and metadata implemented; persistent 200-peer spread and ten-minute crowded transfer runs passed; synthetic WAN connectivity passed; large-population WAN gate open |
 | 5. PvP slice | Weapon/equipment state; server shot validation and lag compensation; damage, death, corpses, respawn and verified safe-zone geometry | Consistent combat outcomes across clients, including adversarial inputs and safe-zone boundaries | Integration fixture passed, including application delay/loss; concrete PvP/equipment mechanics deferred |
 | 6. Persistence foundation; survival mechanics later | Stable identity, durable ownership, atomic mutations, replay protection and crash recovery; concrete inventory/loot/survival rules deferred | Authorized test state survives reconnect/restart; concurrent/replayed mutations cannot duplicate ownership | Stable identity, durable records and generic entity ownership/transfers implemented; bounded browser recovery, live invalidation and consistent owned-state reconciliation implemented; trusted scene materialization, live policy and rendered transfer/restart/AOI gates passed |
-| 7. Operations foundation; PvE later | Access control, deployment, monitoring, backups and recovery; concrete NPC behavior deferred | Reproducible deployment, backup/restore and prolonged load/recovery gates pass | Backup/restore, graceful shutdown, credential lifecycle, Linux container recovery and local soak passed; target-host/WAN gates open; PvE deferred |
+| 7. Operations foundation; PvE later | Access control, deployment, monitoring, backups and recovery; concrete NPC behavior deferred | Reproducible deployment, backup/restore and prolonged load/recovery gates pass | Backup/restore, graceful shutdown, credential lifecycle, Linux container recovery and local soak passed; Fly deployment and synthetic WAN connectivity passed; larger/longer WAN gates open; PvE deferred |
 
 Performance and single-player regression checks run throughout, not only in
 milestone 4. If integration exposes a necessary prerequisite, record it here and
@@ -57,8 +57,8 @@ Ownership remains separate from visibility. Client-owned JSON never creates acto
 | Generic action policy | Transactional ownership/revision checks plus expiring simulation-issued principal/session/world context; retry after missing context and replay after expiry tested | Distance, safe-zone and game-specific policies await specifications |
 | Identity/access lifecycle | Admin revoke/rotate; durable auth epoch disconnects persistent sessions; queued admissions cannot cross observed revocation | Production accounts and remote deployment policy |
 | Durable recovery | Online backup/restore, ownership/replay recovery, browser outbox and coherent owned views | Backup schedule/retention on actual host |
-| Operations | Bounded worker metrics, health, single-server database lock, graceful SIGTERM and configuration/runbook | Systemd installation on the target host and actual WAN acceptance |
-| Capacity and movement | 200-peer persistent crowded soak and spread/transfer test passed; 25-route native/WASM terrain parity passed | Real WAN, longer endurance and special traversal coverage |
+| Operations | Bounded worker metrics, health, single-server database lock, graceful SIGTERM and configuration/runbook | Fly test server deployed; rendered Zaton WAN smoke passed; production operations remain |
+| Capacity and movement | 200-peer persistent crowded soak and spread/transfer test passed; 25-route native/WASM terrain parity passed | Larger WAN populations, longer endurance and special traversal coverage |
 
 Concrete PvP/PvE, inventory/equipment UX, loot and survival mechanics remain
 deferred. Existing combat/NPC behavior and persistent actors are integration
@@ -66,10 +66,11 @@ fixtures. Dynamic doors/props, moving platforms, player collision and water
 behavior are not implemented by the static capsule controller; these cannot be
 claimed as covered by terrain or synthetic stair tests.
 
-The remote-network gate requires a reachable host and an independent client
-network. No remote target has been supplied. Loopback and application impairment
-results must not be relabeled WAN evidence. Deployment templates are reviewable
-source, not a claim that a production service is deployed.
+Fly.io now hosts a private development server in Frankfurt; local browser peers
+connect over the real WAN. Synthetic connectivity evidence is recorded below.
+Loopback and application impairment results remain separately labeled. Rendered Zaton WAN smoke is also verified below. Multiple independent client
+networks and production-duration acceptance are
+still open; the development deployment is not a production service.
 
 The previous 200-peer result predates persistence and remains only a baseline.
 Current tests use the optimized server and existing separately optimized engine.
@@ -554,3 +555,60 @@ not the current implementation.
   suites passed. Production single-player JS/WASM checksums remain unchanged.
   Acceptance browser tabs and isolated test servers were closed; the existing
   game tab/services were preserved. No private assets/databases enter the commit.
+
+
+### Fly.io WAN acceptance — 2026-11-07
+
+- Deployed optimized Rust 1.93.1 build to one Fly Machine in Frankfurt, with
+  a dedicated public IPv4/UDP endpoint, HTTPS signaling, private development
+  access token and encrypted persistent volume. See `deploy/FLY.md`.
+- Real-network testing exposed an ICE destination mismatch behind hosting NAT:
+  incoming datagrams were tagged with the private socket address, while the ICE
+  host candidate was public. The single-endpoint receive path now restores the
+  advertised logical destination. Browser connectivity passed after deployment.
+- Initial two-peer synthetic-world test passed for 31.04 seconds at 29.994 Hz:
+  five committed record writes, zero stale clients, movement errors, UDP drops,
+  snapshot skips or late ticks. Raw evidence: `acceptance/fly-synthetic-2peer.json`.
+- The browser is on the local laptop and the server is in Frankfurt; this is real
+  WAN traffic, but not independent client networks or rendered Zaton acceptance.
+  No injected packet loss/reordering. Shared two-CPU / 1-GiB sizing is not a
+  200-player capacity certification. Long endurance remains open.
+- User explicitly approved private collision upload after automatic review
+  requested confirmation. The collision export is kept on the private volume;
+  no game assets are published. Original single-player JS/WASM checksums match.
+- Source validation: 56 Rust tests, 62 JavaScript tests, Clippy, proxy integration,
+  and remote optimized image build pass. Local gateway keeps credentials out of
+  browser code and retains paginated identity query strings.
+
+- 25-peer synthetic WAN run passed for 61.00 seconds at 29.999 Hz, with 137
+  committed writes, zero stale clients, late ticks, movement errors, UDP drops or
+  snapshot skips. Sampled p95 simulation/replication: 0.010/0.845 ms; UDP output
+  0.307 MiB/s. Evidence: `acceptance/fly-synthetic-25peer.json`. This exercises
+  records, not ownership transfers or rendered engines.
+
+- Graceful SIGTERM restart on Fly passed. Two clients resumed saved identities
+  with minimum starting record revision 7, committed five further writes and
+  maintained 29.988 Hz without stale clients or movement errors. Evidence:
+  `acceptance/fly-synthetic-restart.json`.
+
+- Zaton collision upload completed with explicit approval. Both geometry/material
+  SHA-256 hashes match local exports. Only the three collision files remain in
+  `/data/collision`; they are not served over HTTP. The deployed contract is
+  `zaton-static-v1` / `capsule-motor-v4`; idle resident memory was 407,300 KiB.
+- Optimized rendered engine connected over real WAN, verified content, enabled
+  shared prediction and passed remote actor creation/removal. The existing
+  integration combat fixture passed movement outside the safe zone, validated
+  hits/cooldown/reload, death, immobile body, delayed safe respawn, distinct corpse,
+  expiry and disconnect cleanup. Evidence: `acceptance/fly-zaton-engine.txt`.
+  These validate the foundation fixture, not final gameplay mechanics.
+
+- Final Zaton WAN run passed: 24 moving test peers plus one rendered engine,
+  25 total players / 26 visible entities, 60.34 seconds at 29.998 Hz. There were
+  131 committed writes, zero stale network clients, late ticks, movement errors,
+  UDP drops or snapshot skips. Sampled p95 simulation/replication: 0.588/0.660 ms;
+  UDP output 0.296 MiB/s. `acceptance/fly-zaton-25player.json` records the run.
+- Temporary browser clients were disconnected/closed; the original single-player
+  tab was preserved. The remote test server remains running with private Zaton
+  collision and persistence; localhost:8090 remains its local preview gateway.
+  100–200-player WAN capacity, multiple independent access networks and extended
+  endurance are still unverified. No full browser frontend was publicly deployed.

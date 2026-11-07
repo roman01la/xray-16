@@ -1,0 +1,57 @@
+{
+  "maxOwnedRefreshAgeMs": 29862.930000305176,
+  "diagnostics": {
+    "longTasks": 0,
+    "maxLongTaskMs": 0,
+    "maxTimerGapMs": 259.1349997520447,
+    "largeGaps": [],
+    "heapSamples": [
+      {
+        "elapsedMs": 1057.715000152588,
+        "heapMiB": 4.954887390136719
+      }
+    ],
+    "heapStartMiB": 5.170097351074219,
+    "heapEndMiB": 3.7945175170898438
+  },
+  "committedTransfers": 0,
+  "committedWrites": 5,
+  "minStartingRevision": 7,
+  "visibleEntityRange": [
+    3,
+    3
+  ],
+  "persistence": true,
+  "persistenceMetrics": {
+    "completed": 17,
+    "lastUs": 163,
+    "maxUs": 1217,
+    "peakQueued": 1,
+    "queued": 0,
+    "rejected": 0
+  },
+  "durableOperations": 7,
+  "maxOwnedStale": 0,
+  "world": "synthetic-flat-v1",
+  "wire": 2,
+  "testPeers": 2,
+  "totalPlayers": 2,
+  "seconds": 30.945880000114443,
+  "ticksPerSecond": 29.987836829864527,
+  "udpMiBPerSecond": 0.007339770536928346,
+  "statePayloadMiBPerSecond": 0.00259859230720569,
+  "stateBudgetSkips": 0,
+  "lifecycleMessages": 0,
+  "skippedSnapshots": 0,
+  "udpDrops": 0,
+  "lateTicks": 0,
+  "maxStaleClients": 0,
+  "maxBrowserSampleGapMs": 1159.8050003051758,
+  "hiddenSamples": 0,
+  "maxClientBufferedBytes": 20,
+  "resyncRequests": 0,
+  "movementErrors": 0,
+  "sampledTickP95Ms": 0.005,
+  "sampledReplicationP95Ms": 0.169,
+  "scope": "30-second crowded moving browser WebRTC test; 0 separately rendered engine; no injected network impairment; endpoint topology recorded separately"
+}

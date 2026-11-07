@@ -1,0 +1,49 @@
+# Deploy using server/tools/stage-fly.py; see server/deploy/FLY.md.
+app = "roman-stalker-wan"
+primary_region = "fra"
+kill_signal = "SIGTERM"
+kill_timeout = 25
+
+[build]
+  dockerfile = "Dockerfile.fly"
+[deploy]
+  strategy = "immediate"
+[env]
+  ZONE_HTTP_ADDR = "0.0.0.0:8082"
+  ZONE_UDP_ADDR = "fly-global-services:50000"
+  ZONE_DATABASE = "/data/zone/zone.sqlite"
+  ZONE_MAX_PLAYERS = "200"
+  ZONE_COLLISION_MANIFEST = "/data/collision/zaton.json"
+  RUST_LOG = "zone_server=info,str0m=warn"
+  ZONE_PUBLIC_ADDR = "77.83.143.60:50000"
+  ZONE_ORIGIN = "https://roman-stalker-wan.fly.dev"
+  # Store ZONE_DEV_TOKEN via Fly secrets, never in this file.
+
+[http_service]
+  internal_port = 8082
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[http_service.checks]]
+    grace_period = "60s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[services]]
+  protocol = "udp"
+  internal_port = 50000
+  [[services.ports]]
+    port = 50000
+
+[[mounts]]
+  source = "zone_data"
+  destination = "/data"
+
+# Connectivity/recovery test sizing. Use dedicated CPUs for capacity claims.
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory = "1gb"
