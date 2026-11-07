@@ -46,6 +46,7 @@ set(XRAY_WEB_EXECUTABLE_LINK_OPTIONS
     -sDEFAULT_PTHREAD_STACK_SIZE=4MB
     -sMALLOC=mimalloc
     "--js-library=${XRAY_SOURCE_DIR}/misc/web/native-canvas-library.js"
+    "--js-library=${XRAY_SOURCE_DIR}/misc/web/streaming/library.js"
     "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$GL']"
     -sGL_ENABLE_GET_PROC_ADDRESS=0
     -sEXIT_RUNTIME=0

@@ -14,6 +14,7 @@
 #if defined(XR_PLATFORM_WEB)
 #include <emscripten.h>
 #include <emscripten/wasmfs.h>
+#include "../../misc/web/streaming/mount.h"
 #endif
 
 // Always request high performance GPU
@@ -109,6 +110,15 @@ int main(int argc, char *argv[])
 
 #if defined(XR_PLATFORM_WEB)
     wasmfs_create_directory("/opfs", 0777, wasmfs_create_opfs_backend());
+    for (int i = 1; i < argc; ++i)
+        if (strcmp(argv[i], "-stream_mount") == 0)
+        {
+            if (i + 1 >= argc || !mountStreamedArchives(argv[++i]))
+            {
+                fprintf(stderr, "Cannot mount streamed game archives\n");
+                return EXIT_FAILURE;
+            }
+        }
     setvbuf(stdout, nullptr, _IOLBF, 0); // engine log lines reach the page as they are written
 #endif
 

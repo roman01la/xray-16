@@ -161,3 +161,5 @@ await writeFile(
 console.log(
   `misc/web/dist: page + ${files.length - 1} loose engine files + ${PLUS_ARCHIVE} (${plusSources.length} files)`,
 );
+
+await copyFile(join(repo, "misc/web/streaming/chunk-reader.mjs"), join(distDir, "chunk-reader.mjs"));

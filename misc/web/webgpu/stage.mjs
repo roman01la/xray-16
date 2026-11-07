@@ -11,9 +11,9 @@ import {
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 const source = dirname(fileURLToPath(import.meta.url));
-const dist = resolve(source, "../dist");
+const dist = process.env.XRAY_WEB_DIST_INPUT ? resolve(process.env.XRAY_WEB_DIST_INPUT) : resolve(source, "../dist");
 const capture = process.env.XRAY_SHADER_CAPTURE === "1";
-const output = join(dist, capture ? "webgpu-dev" : "webgpu");
+const output = process.env.XRAY_WEB_OUTPUT ? resolve(process.env.XRAY_WEB_OUTPUT) : join(dist, capture ? "webgpu-dev" : "webgpu");
 await mkdir(output, { recursive: true });
 for (const obsolete of ["command-context.js", "gl-constants.js"])
   await rm(join(output, obsolete), {force:true});
@@ -23,6 +23,8 @@ for (const file of [
   "engine_data.json",
   "storage-manager.js",
   "save-format.js",
+  "streaming.js",
+  "chunk-reader.mjs",
 ])
   await copyFile(join(dist, file), join(output, file));
 for (const file of [

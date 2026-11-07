@@ -8,6 +8,8 @@ if (!globalThis.XRAY_WEBGPU) {
 }
 
 import "./storage-manager.js";
+import {prepareStreaming} from "./streaming.js";
+const streamURL = new URLSearchParams(location.search).get("stream");
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
 const fitGameAspect = () => document.documentElement.style.setProperty(
@@ -94,10 +96,12 @@ function askWorker(message, timeoutMs) {
 async function refreshState(select) {
   try {
     const { roots } = await askWorker({ type: "status" }, 15000);
+    if (streamURL && !roots.includes("stream-cop")) roots.push("stream-cop");
     const picker = $("game");
     picker.replaceChildren(...roots.map((root) => new Option(root, root)));
     picker.hidden = roots.length === 0;
     if (select && roots.includes(select)) picker.value = select;
+    else if (streamURL) picker.value = "stream-cop";
     $("ingest-status").textContent = roots.length
       ? `${roots.length} game${roots.length > 1 ? "s" : ""} in OPFS`
       : 'no game ingested yet; press "Add game folder"';
@@ -166,8 +170,10 @@ $("launch").onclick = async () => {
   $("pick").disabled = true;
   $("game").disabled = true;
   $("ingest-status").textContent = "syncing engine data...";
+  let streaming;
   try {
     await askWorker({ type: "sync-engine-data", root });
+    if (streamURL && root === "stream-cop") streaming = await prepareStreaming(streamURL, root);
   } catch (e) {
     $("ingest-status").textContent = "engine data sync failed: " + e.message;
     print("engine data sync failed: " + e.message);
@@ -183,8 +189,9 @@ $("launch").onclick = async () => {
     "-nointro",
     "-nogameintro",
     "-fsltx",
-    `/opfs/${root}/fsgame.ltx`,
+    streaming?.config ?? `/opfs/${root}/fsgame.ltx`,
   ];
+  if (streaming) args.push("-stream_mount", streaming.mount);
   args.push(...$("extra-args").value.split(/\s+/).filter(Boolean));
   print("launching: " + args.join(" "));
 
