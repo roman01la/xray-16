@@ -1,0 +1,5 @@
+<!doctype html><meta charset="utf-8"><title>Zone access lifecycle test</title>
+<style>body{background:#171717;color:#eee;font:16px system-ui;padding:24px}button{padding:10px}pre{white-space:pre-wrap}</style>
+<h1>Development access lifecycle</h1><p>Connect an isolated test principal, revoke it with the trusted admin tool, then verify that its session closes and its credential cannot resume.</p>
+<button id="connect">Connect test principal</button><button id="verify" disabled>Verify revoked access</button><p id="status">Ready</p><pre id="results"></pre>
+<script type="module" src="./access-test.mjs"></script>

@@ -1,0 +1,7 @@
+{
+  "routes": 25,
+  "ticks": 15000,
+  "checks": 1000,
+  "maxDeltaMetres": 0,
+  "scope": "20-second walk/sprint/jump/crouch loops across 64x64m Zaton grid; static collision only"
+}

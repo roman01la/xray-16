@@ -26,3 +26,10 @@ misc/web/out
 
 # exclude doxygen output
 doc/doxygen/html/*
+
+# Private multiplayer persistence databases and recovery journals
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+*.sqlite.lock

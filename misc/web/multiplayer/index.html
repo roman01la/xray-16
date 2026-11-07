@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zone · Multiplayer foundation</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui;background:#101719;color:#dfebe4}body{max-width:1080px;margin:40px auto;padding:0 24px}header{display:flex;justify-content:space-between;align-items:center}h1{font-size:32px;margin:8px 0}small,.muted{color:#9cafaa}button,input{font:inherit;background:#223532;border:1px solid #536b60;border-radius:6px;color:inherit;padding:10px 14px;margin:6px 8px 6px 0}button{cursor:pointer}button:disabled{opacity:.5;cursor:wait}canvas{width:100%;border:1px solid #344b43;border-radius:8px;background:#121e21;margin-top:18px}pre{white-space:pre-wrap;font:13px/1.6 monospace;background:#172426;padding:20px;border-radius:8px}.badge{font:12px monospace;border:1px solid #536b60;padding:8px;border-radius:30px}#status{min-height:24px;color:#b8e2be}label{font-size:13px}footer{color:#9cafaa;font-size:13px;margin:24px 0}
+</style><header><div><small>ZONE / NETWORK LAB</small><h1>Multiplayer foundation</h1></div><span class="badge">RUST + WEBRTC</span></header>
+<p class="muted">Synthetic test world. The single-player STALKER browser build is separate and unchanged.</p>
+<div><button id="connect">Connect two players</button><button id="test">Run integration tests</button><button id="bridge">Test engine-worker bridge</button><button id="load">Test 200 connections</button><button id="disconnect">Disconnect</button><label>Dev token <input id="token" type="password" size="16" autocomplete="off"></label></div>
+<p id="status" role="status">Offline · 30 Hz simulation / 15 Hz snapshots</p>
+<canvas id="world" width="1080" height="380" aria-label="Test world with players, safe zone, and stationary NPC"></canvas>
+<p class="muted">WASD moves player A · Shift sprints · Green circle: safe zone · Amber square: stationary test NPC</p>
+<pre id="results">Connect to inspect server-owned movement, or run the two-client test.</pre>
+<details><summary>Server metrics</summary><pre id="metrics">Not connected</pre></details>
+<footer>Unordered state channel · zero retransmits · reliable control channel. No STALKER actors, collision, inventory, or AI integration yet.</footer>
+<script type="module" src="./harness.mjs"></script></html>

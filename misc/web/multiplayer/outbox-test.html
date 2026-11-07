@@ -1,0 +1,6 @@
+<!doctype html><meta charset="utf-8"><title>Durable command recovery test</title>
+<style>body{font:16px system-ui;background:#171717;color:#eee;padding:24px}button{padding:10px;margin:5px}pre{white-space:pre-wrap}</style>
+<h1>Durable command recovery</h1><p>Isolated development fixture. Requires persistence and one trusted-provisioned entity for principal A.</p>
+<button id="prepare">Prepare test identities</button><button id="lose">Commit transfer and lose reply</button><button id="recover">Recover after reload</button>
+<pre id="principals"></pre><p id="status">Ready</p><pre id="results"></pre>
+<script type="module" src="./outbox-test.mjs"></script>

@@ -1,0 +1,50 @@
+{
+  "diagnostics": {
+    "longTasks": 4,
+    "maxLongTaskMs": 87,
+    "maxTimerGapMs": 415.34499979019165,
+    "largeGaps": [],
+    "heapStartMiB": 5.6565704345703125,
+    "heapEndMiB": 37.70003414154053
+  },
+  "committedTransfers": 2040,
+  "committedWrites": 2040,
+  "minStartingRevision": 45,
+  "visibleEntityRange": [
+    1,
+    92
+  ],
+  "persistence": true,
+  "persistenceMetrics": {
+    "completed": 17483,
+    "lastUs": 23,
+    "maxUs": 8062,
+    "peakQueued": 5,
+    "queued": 0,
+    "rejected": 0
+  },
+  "durableOperations": 16296,
+  "maxOwnedStale": 24,
+  "world": "zaton-static-v1",
+  "wire": 2,
+  "testPeers": 200,
+  "totalPlayers": 200,
+  "seconds": 120.18297500038148,
+  "ticksPerSecond": 29.995929123809404,
+  "udpMiBPerSecond": 2.3599530686264294,
+  "statePayloadMiBPerSecond": 1.7633651346610044,
+  "stateBudgetSkips": 0,
+  "lifecycleMessages": 24045,
+  "skippedSnapshots": 33,
+  "udpDrops": 0,
+  "lateTicks": 0,
+  "maxStaleClients": 0,
+  "maxBrowserSampleGapMs": 1715.329999923706,
+  "hiddenSamples": 0,
+  "maxClientBufferedBytes": 28,
+  "resyncRequests": 0,
+  "movementErrors": 0,
+  "sampledTickP95Ms": 11.072,
+  "sampledReplicationP95Ms": 9.861,
+  "scope": "120-second spread moving browser WebRTC loopback; 0 separately rendered engine; no WAN impairment"
+}

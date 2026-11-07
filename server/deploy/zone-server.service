@@ -1,0 +1,21 @@
+[Unit]
+Description=STALKER browser multiplayer foundation
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=zone
+Group=zone
+WorkingDirectory=/opt/zone
+EnvironmentFile=/etc/zone/server.env
+ExecStart=/opt/zone/zone-server
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=25
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/zone
+UMask=0077
+[Install]
+WantedBy=multi-user.target

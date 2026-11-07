@@ -1,0 +1,6 @@
+/target/
+# The engine's root ignore excludes bin directories; this one contains source.
+!src/bin/
+!src/bin/*.rs
+
+__pycache__/

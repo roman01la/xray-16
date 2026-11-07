@@ -1,5 +1,8 @@
 #include "pch_script.h"
 #include "GamePersistent.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/EngineAdapter.h"
+#endif
 #include "xrCore/FMesh.hpp"
 #include "xrEngine/XR_IOConsole.h"
 #include "xrMaterialSystem/GameMtlLib.h"
@@ -85,6 +88,9 @@ CGamePersistent::~CGamePersistent()
 
 IGame_Level* CGamePersistent::CreateLevel()
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled()) return zone::createMapPreview();
+#endif
     return xr_new<CLevel>();
 }
 
@@ -479,6 +485,9 @@ extern CUISequencer* g_tutorial2;
 void CGamePersistent::OnFrame()
 {
     ZoneScoped;
+#ifdef XRAY_WEB_MULTIPLAYER
+    zone::frame();
+#endif
 
     if (Device.dwPrecacheFrame == 5 && m_intro_event.empty())
     {
@@ -520,6 +529,9 @@ void CGamePersistent::OnFrame()
     if (!g_pGameLevel->bReady)
         return;
 
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled()) {inherited::OnFrame();return;}
+#endif
     g_pGameLevel->WorldRendered(false);
 
     if (Device.Paused())

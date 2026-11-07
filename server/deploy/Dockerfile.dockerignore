@@ -1,0 +1,10 @@
+**
+!server/
+!server/Cargo.toml
+!server/Cargo.lock
+!server/src/
+!server/src/**
+!misc/
+!misc/web/
+!misc/web/multiplayer/
+!misc/web/multiplayer/**

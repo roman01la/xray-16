@@ -22,10 +22,16 @@
       "name": "web-debug",
       "inherits": "web-base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "web-multiplayer-release",
+      "inherits": "web-release",
+      "cacheVariables": { "XRAY_WEB_MULTIPLAYER": "ON" }
     }
   ],
   "buildPresets": [
     { "name": "web-release", "configurePreset": "web-release" },
-    { "name": "web-debug", "configurePreset": "web-debug" }
+    { "name": "web-debug", "configurePreset": "web-debug" },
+    { "name": "web-multiplayer-release", "configurePreset": "web-multiplayer-release" }
   ]
 }

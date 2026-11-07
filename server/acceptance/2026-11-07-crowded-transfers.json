@@ -1,0 +1,190 @@
+{
+  "maxOwnedRefreshAgeMs": 17213.980000019073,
+  "diagnostics": {
+    "longTasks": 51,
+    "maxLongTaskMs": 246,
+    "maxTimerGapMs": 824.2400002479553,
+    "largeGaps": [
+      {
+        "gapMs": 2011.4049997329712,
+        "delayMs": 1009.875,
+        "mutationMs": 999.8899998664856,
+        "stale": 0,
+        "heapMiB": 256.12957191467285
+      },
+      {
+        "gapMs": 2052.050000190735,
+        "delayMs": 1115.8649997711182,
+        "mutationMs": 934.8150000572205,
+        "stale": 0,
+        "heapMiB": 251.94692993164062
+      },
+      {
+        "gapMs": 4174.494999885559,
+        "delayMs": 1076.6149997711182,
+        "mutationMs": 3096.255000114441,
+        "stale": 0,
+        "heapMiB": 431.7668294906616
+      },
+      {
+        "gapMs": 3995.6600003242493,
+        "delayMs": 1311.5599999427795,
+        "mutationMs": 2682.7400002479553,
+        "stale": 0,
+        "heapMiB": 302.32287883758545
+      },
+      {
+        "gapMs": 2006.414999961853,
+        "delayMs": 1039.4349999427795,
+        "mutationMs": 965.6150002479553,
+        "stale": 0,
+        "heapMiB": 221.0162649154663
+      },
+      {
+        "gapMs": 2928.425000190735,
+        "delayMs": 1018.0999999046326,
+        "mutationMs": 1908.6750001907349,
+        "stale": 0,
+        "heapMiB": 281.125057220459
+      },
+      {
+        "gapMs": 3473.1100001335144,
+        "delayMs": 1359.119999885559,
+        "mutationMs": 2112.5250000953674,
+        "stale": 0,
+        "heapMiB": 330.5045757293701
+      },
+      {
+        "gapMs": 3662.1449999809265,
+        "delayMs": 1105.7949995994568,
+        "mutationMs": 2555.0700001716614,
+        "stale": 0,
+        "heapMiB": 205.51095390319824
+      }
+    ],
+    "heapSamples": [
+      {
+        "elapsedMs": 1141.9049997329712,
+        "heapMiB": 143.1305227279663
+      },
+      {
+        "elapsedMs": 31892.545000076294,
+        "heapMiB": 521.5865650177002
+      },
+      {
+        "elapsedMs": 62293.46000003815,
+        "heapMiB": 436.68069648742676
+      },
+      {
+        "elapsedMs": 92873.75,
+        "heapMiB": 558.9615859985352
+      },
+      {
+        "elapsedMs": 123207.68499994278,
+        "heapMiB": 302.32287883758545
+      },
+      {
+        "elapsedMs": 153857.39999961853,
+        "heapMiB": 219.00122547149658
+      },
+      {
+        "elapsedMs": 184218.6399998665,
+        "heapMiB": 515.2626399993896
+      },
+      {
+        "elapsedMs": 215289.77999973297,
+        "heapMiB": 386.6746025085449
+      },
+      {
+        "elapsedMs": 245294.33500003815,
+        "heapMiB": 330.5045757293701
+      },
+      {
+        "elapsedMs": 275480.7699999809,
+        "heapMiB": 274.2898979187012
+      },
+      {
+        "elapsedMs": 306421.14999961853,
+        "heapMiB": 262.30455017089844
+      },
+      {
+        "elapsedMs": 337272.2199997902,
+        "heapMiB": 275.6510019302368
+      },
+      {
+        "elapsedMs": 368126.7300000191,
+        "heapMiB": 297.62189769744873
+      },
+      {
+        "elapsedMs": 398822.2699999809,
+        "heapMiB": 265.5612487792969
+      },
+      {
+        "elapsedMs": 428936.125,
+        "heapMiB": 205.59130001068115
+      },
+      {
+        "elapsedMs": 459342.6149997711,
+        "heapMiB": 192.04345989227295
+      },
+      {
+        "elapsedMs": 490261.58999967575,
+        "heapMiB": 169.09250354766846
+      },
+      {
+        "elapsedMs": 520359.09999990463,
+        "heapMiB": 100.97015476226807
+      },
+      {
+        "elapsedMs": 551344.0049996376,
+        "heapMiB": 126.19728374481201
+      },
+      {
+        "elapsedMs": 582055.5699996948,
+        "heapMiB": 317.7118501663208
+      }
+    ],
+    "heapStartMiB": 5.507373809814453,
+    "heapEndMiB": 150.73705005645752
+  },
+  "committedTransfers": 9600,
+  "committedWrites": 9600,
+  "minStartingRevision": 55,
+  "visibleEntityRange": [
+    127,
+    202
+  ],
+  "persistence": true,
+  "persistenceMetrics": {
+    "completed": 95446,
+    "lastUs": 119,
+    "maxUs": 8062,
+    "peakQueued": 5,
+    "queued": 0,
+    "rejected": 0
+  },
+  "durableOperations": 76765,
+  "maxOwnedStale": 35,
+  "world": "zaton-static-v1",
+  "wire": 2,
+  "testPeers": 200,
+  "totalPlayers": 200,
+  "seconds": 600.541134999752,
+  "ticksPerSecond": 29.997945103306602,
+  "udpMiBPerSecond": 8.19007279441189,
+  "statePayloadMiBPerSecond": 7.035803370785449,
+  "stateBudgetSkips": 0,
+  "lifecycleMessages": 204124,
+  "skippedSnapshots": 7569,
+  "udpDrops": 0,
+  "lateTicks": 0,
+  "maxStaleClients": 0,
+  "maxBrowserSampleGapMs": 4174.494999885559,
+  "hiddenSamples": 0,
+  "maxClientBufferedBytes": 48,
+  "resyncRequests": 0,
+  "movementErrors": 0,
+  "sampledTickP95Ms": 3.131,
+  "sampledReplicationP95Ms": 15.714,
+  "scope": "600-second crowded moving browser WebRTC loopback; 0 separately rendered engine; no WAN impairment"
+}
