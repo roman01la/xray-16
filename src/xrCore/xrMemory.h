@@ -3,6 +3,7 @@
 #include "xr_types.h"
 
 #include <new>
+#include <type_traits>
 
 class XRCORE_API xrMemory
 {

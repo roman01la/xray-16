@@ -169,7 +169,7 @@ void CRender::Render()
         split_the_scene_to_minimize_wait = TRUE;
 
     //******* Main render :: PART-0	-- first
-#ifdef USE_OGL
+#if defined(USE_OGL) && !defined(XR_PLATFORM_WEB)
     if (psDeviceFlags.test(rsWireframe))
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 #endif
@@ -193,7 +193,7 @@ void CRender::Render()
         dsgraph.render_graph(0);
         Target->disable_aniso();
     }
-#ifdef USE_OGL
+#if defined(USE_OGL) && !defined(XR_PLATFORM_WEB)
     if (psDeviceFlags.test(rsWireframe))
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 #endif

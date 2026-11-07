@@ -49,10 +49,14 @@ SVS::~SVS()
 #if defined(USE_DX11)
     _RELEASE(sh);
 #elif defined(USE_OGL)
-    if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(3, 1, &sh);
+#else
+    if (SupportsArbSeparateShaderObjects())
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#endif
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -65,10 +69,14 @@ SPS::~SPS()
 #if defined(USE_DX11)
     _RELEASE(sh);
 #elif defined(USE_OGL)
-    if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(3, 1, &sh);
+#else
+    if (SupportsArbSeparateShaderObjects())
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#endif
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -83,10 +91,14 @@ SGS::~SGS()
 #   if defined(USE_DX11)
     _RELEASE(sh);
 #   elif defined(USE_OGL)
-    if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(3, 1, &sh);
+#else
+    if (SupportsArbSeparateShaderObjects())
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#endif
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -99,10 +111,14 @@ SHS::~SHS()
 #   if defined(USE_DX11)
     _RELEASE(sh);
 #   elif defined(USE_OGL)
-    if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(3, 1, &sh);
+#else
+    if (SupportsArbSeparateShaderObjects())
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#endif
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -115,10 +131,14 @@ SDS::~SDS()
 #   if defined(USE_DX11)
     _RELEASE(sh);
 #   elif defined(USE_OGL)
-    if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(3, 1, &sh);
+#else
+    if (SupportsArbSeparateShaderObjects())
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#endif
 #   endif
 
     RImplementation.Resources->_DeleteDS(this);
@@ -129,10 +149,14 @@ SCS::~SCS()
 #    if defined(USE_DX11)
     _RELEASE(sh);
 #    elif defined(USE_OGL)
-    if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(3, 1, &sh);
+#else
+    if (SupportsArbSeparateShaderObjects())
         CHK_GL(glDeleteProgram(sh));
     else
         CHK_GL(glDeleteShader(sh));
+#endif
 #   else
 #       error No graphics API selected or enabled!
 #   endif
@@ -143,10 +167,14 @@ SCS::~SCS()
 #if defined(USE_OGL)
 SPP::~SPP()
 {
-    if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(4, 1, &pp);
+#else
+    if (SupportsArbSeparateShaderObjects())
         CHK_GL(glDeleteProgramPipelines(1, &pp));
     else
         CHK_GL(glDeleteProgram(pp));
+#endif
 
     RImplementation.Resources->_DeletePP(this);
 }
@@ -193,7 +221,13 @@ SDeclaration::~SDeclaration()
         _RELEASE(iLayout->second);
     }
 #elif defined(USE_OGL)
+#   ifdef XR_PLATFORM_WEB
+#   endif
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(0, 1, &dcl);
+#else
     glDeleteVertexArrays(1, &dcl);
+#endif
 #else
 #   error No graphics API selected or enabled!
 #endif

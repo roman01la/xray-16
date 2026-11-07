@@ -28,7 +28,8 @@ void CHWCaps::Update()
     geometry.dwRegisters = cnt;
     geometry.dwInstructions = 256;
     geometry.dwClipPlanes = _min(6, 15);
-    geometry.bVTF = (GLAD_GL_VERSION_3_0 || GLAD_GL_ARB_texture_float) && !strstr(Core.Params, "-novtf");
+    geometry.bVTF = (SupportsVersion30() || SupportsEsVersion30() || SupportsArbTextureFloat())
+        && !strstr(Core.Params, "-novtf");
 
     // ***************** PIXEL processing
     raster_major = 4;

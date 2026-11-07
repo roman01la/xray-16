@@ -206,7 +206,7 @@ void CBlender_Compile::PassSET_Shaders(pcstr _vs, pcstr _ps, pcstr _gs /*= nullp
 {
 #if defined(USE_OGL)
     dest.pp = RImplementation.Resources->_CreatePP(_vs, _ps, _gs, _hs, _ds);
-    if (GLAD_GL_ARB_separate_shader_objects || !dest.pp->pp)
+    if (SupportsArbSeparateShaderObjects() || !dest.pp->pp)
 #endif
     {
         dest.ps = RImplementation.Resources->_CreatePS(_ps);

@@ -14,9 +14,15 @@
 
 #include "xrParticles/psystem.h"
 
+#ifdef XR_PLATFORM_WEB
+#include "Layers/xrRenderGL/NativeWebGPUFormats.h"
+#else
 #include "glad/gl.h"
 #include <SDL_opengl.h>
 #include <SDL_opengl_glext.h>
+#endif
+
+#include "Layers/xrRenderGL/RendererFeatures.h"
 
 #define R_GL 0
 #define R_R1 1

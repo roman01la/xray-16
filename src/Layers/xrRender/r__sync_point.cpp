@@ -15,7 +15,16 @@ void R_sync_point::Destroy() {}
 bool R_sync_point::Wait(u32 /*wait_sleep*/, u64 timeout)
 {
     ZoneScoped;
+#ifdef XR_PLATFORM_WEB
+    // Web builds never wait here. Submit the ordered WebGPU queue directly;
+    // allocating a fence and registering a completion promise served no consumer.
+    SubmitWebGPUWork(); { q_sync_point[q_sync_count] = nullptr; return true; }
+#endif
     CHK_GL(q_sync_point[q_sync_count] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+
+#ifdef XR_PLATFORM_WEB
+    return true; // WebGL cannot block on a fence; End() still deletes it
+#endif
 
     const auto status = glClientWaitSync((GLsync)q_sync_point[q_sync_count],
         GL_SYNC_FLUSH_COMMANDS_BIT, timeout * 1000 * 1000);
@@ -44,7 +53,10 @@ bool R_sync_point::Wait(u32 /*wait_sleep*/, u64 timeout)
 void R_sync_point::End()
 {
     q_sync_count = (q_sync_count + 1) % HW.Caps.iGPUNum;
-    CHK_GL(glDeleteSync((GLsync)q_sync_point[q_sync_count]));
+#ifndef XR_PLATFORM_WEB
+    if (q_sync_point[q_sync_count])
+        CHK_GL(glDeleteSync((GLsync)q_sync_point[q_sync_count]));
+#endif
 }
 #elif defined(USE_DX11)
 void R_sync_point::Create()

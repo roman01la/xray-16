@@ -2,6 +2,7 @@
 #pragma hdrstop
 
 #include "LightTrack.h"
+#include "BufferUtils.h"
 #include "xrEngine/IRenderable.h"
 
 #if defined(USE_DX11)
@@ -77,6 +78,8 @@ void CBackend::Invalidate()
     M = nullptr;
     C = nullptr;
 
+    alpha_ref = u32(-1);
+#ifndef XR_PLATFORM_WEB
     stencil_enable = u32(-1);
     stencil_func = u32(-1);
     stencil_ref = u32(-1);
@@ -89,8 +92,8 @@ void CBackend::Invalidate()
     fill_mode = u32(-1);
     z_enable = u32(-1);
     z_func = u32(-1);
-    alpha_ref = u32(-1);
     colorwrite_mask = u32(-1);
+#endif
 
     // Since constant buffers are unmapped (for DirecX 10)
     // transform setting handlers should be unmapped too.
@@ -180,6 +183,10 @@ void CBackend::set_Textures(STextureList* textures_list)
     //    return;
     T = textures_list;
     // If resources weren't set at all we should clear from resource #0.
+#ifdef XR_PLATFORM_WEB
+    u32 usedPS = 0;
+    u32 usedVS = 0;
+#endif
     int _last_ps = -1;
     int _last_vs = -1;
 #if defined(USE_DX11)
@@ -204,6 +211,9 @@ void CBackend::set_Textures(STextureList* textures_list)
             // ordinary pixel surface
             if ((int)load_id > _last_ps)
                 _last_ps = load_id;
+#ifdef XR_PLATFORM_WEB
+            usedPS |= 1u << load_id;
+#endif
             if (textures_ps[load_id] != load_surf || (load_surf && (load_surf->last_slice != load_surf->curr_slice)))
             {
                 textures_ps[load_id] = load_surf;
@@ -215,6 +225,9 @@ void CBackend::set_Textures(STextureList* textures_list)
                     load_surf->bind(*this, load_id);
                     //load_surf->Apply(load_id);
                     load_surf->last_slice = load_surf->curr_slice;
+#ifdef XR_PLATFORM_WEB
+                    occupied_texture_units |= 1u << load_id;
+#endif
                 }
             }
         }
@@ -230,6 +243,9 @@ void CBackend::set_Textures(STextureList* textures_list)
             u32 load_id_remapped = load_id - CTexture::rstVertex;
             if ((int)load_id_remapped > _last_vs)
                 _last_vs = load_id_remapped;
+#ifdef XR_PLATFORM_WEB
+            usedVS |= 1u << load_id_remapped;
+#endif
             if (textures_vs[load_id_remapped] != load_surf)
             {
                 textures_vs[load_id_remapped] = load_surf;
@@ -240,6 +256,9 @@ void CBackend::set_Textures(STextureList* textures_list)
                     PGO(Msg("PGO:tex%d:%s", load_id, load_surf->cName.c_str()));
                     load_surf->bind(*this, load_id);
                     //load_surf->Apply(load_id);
+#ifdef XR_PLATFORM_WEB
+                    occupied_texture_units |= 1u << load_id;
+#endif
                 }
             }
         }
@@ -340,18 +359,33 @@ void CBackend::set_Textures(STextureList* textures_list)
     }
 
     // clear remaining stages (PS)
+#ifdef XR_PLATFORM_WEB
+    for (u32 _last_ps = 0; _last_ps < CTexture::mtMaxPixelShaderTextures; _last_ps++)
+    {
+        if (usedPS & (1u << _last_ps))
+            continue;
+        textures_ps[_last_ps] = nullptr;
+        if (!(occupied_texture_units & (1u << _last_ps)))
+            continue;
+        occupied_texture_units &= ~(1u << _last_ps);
+#else
     for (++_last_ps; _last_ps < CTexture::mtMaxPixelShaderTextures; _last_ps++)
     {
         if (!textures_ps[_last_ps])
             continue;
 
         textures_ps[_last_ps] = nullptr;
+#endif
 #if defined(USE_DX11)
         // TODO: DX11: Optimise: set all resources at once
         ID3DShaderResourceView* pRes = 0;
         // HW.pDevice->PSSetShaderResources(_last_ps, 1, &pRes);
         SRVSManager.SetPSResource(_last_ps, pRes);
 #elif defined(USE_OGL)
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUBinding(WebGPUBinding::ClearStage, _last_ps, 0, RImplementation.o.msaa);
+            continue;
+#endif
         CHK_GL(glActiveTexture(GL_TEXTURE0 + _last_ps));
         CHK_GL(glBindTexture(GL_TEXTURE_2D, 0));
         if (RImplementation.o.msaa)
@@ -363,18 +397,34 @@ void CBackend::set_Textures(STextureList* textures_list)
 #endif
     }
     // clear remaining stages (VS)
+#ifdef XR_PLATFORM_WEB
+    for (u32 _last_vs = 0; _last_vs < CTexture::mtMaxVertexShaderTextures; _last_vs++)
+    {
+        if (usedVS & (1u << _last_vs))
+            continue;
+        const u32 unit = 1u << (CTexture::rstVertex + _last_vs);
+        textures_vs[_last_vs] = nullptr;
+        if (!(occupied_texture_units & unit))
+            continue;
+        occupied_texture_units &= ~unit;
+#else
     for (++_last_vs; _last_vs < CTexture::mtMaxVertexShaderTextures; _last_vs++)
     {
         if (!textures_vs[_last_vs])
             continue;
 
         textures_vs[_last_vs] = nullptr;
+#endif
 #if defined(USE_DX11)
         // TODO: DX11: Optimise: set all resources at once
         ID3DShaderResourceView* pRes = 0;
         // HW.pDevice->VSSetShaderResources(_last_vs, 1, &pRes);
         SRVSManager.SetVSResource(_last_vs, pRes);
 #elif defined(USE_OGL)
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUBinding(WebGPUBinding::ClearStage, CTexture::rstVertex + _last_vs, 0, RImplementation.o.msaa);
+            continue;
+#endif
         CHK_GL(glActiveTexture(GL_TEXTURE0 + CTexture::rstVertex + _last_vs));
         CHK_GL(glBindTexture(GL_TEXTURE_2D, 0));
         if (RImplementation.o.msaa)

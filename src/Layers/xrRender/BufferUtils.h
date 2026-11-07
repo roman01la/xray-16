@@ -22,7 +22,53 @@ void ConvertVertexDeclaration(const VertexElement* dxdecl, SDeclaration* decl);
 void ConvertVertexDeclaration(const xr_vector<VertexElement>& declIn, xr_vector<InputElementDesc>& declOut);
 
 #ifdef USE_OGL
-void SetGLVertexPointer(SDeclaration* decl);
+void SetGLVertexPointer(SDeclaration* decl, u32 baseOffset = 0);
+#   ifdef XR_PLATFORM_WEB
+extern "C" {
+bool InitializeNativeWebGPU();
+GLuint CreateNativeWebGPUObject(u32 kind);
+void DeleteNativeWebGPUObjects(u32 kind, u32 count, const GLuint* objects);
+void SetNativeWebGPUSampler(GLuint sampler, GLenum parameter, float value);
+int GetNativeWebGPUSampler(GLuint sampler, GLenum parameter);
+GLuint CreateNativeWebGPUShader(GLenum type, const char* const* source, size_t count);
+GLuint LinkNativeWebGPUProgram(GLuint vertex, GLuint fragment);
+int NativeWebGPUUniformCount(GLuint program);
+void NativeWebGPUUniformInfo(GLuint program, u32 index, char* name, u32 capacity, int* size, GLenum* type);
+int NativeWebGPUUniformLocation(GLuint program, const char* name);
+u32 NativeWebGPUTextureLimit();
+void BindNativeWebGPUFramebuffer(GLuint framebuffer);
+u32 NativeWebGPUBufferSize(GLuint buffer);
+void NativeWebGPUClearRects(GLuint texture, bool depthOnly, float r, float g, float b, float a, float depth, size_t count, const Irect* rects);
+}
+// Fixed six-word records. Enum values are shared with consumeStateBatch in backend.js.
+enum class WebGPUState : u32
+{
+    StencilEnable, StencilFunc, StencilMask, StencilOps, DepthEnable, DepthFunc,
+    DepthWrite, BlendEnable, BlendFactors, BlendOps, ColorMask, CullMode, Scissor, Viewport, DepthRange, Framebuffer, Attachment, DrawBuffers
+};
+void QueueWebGPUState(WebGPUState kind, u32 a = 0, u32 b = 0, u32 c = 0, u32 d = 0, u32 e = 0);
+
+void QueueWebGPUUniform(GLuint program, GLuint location, u32 kind, const void* data, u32 words);
+enum class WebGPUBinding : u32 { Texture, Sampler, ClearStage };
+void QueueWebGPUBinding(WebGPUBinding kind, u32 stage, u32 targetOrObject, u32 objectOrMSAA = 0);
+void QueueWebGPUViewport(int x, int y, int width, int height, float minDepth, float maxDepth);
+void QueueWebGPUDrawBuffers(u32 count, const GLenum* buffers);
+void ClearWebGPUTarget(GLuint texture, u32 mask, const Fcolor* color, float depth, u32 stencil);
+void PresentWebGPU(GLuint framebuffer, u32 width, u32 height);
+// Resource operations use explicit handles; uploads never depend on bound GLES state.
+void CreateWebGPUTexture(GLuint* texture, GLenum target, u32 levels, GLenum format, u32 width, u32 height, u32 depth = 1);
+void UploadWebGPUTexture(GLuint texture, GLenum target, u32 level, u32 width, u32 height, u32 depth, GLenum format, GLenum type, bool compressed, const void* data, u32 size);
+void DeleteWebGPUTextures(u32 count, const GLuint* textures);
+void CreateWebGPUBuffer(GLuint* buffer, const void* data, u32 size);
+void UploadWebGPUBuffer(GLuint buffer, const void* data, u32 size, u32 offset = 0, bool replace = true);
+void DeleteWebGPUBuffer(GLuint buffer);
+int WebGPUQuery(u32 operation, GLuint query = 0);
+void SubmitWebGPUWork();
+void CopyWebGPUTexture(GLuint source, GLuint destination, u32 width, u32 height);
+// Mandatory synchronous native submission. Failures throw; no graphics API fallback.
+void SubmitWebGPUDraw(SDeclaration* decl, GLuint vb, GLuint ib, u32 stride,
+    GLuint program, GLenum topology, bool indexed, u32 count, u32 first, u32 baseVertex);
+#   endif
 #endif
 
 namespace BufferUtils
@@ -171,6 +217,9 @@ public:
 
     void* Map(size_t offset, size_t size, bool flush = false);
     void Unmap();
+#ifdef XR_PLATFORM_WEB
+    void Unmap(size_t writtenSize);
+#endif
     bool IsValid() const;
 
     void AddRef()
@@ -199,6 +248,11 @@ private:
 
     VertexBufferHandle m_DeviceBuffer{};
     u32 m_RefCounter{};
+#ifdef XR_PLATFORM_WEB
+    xr_vector<u8> m_HostBuffer;
+    size_t m_MappedOffset{};
+    size_t m_MappedSize{};
+#endif
 };
 
 class IndexStreamBuffer
@@ -210,6 +264,9 @@ public:
 
     void* Map(size_t offset, size_t size, bool flush = false);
     void Unmap();
+#ifdef XR_PLATFORM_WEB
+    void Unmap(size_t writtenSize);
+#endif
     bool IsValid() const;
 
     void AddRef()
@@ -238,5 +295,14 @@ private:
 
     IndexBufferHandle m_DeviceBuffer{};
     u32 m_RefCounter{};
+#ifdef XR_PLATFORM_WEB
+    xr_vector<u8> m_HostBuffer;
+    size_t m_MappedOffset{};
+    size_t m_MappedSize{};
+#endif
 };
 } // namespace xray::render::RENDER_NAMESPACE
+
+#ifdef XR_PLATFORM_WEB
+extern "C" void ValidateNativeWebGPUFramebuffer();
+#endif

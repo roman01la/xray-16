@@ -3,6 +3,9 @@
 //#include "xr_effgamma.h"
 #include "xrCore/Media/Image.hpp"
 #include "xrEngine/xrImage_Resampler.h"
+#ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
+#endif
 
 namespace xray::render::RENDER_NAMESPACE
 {
@@ -27,6 +30,18 @@ void CRender::Screenshot(ScreenshotMode mode /*= SM_NORMAL*/, pcstr name /*= nul
         xr_sprintf(buf, sizeof(buf), "ss_%s_%s_(%s).%s", Core.UserName, timestamp(time),
             g_pGameLevel ? g_pGameLevel->name().c_str() : "mainmenu", extension);
 
+#ifdef XR_PLATFORM_WEB
+        // WebGPU readback is asynchronous. Keep its buffer alive in the renderer
+        // until mapping/encoding finishes instead of blocking the engine thread.
+        string_path screenshotPath;
+        FS.update_path(screenshotPath, "$screenshots$", buf);
+        EM_ASM({
+            if (!globalThis.__xrayWebGPU) throw Error("Native WebGPU is not initialized");
+            globalThis.__xrayWebGPU.captureScreenshot(UTF8ToString(Number($0)));
+        }, screenshotPath);
+        break;
+#else
+
         IWriter* fs = FS.w_open("$screenshots$", buf);
         R_ASSERT(fs);
 
@@ -35,12 +50,14 @@ void CRender::Screenshot(ScreenshotMode mode /*= SM_NORMAL*/, pcstr name /*= nul
 
         glReadPixels(0, 0, Device.dwWidth, Device.dwHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
 
+
         Image img{ Device.dwWidth, Device.dwHeight, pixels.data(), ImageDataFormat::RGB8 };
         if (!img.SaveJPEG(*fs, 100, true))
             Log("! Failed to make a screenshot.");
 
         FS.w_close(fs);
         break;
+#endif
     }
 
     case SM_FOR_GAMESAVE:

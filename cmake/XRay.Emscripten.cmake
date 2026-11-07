@@ -8,7 +8,6 @@ set(XRAY_WEB_TARGET_FLAGS
     -msimd128
     -msse3
     -fwasm-exceptions
-    -sUSE_SDL=2
     -sUSE_OGG=1
     -sUSE_VORBIS=1
     -sUSE_LIBJPEG=1
@@ -18,12 +17,14 @@ add_link_options(${XRAY_WEB_TARGET_FLAGS})
 
 set(CMAKE_EXECUTABLE_SUFFIX ".js")
 
-foreach (lib SDL2::SDL2 Ogg::Ogg Vorbis::Vorbis Vorbis::VorbisFile JPEG::JPEG OpenAL::OpenAL)
+foreach (lib Ogg::Ogg Vorbis::Vorbis Vorbis::VorbisFile JPEG::JPEG OpenAL::OpenAL)
     add_library(${lib} INTERFACE IMPORTED)
 endforeach()
 target_link_options(OpenAL::OpenAL INTERFACE -lopenal)
 target_include_directories(OpenAL::OpenAL INTERFACE "${EMSCRIPTEN_SYSROOT}/include/AL")
 set(JPEG_FOUND TRUE)
+
+include("${CMAKE_CURRENT_LIST_DIR}/XRay.NativeSDL.cmake")
 
 add_subdirectory("${XRAY_SOURCE_DIR}/Externals/web" "${CMAKE_BINARY_DIR}/Externals/web")
 
@@ -43,10 +44,10 @@ set(XRAY_WEB_EXECUTABLE_LINK_OPTIONS
     -sMAXIMUM_MEMORY=16GB
     -sSTACK_SIZE=16MB
     -sDEFAULT_PTHREAD_STACK_SIZE=4MB
-    -sMIN_WEBGL_VERSION=2
-    -sMAX_WEBGL_VERSION=2
-    -sGL_ENABLE_GET_PROC_ADDRESS
     -sMALLOC=mimalloc
+    "--js-library=${XRAY_SOURCE_DIR}/misc/web/native-canvas-library.js"
+    "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$GL']"
+    -sGL_ENABLE_GET_PROC_ADDRESS=0
     -sEXIT_RUNTIME=0
     -sENVIRONMENT=web,worker
     -sMODULARIZE

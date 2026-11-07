@@ -9,7 +9,11 @@ static class cl_sampler : public R_constant_setup
 {
     void setup(CBackend& cmd_list, R_constant* C) override
     {
-        if (GLAD_GL_ARB_separate_shader_objects)
+#ifdef XR_PLATFORM_WEB
+        const int unit = C->samp.index;
+        QueueWebGPUUniform(C->samp.program, C->samp.location, 3, &unit, 1); return;
+#endif
+        if (SupportsArbSeparateShaderObjects())
             CHK_GL(glProgramUniform1i(C->samp.program, C->samp.location, C->samp.index));
         else
         {
@@ -26,18 +30,34 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 
     // Get the maximum length of the constant name and allocate a buffer for it
     GLint maxLength;
+#ifdef XR_PLATFORM_WEB
+    maxLength = 1024;
+#else
     CHK_GL(glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &maxLength));
+#endif
     GLchar* name = xr_alloc<GLchar>(maxLength + 1); // Null terminator
 
     // Iterate all uniforms and parse the entries for the constant table.
     GLint uniformCount;
+#ifdef XR_PLATFORM_WEB
+    uniformCount = NativeWebGPUUniformCount(program);
+#else
     CHK_GL(glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &uniformCount));
+#endif
+
+#ifdef XR_PLATFORM_WEB
+    u16 samplerStage = 0;
+#endif
 
     for (GLint i = 0; i < uniformCount; i++)
     {
         GLint size;
         GLenum reg;
+#ifdef XR_PLATFORM_WEB
+        NativeWebGPUUniformInfo(program, i, name, maxLength, &size, &reg);
+#else
         CHK_GL(glGetActiveUniform(program, i, maxLength, NULL, &size, &reg, name));
+#endif
 
         // Remove index from arrays
         if (size > 1)
@@ -61,7 +81,11 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
         // Rindex,Rcount,Rlocation
         u16 r_index = i;
         u16 r_type = u16(-1);
+#ifdef XR_PLATFORM_WEB
+        GLuint r_location = NativeWebGPUUniformLocation(program, name);
+#else
         GLuint r_location = glGetUniformLocation(program, name);
+#endif
 
         // TypeInfo + class
         BOOL bSkip = FALSE;
@@ -120,7 +144,11 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
                 C->handler = &binder_sampler;
                 R_constant_load& L = C->samp;
                 if (destination & RC_dest_all)
+#ifdef XR_PLATFORM_WEB
+                    L.index = samplerStage;
+#else
                     L.index = r_index;
+#endif
                 else
                     L.index = u16(r_index + ((destination & RC_dest_pixel) ? 0 : CTexture::rstVertex));
                 L.cls = RC_sampler;
@@ -133,11 +161,18 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
                 R_ASSERT(C->type == RC_sampler);
                 R_ASSERT(C->handler == &binder_sampler);
                 R_constant_load& L = C->samp;
+#ifdef XR_PLATFORM_WEB
+                R_ASSERT((destination & RC_dest_all) || L.index == r_index);
+#else
                 R_ASSERT(L.index == r_index);
+#endif
                 R_ASSERT(L.cls == RC_sampler);
                 R_ASSERT(L.location == r_location);
                 R_ASSERT(L.program == program);
             }
+#ifdef XR_PLATFORM_WEB
+            ++samplerStage;
+#endif
         }
             bSkip = TRUE;
             break;

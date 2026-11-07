@@ -9,6 +9,7 @@ target_sources(xrRender_GL PRIVATE
     gl_rendertarget_u_set_rt.cpp
     r2_R_sun.cpp
     r2_test_hw.cpp
+    rgl_essl_web.h
     rgl_shaders.cpp
     stdafx.cpp
     stdafx.h
@@ -383,7 +384,7 @@ target_sources(xrRender_GL PRIVATE
     ../../Include/xrRender/UIShader.h
     ../../Include/xrRender/WallMarkArray.h
     ../../utils/xrLC_Light/R_light.h
-    ../../../sdk/include/glad/gl.c
+    $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:${XRAY_SOURCE_DIR}/sdk/include/glad/gl.c>
     ../../../sdk/include/glad/gl.h
     ../../../sdk/include/KHR/khrplatform.h
 )

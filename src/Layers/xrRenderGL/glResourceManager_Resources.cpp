@@ -46,7 +46,11 @@ SDeclaration* CResourceManager::_CreateDecl(const D3DVERTEXELEMENT9* dcl)
     }
 
     SDeclaration* D = v_declarations.emplace_back(xr_new<SDeclaration>());
+#ifdef XR_PLATFORM_WEB
+    D->dcl = CreateNativeWebGPUObject(0);
+#else
     glGenVertexArrays(1, &D->dcl);
+#endif
 
     u32 dcl_size = GetDeclLength(dcl) + 1;
     D->dcl_code.assign(dcl, dcl + dcl_size);
@@ -107,12 +111,17 @@ bool CResourceManager::_LinkPP(SPass& pass)
     if (pp.pp)
         return true;
 
-    if (GLAD_GL_ARB_separate_shader_objects)
+    if (SupportsArbSeparateShaderObjects())
         pp.pp = GLGeneratePipeline(pp.cName.c_str(), pass.ps->sh, pass.vs->sh, pass.gs->sh);
     else
     {
         pp.pp = GLLinkMonolithicProgram(pp.cName.c_str(), pass.ps->sh, pass.vs->sh, pass.gs->sh);
+#ifdef XR_PLATFORM_WEB
+        if (pp.pp)
+            pp.constants.parse(&pp.pp, RC_dest_all);
+#else
         pp.constants.parse(&pp.pp, RC_dest_all);
+#endif
 
         pass.ps = nullptr;
         pass.vs = nullptr;

@@ -377,9 +377,15 @@ void CRenderDevice::ProcessFrame()
 
     const u64 frameStartTime = TimerGlobal.GetElapsed_ms();
 
+#ifdef XR_PLATFORM_WEB
+    const double cpuFrameStart = emscripten_get_now();
+#endif
     FrameMove();
 
     OnCameraUpdated();
+#ifdef XR_PLATFORM_WEB
+    const double cpuSimulationEnd = emscripten_get_now();
+#endif
 
     const auto& processSeqParallel = TaskScheduler->AddTask([this]
     {
@@ -391,8 +397,16 @@ void CRenderDevice::ProcessFrame()
     });
 
     DoRender();
-
+#ifdef XR_PLATFORM_WEB
+    const double cpuRenderEnd = emscripten_get_now();
+#endif
     TaskScheduler->Wait(processSeqParallel);
+#ifdef XR_PLATFORM_WEB
+    const double cpuWaitEnd = emscripten_get_now();
+    EM_ASM({
+        globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2);
+    }, cpuSimulationEnd - cpuFrameStart, cpuRenderEnd - cpuSimulationEnd, cpuWaitEnd - cpuRenderEnd);
+#endif
 
     const u64 frameEndTime = TimerGlobal.GetElapsed_ms();
     const u64 frameTime = frameEndTime - frameStartTime;
@@ -406,9 +420,16 @@ void CRenderDevice::ProcessFrame()
         updateDelta = 1000 / ps_fps_limit_in_menu;
 
 #ifdef XR_PLATFORM_WEB
-    UNUSED(frameTime);
-    emscripten_set_main_loop_timing(EM_TIMING_RAF, 1);
-    g_webFramePacer.SetVsyncPaced(true);
+    const bool vsync = psDeviceFlags.test(rsVSync);
+    if (vsync)
+        emscripten_set_main_loop_timing(EM_TIMING_RAF, 1);
+    else if (frameTime < updateDelta)
+        emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, updateDelta);
+    else
+        // A queued task yields to input/readback without the nested timer's
+        // minimum delay. Vsync-off must not use the adaptive rAF frame pacer.
+        emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
+    g_webFramePacer.SetVsyncPaced(vsync);
     g_webFramePacer.SetFrameLimit(1000.0 / updateDelta);
 #else
     if (frameTime < updateDelta)

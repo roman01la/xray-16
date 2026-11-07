@@ -11,12 +11,14 @@ target_sources(xrImGui PRIVATE
     "${IMGUI_DIR}/imgui_tables.cpp"
     "${IMGUI_DIR}/imgui_widgets.cpp"
     "${IMGUI_DIR}/imgui_internal.h"
-    "${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp"
-    "${IMGUI_DIR}/backends/imgui_impl_opengl3.h"
     "${IMGUI_DIR}/imstb_rectpack.h"
     "${IMGUI_DIR}/imstb_textedit.h"
     "${IMGUI_DIR}/imstb_truetype.h"
 )
+
+if (NOT EMSCRIPTEN)
+    target_sources(xrImGui PRIVATE "${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp")
+endif()
 
 target_include_directories(xrImGui
     PUBLIC
@@ -32,7 +34,6 @@ endif()
 
 target_compile_definitions(xrImGui
     PUBLIC
-    $<$<BOOL:${EMSCRIPTEN}>:IMGUI_IMPL_OPENGL_ES3>
     IMGUI_DISABLE_OBSOLETE_KEYIO
     IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     IMGUI_DEFINE_MATH_OPERATORS

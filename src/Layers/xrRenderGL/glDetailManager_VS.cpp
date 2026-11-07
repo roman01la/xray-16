@@ -147,6 +147,12 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                 }
                 VERIFY(c_storage);*/
 
+#ifdef XR_PLATFORM_WEB
+                // Upload one contiguous instance array per draw instead of crossing
+                // the Wasm/JavaScript boundary for each of its four-vector rows.
+                static thread_local xr_vector<Fvector4> instanceRows;
+                instanceRows.resize(hw_BatchSize * 4);
+#endif
                 u32 dwBatch = 0;
 
                 for (auto items : vis)
@@ -158,6 +164,12 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                         // Build matrix ( 3x4 matrix, last row - color )
                         float scale = instance->scale_calculated;
                         Fmatrix& M = instance->mRotY;
+#ifdef XR_PLATFORM_WEB
+                        instanceRows[base + 0].set(M._11 * scale, M._21 * scale, M._31 * scale, M._41);
+                        instanceRows[base + 1].set(M._12 * scale, M._22 * scale, M._32 * scale, M._42);
+                        instanceRows[base + 2].set(M._13 * scale, M._23 * scale, M._33 * scale, M._43);
+                        instanceRows[base + 3].set(instance->c_sun, instance->c_sun, instance->c_sun, instance->c_hemi);
+#else
                         cmd_list.set_ca(&*constArray, base + 0, M._11 * scale, M._21 * scale, M._31 * scale, M._41);
                         cmd_list.set_ca(&*constArray, base + 1, M._12 * scale, M._22 * scale, M._32 * scale, M._42);
                         cmd_list.set_ca(&*constArray, base + 2, M._13 * scale, M._23 * scale, M._33 * scale, M._43);
@@ -167,6 +179,7 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                         float h = instance->c_hemi;
                         float s = instance->c_sun;
                         cmd_list.set_ca(&*constArray, base + 3, s, s, s, h);
+#endif
                         dwBatch ++;
                         if (dwBatch == hw_BatchSize)
                         {
@@ -176,6 +189,9 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                             u32 dwCNT_prims = dwBatch * Object.number_indices / 3;
                             //RCache.get_ConstantCache_Vertex().b_dirty				=	TRUE;
                             //RCache.get_ConstantCache_Vertex().get_array_f().dirty	(c_base,c_base+dwBatch*4);
+#ifdef XR_PLATFORM_WEB
+                            cmd_list.set_ca(&*constArray, 0, instanceRows.data(), dwBatch * 4);
+#endif
                             cmd_list.Render(D3DPT_TRIANGLELIST, vOffset, 0, dwCNT_verts, iOffset, dwCNT_prims);
                             cmd_list.stat.r.s_details.add(dwCNT_verts);
 
@@ -202,6 +218,9 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                     u32 dwCNT_prims = dwBatch * Object.number_indices / 3;
                     //RCache.get_ConstantCache_Vertex().b_dirty				=	TRUE;
                     //RCache.get_ConstantCache_Vertex().get_array_f().dirty	(c_base,c_base+dwBatch*4);
+#ifdef XR_PLATFORM_WEB
+                    cmd_list.set_ca(&*constArray, 0, instanceRows.data(), dwBatch * 4);
+#endif
                     cmd_list.Render(D3DPT_TRIANGLELIST, vOffset, 0, dwCNT_verts, iOffset, dwCNT_prims);
                     cmd_list.stat.r.s_details.add(dwCNT_verts);
                 }

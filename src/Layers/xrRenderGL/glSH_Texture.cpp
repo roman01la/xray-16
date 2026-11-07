@@ -2,6 +2,7 @@
 #pragma hdrstop
 
 #include "../xrRender/ResourceManager.h"
+#include "../xrRender/BufferUtils.h"
 
 #ifdef XR_PLATFORM_WINDOWS // TODO
 #include "xrEngine/tntQAVI.h"
@@ -65,9 +66,20 @@ void CTexture::PostLoad()
     else bind = fastdelegate::FastDelegate2<CBackend&,u32>(this, &CTexture::apply_normal);
 }
 
+static void BindEngineTexture(u32 stage, GLenum target, GLuint texture)
+{
+#ifdef XR_PLATFORM_WEB
+    QueueWebGPUBinding(WebGPUBinding::Texture, stage, target, texture); return;
+#endif
+    CHK_GL(glActiveTexture(GL_TEXTURE0 + stage));
+    CHK_GL(glBindTexture(target, texture));
+}
+
 void CTexture::apply_load(CBackend& cmd_list, u32 dwStage)
 {
+#ifndef XR_PLATFORM_WEB
     CHK_GL(glActiveTexture(GL_TEXTURE0 + dwStage));
+#endif
     if (!flags.bLoaded) Load();
     else PostLoad();
     bind(cmd_list, dwStage);
@@ -75,14 +87,24 @@ void CTexture::apply_load(CBackend& cmd_list, u32 dwStage)
 
 void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
 {
-    CHK_GL(glActiveTexture(GL_TEXTURE0 + dwStage));
-    CHK_GL(glBindTexture(desc, pSurface));
+    BindEngineTexture(dwStage, desc, pSurface);
 
     if (pTheora->Update(m_play_time != 0xFFFFFFFF ? m_play_time : Device.dwTimeContinual))
     {
         u32* pBits;
         u32 _w = pTheora->Width(true);
         u32 _h = pTheora->Height(true);
+
+#ifdef XR_PLATFORM_WEB
+        xr_vector<u32> frame(_w * _h);
+        int framePos = 0;
+        pTheora->DecompressFrame(frame.data(), 0, framePos);
+        for (u32& texel : frame) // BGRA -> RGBA
+            texel = (texel & 0xff00ff00u) | ((texel & 0x00ff0000u) >> 16) | ((texel & 0x000000ffu) << 16);
+        UploadWebGPUTexture(pSurface, desc, 0, _w, _h, 1, GL_RGBA, GL_UNSIGNED_BYTE, false, frame.data(), _w * _h * 4);
+        UNUSED(pBits);
+        return;
+#endif
 
         // Clear and map buffer for writing
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pBuffer);
@@ -102,8 +124,7 @@ void CTexture::apply_theora(CBackend& cmd_list, u32 dwStage)
 
 void CTexture::apply_avi(CBackend& cmd_list, u32 dwStage) const
 {
-    CHK_GL(glActiveTexture(GL_TEXTURE0 + dwStage));
-    CHK_GL(glBindTexture(desc, pSurface));
+    BindEngineTexture(dwStage, desc, pSurface);
 
 #ifdef XR_PLATFORM_WINDOWS // TODO
     if (pAVI->NeedUpdate())
@@ -134,14 +155,12 @@ void CTexture::apply_seq(CBackend& cmd_list, u32 dwStage)
         pSurface = seqDATA[frame_id];
     }
 
-    CHK_GL(glActiveTexture(GL_TEXTURE0 + dwStage));
-    CHK_GL(glBindTexture(desc, pSurface));
+    BindEngineTexture(dwStage, desc, pSurface);
 };
 
 void CTexture::apply_normal(CBackend& cmd_list, u32 dwStage) const
 {
-    CHK_GL(glActiveTexture(GL_TEXTURE0 + dwStage));
-    CHK_GL(glBindTexture(desc, pSurface));
+    BindEngineTexture(dwStage, desc, pSurface);
 };
 
 void CTexture::Preload()
@@ -196,18 +215,28 @@ void CTexture::Load()
             u32 _w = pTheora->Width(false);
             u32 _h = pTheora->Height(false);
 
+#ifdef XR_PLATFORM_WEB
+            CreateWebGPUTexture(&pTexture, GL_TEXTURE_2D, 1, GL_RGBA8, _w, _h);
+#else
             glGenBuffers(1, &pBuffer);
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pBuffer);
             CHK_GL(glBufferData(GL_PIXEL_UNPACK_BUFFER, flags.MemoryUsage, nullptr, GL_STREAM_DRAW));
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
+            const texture_upload_unit uploadUnit(GL_TEXTURE_2D);
             glGenTextures(1, &pTexture);
             glBindTexture(GL_TEXTURE_2D, pTexture);
             CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, _w, _h));
 
+#endif
             pSurface = pTexture;
             desc = GL_TEXTURE_2D;
+            size_set(_w, _h);
+#ifdef XR_PLATFORM_WEB
+            GLenum err = GL_NO_ERROR;
+#else
             GLenum err = glGetError();
+#endif
             if (err != GL_NO_ERROR)
             {
                 Msg("Invalid video stream: 0x%x", err);
@@ -238,12 +267,14 @@ void CTexture::Load()
 
             // Now create texture to copy PBO into
             GLuint pTexture = 0;
+            const texture_upload_unit uploadUnit(GL_TEXTURE_2D);
             glGenTextures(1, &pTexture);
             glBindTexture(GL_TEXTURE_2D, pTexture);
             CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, pAVI->m_dwWidth, pAVI->m_dwHeight));
 
             pSurface = pTexture;
             desc = GL_TEXTURE_2D;
+            size_set(pAVI->m_dwWidth, pAVI->m_dwHeight);
             if (glGetError() != GL_NO_ERROR)
             {
                 FATAL("Invalid video stream");
@@ -277,7 +308,7 @@ void CTexture::Load()
             {
                 // Load another texture
                 u32 mem = 0;
-                pSurface = RImplementation.texture_load(buffer, mem, desc);
+                pSurface = RImplementation.texture_load(buffer, mem, desc, m_loaded_width, m_loaded_height);
                 if (pSurface)
                 {
                     // pSurface->SetPriority	(PRIORITY_LOW);
@@ -293,7 +324,7 @@ void CTexture::Load()
     {
         // Normal texture
         u32 mem = 0;
-        pSurface = RImplementation.texture_load(cName.c_str(), mem, desc);
+        pSurface = RImplementation.texture_load(cName.c_str(), mem, desc, m_loaded_width, m_loaded_height);
 
         // Calc memory usage and preload into vid-mem
         if (pSurface)
@@ -319,13 +350,27 @@ void CTexture::Unload()
     flags.bLoaded = FALSE;
     if (!seqDATA.empty())
     {
+
+#ifdef XR_PLATFORM_WEB
+        DeleteWebGPUTextures(seqDATA.size(), seqDATA.data());
+#else
         CHK_GL(glDeleteTextures(seqDATA.size(), seqDATA.data()));
+#endif
         seqDATA.clear();
         pSurface = 0;
     }
 
-    CHK_GL(glDeleteTextures(1, &pSurface));
+
+#ifdef XR_PLATFORM_WEB
+    DeleteWebGPUTextures(1, &pSurface);
+#else
+        CHK_GL(glDeleteTextures(1, &pSurface));
+#endif
+#ifdef XR_PLATFORM_WEB
+    DeleteWebGPUBuffer(pBuffer);
+#else
     CHK_GL(glDeleteBuffers(1, &pBuffer));
+#endif
 
 #ifdef XR_PLATFORM_WINDOWS
     xr_delete(pAVI);
@@ -340,9 +385,14 @@ void CTexture::desc_update()
     desc_cache = pSurface;
     if (pSurface && (GL_TEXTURE_2D == desc || GL_TEXTURE_2D_MULTISAMPLE == desc))
     {
+#ifdef XR_PLATFORM_WEB
+        m_width = m_loaded_width;
+        m_height = m_loaded_height;
+#else
         glBindTexture(desc, pSurface);
         CHK_GL(glGetTexLevelParameteriv(desc, 0, GL_TEXTURE_WIDTH, &m_width));
         CHK_GL(glGetTexLevelParameteriv(desc, 0, GL_TEXTURE_HEIGHT, &m_height));
+#endif
     }
 }
 

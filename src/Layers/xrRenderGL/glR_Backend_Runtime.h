@@ -22,6 +22,9 @@ IC void CBackend::set_FB(GLuint FB)
     {
         PGO(Msg("PGO:set_FB"));
         pFB = FB;
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUState(WebGPUState::Framebuffer, GL_FRAMEBUFFER, FB); return;
+#endif
         CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, pFB));
     }
 }
@@ -33,6 +36,9 @@ IC void CBackend::set_RT(GLuint RT, u32 ID)
         PGO(Msg("PGO:setRT"));
         stat.target_rt++;
         pRT[ID] = RT;
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUState(WebGPUState::Attachment, GL_COLOR_ATTACHMENT0 + ID, RT); return;
+#endif
         // TODO: OGL: Implement support for multi-sampled render targets
         CHK_GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + ID, GL_TEXTURE_2D, RT, 0));
     }
@@ -45,6 +51,9 @@ IC void CBackend::set_ZB(GLuint ZB)
         PGO(Msg("PGO:setZB"));
         stat.target_zb++;
         pZB = ZB;
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUState(WebGPUState::Attachment, GL_DEPTH_STENCIL_ATTACHMENT, ZB); return;
+#endif
         // TODO: OGL: Implement support for multi-sampled render targets
         CHK_GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, ZB, 0));
     }
@@ -52,10 +61,20 @@ IC void CBackend::set_ZB(GLuint ZB)
 
 IC void CBackend::ClearRT(GLuint rt, const Fcolor& color)
 {
+#ifdef XR_PLATFORM_WEB
+    ClearWebGPUTarget(rt, GL_COLOR_BUFFER_BIT, &color, 1.f, 0);
+    {
+        colorwrite_mask = u32(-1);
+        return;
+    }
+#endif
     // TODO: OGL: Implement support for multi-sampled render targets
     CHK_GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rt, 0));
 
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+#ifdef XR_PLATFORM_WEB
+    colorwrite_mask = u32(-1);
+#endif
     glClearColor(color.r, color.g, color.b, color.a);
 
     CHK_GL(glClear(GL_COLOR_BUFFER_BIT));
@@ -63,11 +82,22 @@ IC void CBackend::ClearRT(GLuint rt, const Fcolor& color)
 
 IC void CBackend::ClearZB(GLuint zb, float depth)
 {
+#ifdef XR_PLATFORM_WEB
+    VERIFY(pZB == zb);
+    ClearWebGPUTarget(zb, GL_DEPTH_BUFFER_BIT, nullptr, depth, 0);
+    {
+        depth_write_mask = TRUE;
+        return;
+    }
+#endif
     VERIFY(pZB == zb); // do not allow to clear unbound depth
     // TODO: OGL: Implement support for multi-sampled render targets
     CHK_GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, zb, 0));
 
     glDepthMask(GL_TRUE);
+#ifdef XR_PLATFORM_WEB
+    depth_write_mask = TRUE;
+#endif
     glClearDepthf(depth);
 
     CHK_GL(glClear(GL_DEPTH_BUFFER_BIT));
@@ -75,6 +105,15 @@ IC void CBackend::ClearZB(GLuint zb, float depth)
 
 IC void CBackend::ClearZB(GLuint zb, float depth, u8 stencil)
 {
+#ifdef XR_PLATFORM_WEB
+    VERIFY(pZB == zb);
+    ClearWebGPUTarget(zb, GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, nullptr, depth, stencil);
+    {
+        depth_write_mask = TRUE;
+        stencil_writemask = u32(~0);
+        return;
+    }
+#endif
     VERIFY(pZB == zb); // do not allow to clear unbound depth
     // TODO: OGL: Implement support for multi-sampled render targets
     CHK_GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, zb, 0));
@@ -83,6 +122,10 @@ IC void CBackend::ClearZB(GLuint zb, float depth, u8 stencil)
     glClearDepthf(depth);
 
     glStencilMask(~0);
+#ifdef XR_PLATFORM_WEB
+    depth_write_mask = TRUE;
+    stencil_writemask = u32(~0);
+#endif
     glClearStencil(stencil);
 
     CHK_GL(glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT));
@@ -90,6 +133,11 @@ IC void CBackend::ClearZB(GLuint zb, float depth, u8 stencil)
 
 IC bool CBackend::ClearRTRect(GLuint rt, const Fcolor& color, size_t numRects, const Irect* rects)
 {
+#ifdef XR_PLATFORM_WEB
+    NativeWebGPUClearRects(rt, false, color.r, color.g, color.b, color.a, 1.f, numRects, rects);
+    colorwrite_mask = u32(-1);
+    return true;
+#endif
     // TODO: OGL: Implement support for multi-sampled render targets
     CHK_GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rt, 0));
 
@@ -106,6 +154,9 @@ IC bool CBackend::ClearRTRect(GLuint rt, const Fcolor& color, size_t numRects, c
 
         // Clear the color buffer without affecting the global state
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+#ifdef XR_PLATFORM_WEB
+        colorwrite_mask = u32(-1);
+#endif
         glClearColor(color.r, color.g, color.b, color.a);
 
         CHK_GL(glClear(GL_COLOR_BUFFER_BIT));
@@ -118,6 +169,11 @@ IC bool CBackend::ClearRTRect(GLuint rt, const Fcolor& color, size_t numRects, c
 
 IC bool CBackend::ClearZBRect(GLuint zb, float depth, size_t numRects, const Irect* rects)
 {
+#ifdef XR_PLATFORM_WEB
+    NativeWebGPUClearRects(zb, true, 0, 0, 0, 0, depth, numRects, rects);
+    depth_write_mask = TRUE;
+    return true;
+#endif
     // TODO: OGL: Implement support for multi-sampled render targets
     CHK_GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, zb, 0));
 
@@ -133,6 +189,9 @@ IC bool CBackend::ClearZBRect(GLuint zb, float depth, size_t numRects, const Ire
         CHK_GL(glScissor(rects->left, bottom, rects->width(), rects->height()));
 
         glDepthMask(GL_TRUE);
+#ifdef XR_PLATFORM_WEB
+        depth_write_mask = TRUE;
+#endif
         glClearDepthf(depth);
 
         CHK_GL(glClear(GL_DEPTH_BUFFER_BIT));
@@ -143,6 +202,10 @@ IC bool CBackend::ClearZBRect(GLuint zb, float depth, size_t numRects, const Ire
     return true;
 }
 
+#ifdef XR_PLATFORM_WEB
+inline SDeclaration* g_boundDeclaration = nullptr;
+#endif
+
 ICF void CBackend::set_Format(SDeclaration* _decl)
 {
     if (decl != _decl)
@@ -152,7 +215,12 @@ ICF void CBackend::set_Format(SDeclaration* _decl)
 		stat.decl++;
 #endif
         decl = _decl;
+#ifdef XR_PLATFORM_WEB
+        g_boundDeclaration = _decl;
+        vb = 0;
+#else
         CHK_GL(glBindVertexArray(_decl->dcl));
+#endif
 
         // Clear cached index buffer
         ib = 0;
@@ -219,7 +287,7 @@ ICF void CBackend::set_PP(GLuint _pp, pcstr _n)
     {
 #ifdef RBackend_PGO
         string_path name;
-        if (GLAD_GL_ARB_separate_shader_objects)
+        if (SupportsArbSeparateShaderObjects())
             glGetObjectLabel(GL_PROGRAM_PIPELINE, _pp, sizeof(name), nullptr, name)
         else
             glGetObjectLabel(GL_PROGRAM, _pp, sizeof(name), nullptr, name)
@@ -227,10 +295,16 @@ ICF void CBackend::set_PP(GLuint _pp, pcstr _n)
         PGO(Msg("PGO:PPshader:%d,%s", _pp, _n ? _n : name));
         stat.pp++;
         pp = _pp;
-        if (GLAD_GL_ARB_separate_shader_objects)
+        if (SupportsArbSeparateShaderObjects())
             CHK_GL(glBindProgramPipeline(pp));
         else
-            CHK_GL(glUseProgram(pp));
+        {
+#ifdef XR_PLATFORM_WEB
+            // Draw records carry the program handle.
+#else
+            { CHK_GL(glUseProgram(pp)); }
+#endif
+        }
 #ifdef DEBUG
         pp_name = _n;
 #endif
@@ -248,14 +322,22 @@ ICF void CBackend::set_Vertices(GLuint _vb, u32 _vb_stride)
         vb = _vb;
         vb_stride = _vb_stride;
 
-        if (GLAD_GL_ARB_vertex_attrib_binding)
+        if (SupportsArbVertexAttribBinding())
         {
             CHK_GL(glBindVertexBuffer(0, vb, 0, vb_stride));
         }
         else
         {
+#ifdef XR_PLATFORM_WEB
+            if (g_boundDeclaration)
+            {
+                g_boundDeclaration->bound_vb = vb;
+                g_boundDeclaration->bound_stride = vb_stride;
+            }
+#else
             CHK_GL(glBindBuffer(GL_ARRAY_BUFFER, vb));
             SetGLVertexPointer(decl);
+#endif
         }
     }
 }
@@ -269,7 +351,12 @@ ICF void CBackend::set_Indices(GLuint _ib)
 		stat.ib++;
 #endif
         ib = _ib;
+#ifdef XR_PLATFORM_WEB
+        if (g_boundDeclaration)
+            g_boundDeclaration->bound_ib = ib;
+#else
         CHK_GL(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib));
+#endif
     }
 }
 
@@ -317,6 +404,7 @@ IC u32 GetIndexCount(D3DPRIMITIVETYPE T, u32 iPrimitiveCount)
     }
 }
 
+
 ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV, u32 startI, u32 PC)
 {
     GLenum Topology = TranslateTopology(T);
@@ -326,7 +414,11 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     stat.render.verts += countV;
     stat.render.polys += PC;
     constants.flush();
+#ifdef XR_PLATFORM_WEB
+    SubmitWebGPUDraw(decl, vb, ib, vb_stride, pp, Topology, true, iIndexCount, startI, baseV);
+#else
     CHK_GL(glDrawElementsBaseVertex(Topology, iIndexCount, GL_UNSIGNED_SHORT, (void*)(startI * sizeof(GLushort)), baseV));
+#endif
     PGO(Msg("PGO:DIP:%dv/%df", countV, PC));
 }
 
@@ -339,6 +431,10 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC)
     stat.render.verts += iIndexCount;
     stat.render.polys += PC;
     constants.flush();
+#ifdef XR_PLATFORM_WEB
+    SubmitWebGPUDraw(decl, vb, 0, vb_stride, pp, Topology, false, iIndexCount, startV, 0);
+        return;
+#endif
     CHK_GL(glDrawArrays(Topology, startV, iIndexCount));
     PGO(Msg("PGO:DIP:%dv/%df", iIndexCount, PC));
 }
@@ -353,6 +449,11 @@ IC void CBackend::set_Geometry(SGeometry* _geom)
 
 IC void CBackend::set_Scissor(const Irect* R)
 {
+#ifdef XR_PLATFORM_WEB
+    R ? QueueWebGPUState(WebGPUState::Scissor, 1, R->left, Device.dwHeight - R->bottom, R->width(), R->height())
+          : QueueWebGPUState(WebGPUState::Scissor, 0);
+    return;
+#endif
     if (R)
     {
         CHK_GL(glEnable(GL_SCISSOR_TEST));
@@ -372,6 +473,10 @@ IC void CBackend::set_Scissor(const Irect* R)
 
 IC void CBackend::SetViewport(const D3D_VIEWPORT& viewport) const
 {
+#ifdef XR_PLATFORM_WEB
+    QueueWebGPUViewport(viewport.TopLeftX, viewport.TopLeftY, viewport.Width, viewport.Height,
+        viewport.MinDepth, viewport.MaxDepth); return;
+#endif
     glViewport(viewport.TopLeftX, viewport.TopLeftY, viewport.Width, viewport.Height);
     glDepthRangef(viewport.MinDepth, viewport.MaxDepth);
 }
@@ -379,6 +484,38 @@ IC void CBackend::SetViewport(const D3D_VIEWPORT& viewport) const
 IC void CBackend::set_Stencil(u32 _enable, u32 _func, u32 _ref, u32 _mask, u32 _writemask, u32 _fail, u32 _pass,
                               u32 _zfail)
 {
+#ifdef XR_PLATFORM_WEB
+    if (stencil_enable != _enable)
+    {
+        stencil_enable = _enable;
+        QueueWebGPUState(WebGPUState::StencilEnable, _enable);
+    }
+
+    if (!_enable)
+        return;
+
+    if (stencil_func != _func || stencil_ref != _ref || stencil_mask != _mask)
+    {
+        stencil_func = _func;
+        stencil_ref = _ref;
+        stencil_mask = _mask;
+        QueueWebGPUState(WebGPUState::StencilFunc, _func, _ref, _mask);
+    }
+
+    if (stencil_writemask != _writemask)
+    {
+        stencil_writemask = _writemask;
+        QueueWebGPUState(WebGPUState::StencilMask, _writemask);
+    }
+
+    if (stencil_fail != _fail || stencil_zfail != _zfail || stencil_pass != _pass)
+    {
+        stencil_fail = _fail;
+        stencil_zfail = _zfail;
+        stencil_pass = _pass;
+        QueueWebGPUState(WebGPUState::StencilOps, _fail, _zfail, _pass);
+    }
+#else
     if (_enable)
     {
         glEnable(GL_STENCIL_TEST);
@@ -392,6 +529,7 @@ IC void CBackend::set_Stencil(u32 _enable, u32 _func, u32 _ref, u32 _mask, u32 _
     {
         glDisable(GL_STENCIL_TEST);
     }
+#endif
 }
 
 IC void CBackend::set_Z(u32 _enable)
@@ -399,6 +537,9 @@ IC void CBackend::set_Z(u32 _enable)
     if (z_enable != _enable)
     {
         z_enable = _enable;
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUState(WebGPUState::DepthEnable, _enable); return;
+#endif
         if (_enable)
             glEnable(GL_DEPTH_TEST);
         else
@@ -411,9 +552,48 @@ IC void CBackend::set_ZFunc(u32 _func)
     if (z_func != _func)
     {
         z_func = _func;
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUState(WebGPUState::DepthFunc, _func); return;
+#endif
         CHK_GL(glDepthFunc(glStateUtils::ConvertCmpFunction(_func)));
     }
 }
+
+#ifdef XR_PLATFORM_WEB
+IC void CBackend::set_DepthWrite(u32 _enable)
+{
+    if (depth_write_mask == _enable)
+        return;
+    depth_write_mask = _enable;
+    QueueWebGPUState(WebGPUState::DepthWrite, _enable); return;
+    CHK_GL(glDepthMask(_enable ? GL_TRUE : GL_FALSE));
+}
+
+IC void CBackend::set_Blend(u32 _enable, u32 _src, u32 _dst, u32 _srcAlpha, u32 _dstAlpha, u32 _op, u32 _opAlpha)
+{
+    if (blend_enable != _enable)
+    {
+        blend_enable = _enable;
+        QueueWebGPUState(WebGPUState::BlendEnable, _enable);
+    }
+
+    if (blend_src != _src || blend_dst != _dst || blend_src_alpha != _srcAlpha || blend_dst_alpha != _dstAlpha)
+    {
+        blend_src = _src;
+        blend_dst = _dst;
+        blend_src_alpha = _srcAlpha;
+        blend_dst_alpha = _dstAlpha;
+        QueueWebGPUState(WebGPUState::BlendFactors, _src, _dst, _srcAlpha, _dstAlpha);
+    }
+
+    if (blend_op != _op || blend_op_alpha != _opAlpha)
+    {
+        blend_op = _op;
+        blend_op_alpha = _opAlpha;
+        QueueWebGPUState(WebGPUState::BlendOps, _op, _opAlpha);
+    }
+}
+#endif
 
 IC void CBackend::set_AlphaRef(u32 _value)
 {
@@ -425,6 +605,9 @@ IC void CBackend::set_ColorWriteEnable(u32 _mask)
     if (colorwrite_mask != _mask)
     {
         colorwrite_mask = _mask;
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUState(WebGPUState::ColorMask, _mask); return;
+#endif
         CHK_GL(glColorMask(
             (_mask & D3DCOLORWRITEENABLE_RED) ? GL_TRUE : GL_FALSE,
             (_mask & D3DCOLORWRITEENABLE_GREEN) ? GL_TRUE : GL_FALSE,
@@ -438,6 +621,9 @@ ICF void CBackend::set_CullMode(u32 _mode)
     if (cull_mode != _mode)
     {
         cull_mode = _mode;
+#ifdef XR_PLATFORM_WEB
+        QueueWebGPUState(WebGPUState::CullMode, _mode); return;
+#endif
         if (_mode == D3DCULL_NONE)
         {
             glDisable(GL_CULL_FACE);
@@ -455,7 +641,9 @@ ICF void CBackend::set_FillMode(u32 _mode)
     if (fill_mode != _mode)
     {
         fill_mode = _mode;
+#ifndef XR_PLATFORM_WEB // wireframe is a debug feature; GLES has no glPolygonMode
         glPolygonMode(GL_FRONT_AND_BACK, glStateUtils::ConvertFillMode(_mode));
+#endif
     }
 }
 
@@ -516,9 +704,20 @@ void CBackend::set_pass_targets(const ref_rt& _1, const ref_rt& _2, const ref_rt
     set_RT(_3 ? _3->pRT : 0, 2);
     set_ZB(zb ? zb->pZRT : 0);
 
+#ifdef XR_PLATFORM_WEB
+// Native attachment validation follows draw-buffer selection below.
+#else
     [[maybe_unused]] GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     VERIFY(status == GL_FRAMEBUFFER_COMPLETE);
-    CHK_GL(glDrawBuffers(3, buffers));
+#endif
+#ifdef XR_PLATFORM_WEB
+    QueueWebGPUDrawBuffers(3, buffers);
+#ifdef DEBUG
+    ValidateNativeWebGPUFramebuffer();
+#endif
+#else
+    { CHK_GL(glDrawBuffers(3, buffers)); }
+#endif
 
     const D3D_VIEWPORT viewport = { 0, 0, curr_rt_width, curr_rt_height, 0.f, 1.f };
     SetViewport(viewport);

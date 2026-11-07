@@ -1,0 +1,17 @@
+[package]
+name = "xray-shader-translator"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+naga = { version = "=26.0.0", default-features = false, features = ["spv-in", "wgsl-out"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

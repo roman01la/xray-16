@@ -31,10 +31,13 @@ void CRenderTarget::build_textures()
     // Build material(s)
     {
         // Surface
+#ifdef XR_PLATFORM_WEB
+        CreateWebGPUTexture(&t_material_surf, GL_TEXTURE_3D, 1, GL_RG8, TEX_material_LdotN, TEX_material_LdotH, TEX_material_Count);
+#else
         glGenTextures(1, &t_material_surf);
         CHK_GL(glBindTexture(GL_TEXTURE_3D, t_material_surf));
-        CHK_GL(glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG8, TEX_material_LdotN, TEX_material_LdotH, TEX_material_Count)
-        );
+        CHK_GL(glTexStorage3D(GL_TEXTURE_3D, 1, GL_RG8, TEX_material_LdotN, TEX_material_LdotH, TEX_material_Count));
+#endif
         t_material = RImplementation.Resources->_CreateTexture(r2_material);
         t_material->surface_set(GL_TEXTURE_3D, t_material_surf);
 
@@ -98,8 +101,12 @@ void CRenderTarget::build_textures()
                 }
             }
         }
+#ifdef XR_PLATFORM_WEB
+        UploadWebGPUTexture(t_material_surf, GL_TEXTURE_3D, 0, TEX_material_LdotN, TEX_material_LdotH, TEX_material_Count, GL_RG, GL_UNSIGNED_BYTE, false, pBits, sizeof(pBits));
+#else
         CHK_GL(glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, TEX_material_LdotN, TEX_material_LdotH, TEX_material_Count
             , GL_RG, GL_UNSIGNED_BYTE, pBits));
+#endif
         // #ifdef DEBUG
         // R_CHK	(D3DXSaveTextureToFile	("x:" DELIMITER "r2_material.dds",D3DXIFF_DDS,t_material_surf,0));
         // #endif
@@ -108,7 +115,9 @@ void CRenderTarget::build_textures()
     // Build noise table
     if (true)
     {
+#ifndef XR_PLATFORM_WEB
         glGenTextures(TEX_jitter_count, t_noise_surf);
+#endif
 
         static const int sampleSize = 4;
         u32 tempData[TEX_jitter_count][TEX_jitter * TEX_jitter];
@@ -118,8 +127,12 @@ void CRenderTarget::build_textures()
         {
             string_path name;
             xr_sprintf(name, "%s%d", r2_jitter, it1);
+#ifdef XR_PLATFORM_WEB
+            CreateWebGPUTexture(&t_noise_surf[it1], GL_TEXTURE_2D, 1, GL_RGBA8, TEX_jitter, TEX_jitter);
+#else
             CHK_GL(glBindTexture(GL_TEXTURE_2D, t_noise_surf[it1]));
             CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, TEX_jitter, TEX_jitter));
+#endif
             t_noise[it1] = RImplementation.Resources->_CreateTexture(name);
             t_noise[it1]->surface_set(GL_TEXTURE_2D, t_noise_surf[it1]);
         }
@@ -142,9 +155,13 @@ void CRenderTarget::build_textures()
         u32 it3 = 0;
         while (it3 < TEX_jitter_count - 1)
         {
+#ifdef XR_PLATFORM_WEB
+            UploadWebGPUTexture(t_noise_surf[it3], GL_TEXTURE_2D, 0, TEX_jitter, TEX_jitter, 1, GL_RGBA, GL_UNSIGNED_BYTE, false, tempData[it3], sizeof(tempData[it3]));
+#else
             CHK_GL(glBindTexture(GL_TEXTURE_2D, t_noise_surf[it3]));
             CHK_GL(glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEX_jitter, TEX_jitter, GL_RGBA, GL_UNSIGNED_BYTE,
                 tempData[it3]));
+#endif
             it3++;
         }
 
@@ -154,8 +171,12 @@ void CRenderTarget::build_textures()
         int it = TEX_jitter_count - 1;
         string_path name;
         xr_sprintf(name, "%s%d", r2_jitter, it);
+#ifdef XR_PLATFORM_WEB
+        CreateWebGPUTexture(&t_noise_surf[it], GL_TEXTURE_2D, 1, GL_RGBA32F, TEX_jitter, TEX_jitter);
+#else
         CHK_GL(glBindTexture(GL_TEXTURE_2D, t_noise_surf[it]));
         CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, TEX_jitter, TEX_jitter));
+#endif
         t_noise[it] = RImplementation.Resources->_CreateTexture(name);
         t_noise[it]->surface_set(GL_TEXTURE_2D, t_noise_surf[it]);
 
@@ -185,23 +206,35 @@ void CRenderTarget::build_textures()
                 //generate_hbao_jitter	(data,TEX_jitter*TEX_jitter);
             }
         }
+#ifdef XR_PLATFORM_WEB
+        UploadWebGPUTexture(t_noise_surf[it3], GL_TEXTURE_2D, 0, TEX_jitter, TEX_jitter, 1, GL_RGBA, GL_FLOAT, false, tempDataHBAO, sizeof(tempDataHBAO));
+#else
         CHK_GL(glBindTexture(GL_TEXTURE_2D, t_noise_surf[it3]));
         CHK_GL(glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEX_jitter, TEX_jitter, GL_RGBA, GL_FLOAT, tempDataHBAO));
+#endif
 
 
         //	Create noise mipped
         {
             //	Autogen mipmaps
+#ifdef XR_PLATFORM_WEB
+            CreateWebGPUTexture(&t_noise_surf_mipped, GL_TEXTURE_2D, 1, GL_RGBA8, TEX_jitter, TEX_jitter);
+#else
             glGenTextures(1, &t_noise_surf_mipped);
             CHK_GL(glBindTexture(GL_TEXTURE_2D, t_noise_surf_mipped));
             CHK_GL(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, TEX_jitter, TEX_jitter));
+#endif
             t_noise_mipped = RImplementation.Resources->_CreateTexture(r2_jitter_mipped);
             t_noise_mipped->surface_set(GL_TEXTURE_2D, t_noise_surf_mipped);
 
             //	Update texture. Generate mips.
+#ifdef XR_PLATFORM_WEB
+            UploadWebGPUTexture(t_noise_surf_mipped, GL_TEXTURE_2D, 0, TEX_jitter, TEX_jitter, 1, GL_RGBA, GL_UNSIGNED_BYTE, false, tempData[0], sizeof(tempData[0]));
+#else
             glBindTexture(GL_TEXTURE_2D, t_noise_surf_mipped);
             CHK_GL(glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TEX_jitter, TEX_jitter, GL_RGBA, GL_UNSIGNED_BYTE, tempData[0]));
             CHK_GL(glGenerateMipmap(GL_TEXTURE_2D));
+#endif
         }
     }
 }

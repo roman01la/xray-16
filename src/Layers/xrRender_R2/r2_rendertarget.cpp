@@ -312,6 +312,9 @@ CRenderTarget::CRenderTarget()
         rt_Generic_0.create(r2_RT_generic0, w, h, D3DFMT_A8R8G8B8, 1);
         rt_Generic_1.create(r2_RT_generic1, w, h, D3DFMT_A8R8G8B8, 1);
         rt_Generic.create(r2_RT_generic, w, h, D3DFMT_A8R8G8B8, 1);
+#ifdef XR_PLATFORM_WEB
+        rt_Forward.create("$user$forward", w, h, D3DFMT_A8R8G8B8, 1);
+#endif
 
         if (!options.msaa)
         {
@@ -710,7 +713,11 @@ CRenderTarget::~CRenderTarget()
 #elif defined(USE_OGL)
     // Textures
     t_material->surface_set(GL_TEXTURE_3D, 0);
+#ifdef XR_PLATFORM_WEB
+    DeleteWebGPUTextures(1, &t_material_surf);
+#else
     glDeleteTextures(1, &t_material_surf);
+#endif
     t_material.destroy();
 
     t_LUM_src->surface_set(GL_TEXTURE_2D, 0);
@@ -723,10 +730,18 @@ CRenderTarget::~CRenderTarget()
     {
         t_noise[it]->surface_set(GL_TEXTURE_2D, 0);
     }
+#ifdef XR_PLATFORM_WEB
+    DeleteWebGPUTextures(TEX_jitter_count, t_noise_surf);
+#else
     glDeleteTextures(TEX_jitter_count, t_noise_surf);
+#endif
 
     t_noise_mipped->surface_set(GL_TEXTURE_2D, 0);
+#ifdef XR_PLATFORM_WEB
+    DeleteWebGPUTextures(1, &t_noise_surf_mipped);
+#else
     glDeleteTextures(1, &t_noise_surf_mipped);
+#endif
 #else
 #   error No graphics API selected or enabled!
 #endif

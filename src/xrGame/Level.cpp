@@ -1,4 +1,7 @@
 #include "pch_script.h"
+#ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
+#endif
 #include "xrEngine/FDemoRecord.h"
 #include "xrEngine/FDemoPlay.h"
 #include "xrEngine/Environment.h"
@@ -819,6 +822,13 @@ void CLevel::DumpStatistics(IGameFont& font, IPerformanceAlert* alert)
     font.OutNext("- query:      %2.2fms", AIStats.VisQuery.result);
     font.OutNext("- rayCast:    %2.2fms", AIStats.VisRayTests.result);
     font.OutNext("LUA GC:       %d Kb, %2.2fms", lua_gc(GEnv.ScriptEngine->lua(), LUA_GCCOUNT, 0), AIStats.LuaGC.result);
+#ifdef XR_PLATFORM_WEB
+    const auto& objectStats = Objects.GetStats();
+    EM_ASM({
+        globalThis.__xrayWebGPU?.recordSubsystemTimings($0, $1, $2, $3, $4, $5);
+    }, objectStats.Update.result, AIStats.Think.result, AIStats.Vis.result,
+       AIStats.LuaGC.result, objectStats.Active, objectStats.Total);
+#endif
     AIStats.FrameStart();
 }
 

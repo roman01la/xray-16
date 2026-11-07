@@ -1,0 +1,53 @@
+<!doctype html><meta charset="utf-8"><title>Shader sidecar verification</title>
+<style>body{font:16px system-ui;background:#17212b;color:#eef;margin:40px}button{padding:12px;margin:8px}pre{white-space:pre-wrap}</style>
+<h1>Shader sidecar verification</h1>
+<p>Exercises the same parked compiler, engine-thread connection and persistent shader cache as the game.</p>
+<button id="cold">Test package and runtime compilation</button>
+<button id="warm">Verify persisted results after reload</button>
+<pre id="status">Starting compiler…</pre><pre id="result"></pre>
+<script type="module">
+import {startShaderCompiler,createShaderCompilerPort} from './shader-compiler-client.mjs';
+import {shaderKey} from './shader-key.js';
+import {SHADER_CACHE_VERSION} from './shader-cache.mjs';
+const status=document.querySelector('#status'),result=document.querySelector('#result');
+let stats;
+addEventListener('xray-shader-compiler-status',({detail})=>{stats=detail;status.textContent=JSON.stringify(detail,null,2);});
+const ready=startShaderCompiler();
+ready.catch(error=>result.textContent=String(error.stack||error));
+async function run(cold) {
+ document.querySelectorAll('button').forEach(b=>b.disabled=true);
+ try {
+  await ready;
+  const original=await (await fetch('./sidecar-test-request.json')).json();
+  const runtime=structuredClone(original);
+  runtime.sources.frag+='\n// runtime-sidecar-regression-v1\n';
+  const requests=[original,runtime];
+  if(cold){const cache=await caches.open(SHADER_CACHE_VERSION);for(const request of requests)await cache.delete(new URL('./shaders/'+shaderKey(request)+'.json',location.href));}
+  const worker=new Worker('./sidecar-test-worker.mjs',{type:'module'});
+  const port=createShaderCompilerPort();
+  const start=performance.now();
+  const answer=await new Promise((resolve,reject)=>{
+    const timeout=setTimeout(()=>reject(Error('Test timed out')),120000);
+    worker.onmessage=({data})=>{clearTimeout(timeout);data.error?reject(Error(data.error)):resolve(data.results);};
+    worker.onerror=e=>{clearTimeout(timeout);reject(Error(e.message));};
+    worker.postMessage({port,requests},[port]);
+  }).finally(()=>worker.terminate());
+  const elapsedMs=performance.now()-start;
+  const adapter=await navigator.gpu.requestAdapter();const device=await adapter.requestDevice();
+  const errors=[];
+  for(const program of answer)for(const [stage,code]of Object.entries(program.stages)){
+    const info=await device.createShaderModule({code:"diagnostic(off, derivative_uniformity);\n"+code}).getCompilationInfo();
+    errors.push(...info.messages.filter(m=>m.type==='error').map(m=>({stage,message:m.message})));
+  }
+  device.destroy();
+  const cache=await caches.open(SHADER_CACHE_VERSION);
+  const cached=[];
+  for(const request of requests)cached.push(!!await cache.match(new URL('./shaders/'+shaderKey(request)+'.json',location.href)));
+  const expected=cold ? stats.compiled===1&&stats.package===1 : stats.compiled===0&&stats.package===0&&stats.cache===2;
+  const equal=JSON.stringify({...answer[0],key:answer[1].key})===JSON.stringify(answer[1]);
+  result.textContent=JSON.stringify({passed:expected&&equal&&cached.every(Boolean)&&!errors.length,mode:cold?'cold':'persisted',elapsedMs,identicalArtifacts:equal,cached,gpuErrors:errors,stats},null,2);
+ }catch(error){result.textContent=String(error.stack||error);}
+}
+document.querySelector('#cold').onclick=()=>run(true);
+document.querySelector('#warm').onclick=()=>run(false);
+</script>

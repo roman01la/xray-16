@@ -44,4 +44,4 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('not found: ' + urlPath);
   }
-}).listen(port, () => console.log(`serving ${root} at http://localhost:${port}`));
+}).listen(port, '127.0.0.1', () => console.log(`serving ${root} at http://localhost:${port}`));

@@ -2,6 +2,7 @@
 //////////////////////////////////////////////////////////////////////
 
 #include "stdafx.h"
+#include "Layers/xrRender/BufferUtils.h"
 #pragma hdrstop
 
 #include "glHW.h"
@@ -22,6 +23,9 @@ static_assert(std::is_same_v<decltype(&OnDebugCallback), GLDEBUGPROC>);
 
 void UpdateVSync()
 {
+#ifdef XR_PLATFORM_WEB
+    return; // presentation is paced by the browser
+#endif
     if (psDeviceFlags.test(rsVSync))
     {
         // Try adaptive vsync first
@@ -91,6 +95,19 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     Caps.fDepth = D3DFMT_D24S8;
 
     // Create the context
+#ifdef XR_PLATFORM_WEB
+    const int version = 1;
+    R_ASSERT2(InitializeNativeWebGPU(), "Native WebGPU initialization failed");
+    m_nativeContext = 1; // Engine context ownership marker, not a WebGL handle.
+    AdapterName = "Native WebGPU";
+    OpenGLVersionString = "WebGPU";
+    ShadingVersion = "WGSL";
+    TextureUploadUnit = 31;
+    ComputeShadersSupported = false;
+    UpdateViews();
+    return;
+
+#else
     m_context = SDL_GL_CreateContext(m_window);
     if (m_context == nullptr)
     {
@@ -109,6 +126,7 @@ void CHW::CreateDevice(SDL_Window* hWnd)
         ZoneScopedN("gladLoadGL");
         version = gladLoadGL(reinterpret_cast<GLADloadfunc>(SDL_GL_GetProcAddress));
     }
+#endif
     if (version == 0)
     {
         Log("! OpenGL: could not initialize GLAD.");
@@ -143,6 +161,12 @@ void CHW::CreateDevice(SDL_Window* hWnd)
     Msg("* GPU OpenGL shading language version: %s", ShadingVersion);
     Msg("* GPU OpenGL VTF units: [%d] CTI units: [%d]", iMaxVTFUnits, iMaxCTIUnits);
 
+#ifdef XR_PLATFORM_WEB
+    TextureUploadUnit = u32(iMaxCTIUnits) - 1;
+    R_ASSERT2(TextureUploadUnit >= CTexture::rstVertex + CTexture::mtMaxVertexShaderTextures,
+        "too few texture units for a dedicated upload unit");
+#endif
+
     ComputeShadersSupported = false; // XXX: Implement compute shaders support
 
     if (glGenFramebuffers && glBindFramebuffer)
@@ -151,8 +175,18 @@ void CHW::CreateDevice(SDL_Window* hWnd)
 
 void CHW::DestroyDevice()
 {
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(1, 1, &pFB);
+#else
     CHK_GL(glDeleteFramebuffers(1, &pFB));
+#endif
     pFB = 0;
+
+#ifdef XR_PLATFORM_WEB
+    // Native WebGPU owns the device and canvas context.
+    m_nativeContext = 0;
+    return;
+#endif
 
     const auto context = SDL_GL_GetCurrentContext();
     if (context == m_context)
@@ -169,7 +203,11 @@ void CHW::Reset()
 {
     ZoneScoped;
 
+#ifdef XR_PLATFORM_WEB
+    DeleteNativeWebGPUObjects(1, 1, &pFB);
+#else
     CHK_GL(glDeleteFramebuffers(1, &pFB));
+#endif
     pFB = 0;
     UpdateViews();
 
@@ -178,6 +216,9 @@ void CHW::Reset()
 
 void CHW::SetPrimaryAttributes(u32& windowFlags)
 {
+#ifdef XR_PLATFORM_WEB
+    return; // WebGPU owns the canvas; SDL is used for input/window events
+#endif
     windowFlags |= SDL_WINDOW_OPENGL;
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -200,21 +241,35 @@ void CHW::SetPrimaryAttributes(u32& windowFlags)
 
 IRender::RenderContext CHW::GetCurrentContext() const
 {
+#ifdef XR_PLATFORM_WEB
+    if (m_nativeContext)
+        return IRender::PrimaryContext;
+    return IRender::NoContext;
+#else
     const auto context = SDL_GL_GetCurrentContext();
     if (context == m_context)
         return IRender::PrimaryContext;
     return IRender::NoContext;
+#endif
 }
 
 int CHW::MakeContextCurrent(IRender::RenderContext context) const
 {
     switch (context)
     {
+#ifdef XR_PLATFORM_WEB
+    case IRender::NoContext:
+        return 0;
+
+    case IRender::PrimaryContext:
+        return m_nativeContext ? 0 : -1;
+#else
     case IRender::NoContext:
         return SDL_GL_MakeCurrent(nullptr, nullptr);
 
     case IRender::PrimaryContext:
         return SDL_GL_MakeCurrent(m_window, m_context);
+#endif
 
     default:
         NODEFAULT;
@@ -224,9 +279,13 @@ int CHW::MakeContextCurrent(IRender::RenderContext context) const
 
 void CHW::UpdateViews()
 {
-    // Create the default framebuffer
+#ifdef XR_PLATFORM_WEB
+    pFB = CreateNativeWebGPUObject(1);
+    BindNativeWebGPUFramebuffer(pFB);
+#else
     glGenFramebuffers(1, &pFB);
     CHK_GL(glBindFramebuffer(GL_FRAMEBUFFER, pFB));
+#endif
 
     BackBufferCount = 1;
 }
@@ -239,15 +298,23 @@ void CHW::Present()
 #if 0 // kept for historical reasons
     RImplementation.Target->phase_flip();
 #else
+#ifdef XR_PLATFORM_WEB
+    PresentWebGPU(pFB, Device.dwWidth, Device.dwHeight);
+#else
+    {
     glBindFramebuffer(GL_READ_FRAMEBUFFER, pFB);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     glBlitFramebuffer(
         0, 0, Device.dwWidth, Device.dwHeight,
         0, 0, Device.dwWidth, Device.dwHeight,
         GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+#endif
 #endif
 
-    SDL_GL_SwapWindow(m_window);
+#ifndef XR_PLATFORM_WEB
+    SDL_GL_SwapWindow(m_window); // on the web the frame is presented when the loop callback returns
+#endif
     CurrentBackBuffer = (CurrentBackBuffer + 1) % BackBufferCount;
 }
 
@@ -273,13 +340,32 @@ bool CHW::ThisInstanceIsGlobal() const
 
 void CHW::BeginPixEvent(pcstr name) const
 {
+#ifndef XR_PLATFORM_WEB
     if (glPushDebugGroup)
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, name);
+#endif
 }
 
 void CHW::EndPixEvent() const
 {
+#ifndef XR_PLATFORM_WEB
     if (glPushDebugGroup)
         glPopDebugGroup();
+#endif
 }
 } // namespace xray::render::RENDER_NAMESPACE
+
+#ifdef XR_PLATFORM_WEB
+namespace xray::render::RENDER_NAMESPACE
+{
+texture_upload_unit::texture_upload_unit(GLenum target) : target(target)
+{
+    // Uploads use explicit native texture handles.
+}
+
+texture_upload_unit::~texture_upload_unit()
+{
+    // No binding state to restore.
+}
+} // namespace xray::render::RENDER_NAMESPACE
+#endif

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "ResourceManager.h"
+#include "BufferUtils.h"
 
 namespace xray::render::RENDER_NAMESPACE
 {
 #ifdef USE_OGL
+#ifndef XR_PLATFORM_WEB
 static void show_compile_errors(cpcstr filename, GLuint program, GLuint shader)
 {
     GLint length;
@@ -41,9 +43,13 @@ static void show_compile_errors(cpcstr filename, GLuint program, GLuint shader)
     xr_free(sources);
 }
 
+#endif
 template<GLenum type>
 inline std::pair<char, GLuint> GLCompileShader(pcstr* buffer, size_t size, pcstr name)
 {
+#ifdef XR_PLATFORM_WEB
+    return { 's', CreateNativeWebGPUShader(type, buffer, size) };
+#else
     const GLuint shader = glCreateShader(type);
     R_ASSERT(shader);
     CHK_GL(glShaderSource(shader, size, buffer, nullptr));
@@ -58,7 +64,7 @@ inline std::pair<char, GLuint> GLCompileShader(pcstr* buffer, size_t size, pcstr
         return { 's', 0 }; // 's' means "shader", 0 means error
     }
 
-    if (!GLAD_GL_ARB_separate_shader_objects)
+    if (!SupportsArbSeparateShaderObjects())
         return { 's', shader };
 
     const GLuint program = glCreateProgram();
@@ -66,14 +72,16 @@ inline std::pair<char, GLuint> GLCompileShader(pcstr* buffer, size_t size, pcstr
     if (glObjectLabel)
         CHK_GL(glObjectLabel(GL_PROGRAM, program, -1, name));
     CHK_GL(glProgramParameteri(program, GL_PROGRAM_SEPARABLE, (GLint)GL_TRUE));
-    if (GLAD_GL_ARB_get_program_binary)
+    if (SupportsArbGetProgramBinary())
         CHK_GL(glProgramParameteri(program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, (GLint)GL_TRUE));
 
     CHK_GL(glAttachShader(program, shader));
+#ifndef XR_PLATFORM_WEB // GLSL ES declares output locations in the shader itself
     CHK_GL(glBindFragDataLocation(program, 0, "SV_Target"));
     CHK_GL(glBindFragDataLocation(program, 0, "SV_Target0"));
     CHK_GL(glBindFragDataLocation(program, 1, "SV_Target1"));
     CHK_GL(glBindFragDataLocation(program, 2, "SV_Target2"));
+#endif
     CHK_GL(glLinkProgram(program));
     CHK_GL(glDetachShader(program, shader));
     CHK_GL(glDeleteShader(shader));
@@ -87,10 +95,15 @@ inline std::pair<char, GLuint> GLCompileShader(pcstr* buffer, size_t size, pcstr
     }
 
     return { 'p', program };
+#endif
 }
 
 inline std::pair<char, GLuint> GLUseBinary(pcstr* buffer, size_t size, const GLenum* format, pcstr name)
 {
+#ifdef XR_PLATFORM_WEB
+    R_ASSERT2(false, "Native WebGPU uses packaged WGSL, not GL program binaries");
+    return {'p', 0};
+#else
     GLint status{};
 
     const GLuint program = glCreateProgram();
@@ -99,10 +112,12 @@ inline std::pair<char, GLuint> GLUseBinary(pcstr* buffer, size_t size, const GLe
         CHK_GL(glObjectLabel(GL_PROGRAM, program, -1, name));
     CHK_GL(glProgramParameteri(program, GL_PROGRAM_SEPARABLE, (GLint)GL_TRUE));
 
+#ifndef XR_PLATFORM_WEB // GLSL ES declares output locations in the shader itself
     CHK_GL(glBindFragDataLocation(program, 0, "SV_Target"));
     CHK_GL(glBindFragDataLocation(program, 0, "SV_Target0"));
     CHK_GL(glBindFragDataLocation(program, 1, "SV_Target1"));
     CHK_GL(glBindFragDataLocation(program, 2, "SV_Target2"));
+#endif
 
     CHK_GL(glProgramBinary(program, *format, buffer, size));
     CHK_GL(glGetProgramiv(program, GL_LINK_STATUS, &status));
@@ -114,10 +129,25 @@ inline std::pair<char, GLuint> GLUseBinary(pcstr* buffer, size_t size, const GLe
     }
 
     return { 'p', program };
+#endif
 }
 
 static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint gs)
 {
+#ifdef XR_PLATFORM_WEB
+    R_ASSERT2(vs && !gs, "WebGPU requires a vertex shader and no geometry shader");
+    return LinkNativeWebGPUProgram(vs, ps);
+#else
+#ifdef XR_PLATFORM_WEB
+    if (!vs)
+    {
+        Log("! shader program not linked, the vertex stage failed to compile:", name);
+        return 0;
+    }
+    if (!ps)
+        ps = GLDepthOnlyFragmentShader();
+#endif
+
     const GLuint program = glCreateProgram();
     R_ASSERT(program);
     if (glObjectLabel)
@@ -130,10 +160,12 @@ static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint g
     CHK_GL(glAttachShader(program, vs));
     if (gs)
         CHK_GL(glAttachShader(program, gs));
+#ifndef XR_PLATFORM_WEB // GLSL ES declares output locations in the shader itself
     CHK_GL(glBindFragDataLocation(program, 0, "SV_Target"));
     CHK_GL(glBindFragDataLocation(program, 0, "SV_Target0"));
     CHK_GL(glBindFragDataLocation(program, 1, "SV_Target1"));
     CHK_GL(glBindFragDataLocation(program, 2, "SV_Target2"));
+#endif
     CHK_GL(glLinkProgram(program));
     CHK_GL(glDetachShader(program, ps));
     CHK_GL(glDetachShader(program, vs));
@@ -149,6 +181,7 @@ static GLuint GLLinkMonolithicProgram(pcstr name, GLuint ps, GLuint vs, GLuint g
         return 0; // 0 means error
     }
     return program;
+#endif
 }
 
 static GLuint GLGeneratePipeline(pcstr name, GLuint ps, GLuint vs, GLuint gs)
