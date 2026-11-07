@@ -116,3 +116,57 @@ so 16 MiB reads can fetch unused neighbours. Content-aware regrouping and
 prefetching are further work; synchronous cold filesystem reads can currently
 stall the game while the requested chunk downloads. Cross-level travel,
 long sessions, and constrained-network conditions have not been validated.
+
+## Granular updates and rollback
+
+Game chunk identity is now `(origin, SHA-256)`, independent of the pack's release
+URL. Persistent entries use a synthetic `/.xray-cache/game-chunks/<hash>.bin`
+CacheStorage key; that URL is never sent to the server. Each requested hash still
+comes from the selected release's archive descriptor. Thus a v2 descriptor can
+reuse a verified v1 chunk without substituting v1 metadata or mixing releases.
+Payload chunks and bundled bootstrap metadata both use this path. Legacy cache
+entries keyed by full `/packs/v1/chunks/...` URLs are located once, verified and
+promoted without downloading their bytes again. Cached and downloaded bytes
+must match both the expected length and hash.
+
+| Component | Update behavior |
+| --- | --- |
+| Game archive data and metadata bundles | Download only requested hashes absent from the verified cache; unchanged hashes survive release-directory changes and rollback. |
+| Engine override files | Existing OPFS sync compares size and SHA-256 per manifest entry. Unchanged files are not downloaded; changed files are replaced individually. The current complete override set is about 1.95 MB. |
+| Offline/runtime shader programs | Share stable origin-local shader-key cache entries, independent of the release URL. Compiler/reflection/packing ABI remains in the cache namespace, so incompatible compiler updates invalidate those programs. Old URL entries migrate after schema/key validation. |
+| Engine and shader-compiler JS/WASM | Whole-file browser requests; no binary-delta patching. Updating the engine does not invalidate cached game chunks. Production HTTP caching can reuse unchanged URLs, but the local development server deliberately sends `no-store`. |
+| Saves and user configuration | Independent OPFS data; chunk/shader cache reuse and eviction do not erase saves. Existing `fsgame.ltx` is preserved by engine asset sync. |
+
+Publish each pack and matching engine files to new immutable versioned paths.
+Upload all chunks/descriptors before switching the entry URL. Keep previous
+release directories available for running sessions and rollback; never edit a
+live descriptor in place. Clients stay on their chosen release until a reload;
+there is no hot engine/content update inside a running session. Keep the same
+origin across releases to retain browser storage. A new domain, cleared storage,
+browser eviction, or quota failures can require re-downloading needed chunks.
+Do not invalidate the whole game cache as part of a normal deployment.
+
+A changed byte inside a payload chunk downloads that complete chunk (normally
+16 MiB), not the entire archive. These are fixed-offset chunks: repacking an
+archive so byte offsets shift can change many subsequent hashes even if most
+logical resources are unchanged. Content-defined chunking, semantic repacking,
+and binary deltas are not implemented. Preserve archive layout where practical
+and prefer separate patch archives for updates; unchanged archives then retain
+all their chunk identities.
+
+Verification includes v1 → v2 → v1 rollback, changed-chunk-only transfer, legacy
+URL migration, corruption recovery, and shader reuse across release paths.
+The real Chrome CacheStorage probe downloaded **16,777,221 bytes** for v1,
+**5 bytes** for the changed v2 tail, and **0 bytes** on rollback. Each release's
+small descriptor was still fetched separately. These are controlled fixture
+measurements, not a prediction of update size for an arbitrarily repacked game.
+
+```sh
+node misc/web/streaming/build-update-probe.mjs /tmp/xray-update-probe
+node misc/web/serve.mjs /tmp/xray-update-probe 8094
+# Open http://localhost:8094/; expect PASS and the three download counts above.
+```
+
+The earlier full-game cold-cache measurements in this document predate this
+cross-version cache identity change. Changing only the pack URL no longer creates
+a cold game-data cache; use a separate origin/profile for a future cold-load test.

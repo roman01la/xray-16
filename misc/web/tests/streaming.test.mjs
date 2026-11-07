@@ -70,3 +70,40 @@ test('archive metadata parser selects .thm entries and rejects malformed ranges'
  const table=Buffer.concat([entry('textures\\a.thm',100,20),entry('textures\\a.dds',200,40)]);
  assert.deepEqual(textureMetadataEntries(table,1000),[{offset:100,size:20}]);assert.throws(()=>textureMetadataEntries(table.subarray(0,-1),1000),/table/);assert.throws(()=>textureMetadataEntries(table,110),/range/);
 });
+
+function updateCache(){
+ const items=new Map();
+ return {items,async open(){return {match:async key=>items.get(key)?.clone(),put:async(key,response)=>items.set(key,response.clone()),delete:async key=>items.delete(key),keys:async()=>[...items.keys()].map(url=>({url}))};}};
+}
+test('immutable release update downloads only changed chunks and rollback reuses old bytes',async()=>{
+ const shared=new Uint8Array(CHUNK_BYTES).fill(7),old=Uint8Array.from([1,2,3,4,5]),updated=Uint8Array.from([1,2,9,4,5]);
+ const cacheStorage=updateCache(),requests=[],chunks=new Map([shared,old,updated].map(b=>[hash(b),b]));
+ const versions={v1:[hash(shared),hash(old)],v2:[hash(shared),hash(updated)]};
+ const make=()=>new ChunkReader({cacheStorage,budget:0,digest:async b=>hash(b),fetcher:async url=>{
+  requests.push(url);
+  if(url.endsWith('.json')){const version=new URL(url).pathname.split('/')[2];return Response.json({format:'xray-archive-v1',size:shared.length+5,chunkBytes:CHUNK_BYTES,chunks:versions[version]});}
+  const key=url.split('/').pop().replace('.bin','');assert.ok(chunks.has(key));return new Response(chunks.get(key));
+ }});
+ const read=async(version)=>{const reader=make(),out=new Uint8Array(6),url=`https://test/packs/${version}/resources/resources.db`;await reader.read(url,CHUNK_BYTES-1,6,(b,at)=>out.set(b,at));return {out,reader};};
+ const first=await read('v1');assert.deepEqual([...first.out],[7,1,2,3,4,5]);assert.equal(first.reader.stats.downloadedBytes,CHUNK_BYTES+5);
+ const second=await read('v2');assert.deepEqual([...second.out],[7,1,2,9,4,5]);assert.equal(second.reader.stats.downloadedBytes,5);assert.equal(second.reader.stats.networkChunks,1);
+ const rollback=await read('v1');assert.deepEqual(rollback.out,first.out);assert.equal(rollback.reader.stats.downloadedBytes,0);
+ assert.equal(requests.filter(s=>s.endsWith('.bin')).length,3);
+ assert.equal(requests.filter(s=>s.endsWith('.json')).length,3); // release descriptors stay pinned, never cache-swapped
+});
+test('old release URL caches migrate after verification without redownloading payload',async()=>{
+ const bytes=Uint8Array.from([8,9,10]),digest=hash(bytes),cacheStorage=updateCache();
+ cacheStorage.items.set(`https://test/packs/old/chunks/${digest}.bin`,new Response(bytes));
+ const reader=new ChunkReader({cacheStorage,digest:async b=>hash(b),fetcher:()=>assert.fail('cached payload must not download')});
+ assert.deepEqual(await reader.chunk('https://test/packs/new/resources/configs.db',digest,3),bytes);
+ assert.equal(reader.stats.cachedChunks,1);
+ assert.ok(cacheStorage.items.has(`https://test/.xray-cache/game-chunks/${digest}.bin`));
+});
+test('corrupt shared update cache is repaired only for the requested chunk',async()=>{
+ const bytes=Uint8Array.from([4,5,6]),digest=hash(bytes),cacheStorage=updateCache();let requests=0;
+ const key=`https://test/.xray-cache/game-chunks/${digest}.bin`;cacheStorage.items.set(key,new Response(Uint8Array.from([4,0,6])));
+ const reader=new ChunkReader({cacheStorage,digest:async b=>hash(b),fetcher:async url=>{requests++;assert.match(url,/packs\/v2\/chunks/);return new Response(bytes);}});
+ assert.deepEqual(await reader.chunk('https://test/packs/v2/resources/configs.db',digest,3),bytes);assert.equal(requests,1);
+ assert.deepEqual(new Uint8Array(await cacheStorage.items.get(key).arrayBuffer()),bytes);
+ await assert.rejects(reader.chunk('https://test/packs/v3/resources/configs.db',digest,2),/size conflict/);
+});

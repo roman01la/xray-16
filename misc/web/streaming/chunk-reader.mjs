@@ -2,6 +2,9 @@
 // CacheStorage persists verified chunks; the hot RAM cache has a hard byte budget.
 export const CHUNK_BYTES = 16 * 1024 * 1024;
 const HASH = /^[a-f0-9]{64}$/;
+export const GAME_CHUNK_CACHE = 'xray-game-chunks-v1';
+// Synthetic CacheStorage key only: never requested from the server.
+export const chunkCacheKey=(url,hash)=>new URL('/.xray-cache/game-chunks/'+hash+'.bin',url).href;
 export function validateDescriptor(d) {
   if (d?.format !== 'xray-archive-v1' || !Number.isSafeInteger(d.size) || d.size < 1 ||
       d.chunkBytes !== CHUNK_BYTES || !Array.isArray(d.chunks) ||
@@ -27,23 +30,56 @@ export class ChunkReader {
     return this.descriptors.get(url);
   }
   async chunk(url,hash,size) {
-    // Chunks live next to pack.json, two levels above resources/foo.db.json.
-    const key=new URL('../chunks/'+hash+'.bin',url).href;
-    if(this.hot.has(key)){const bytes=this.hot.get(key);this.hot.delete(key);this.hot.set(key,bytes);return bytes;}
-    if(this.pending.has(key))return this.pending.get(key);
+    if(!HASH.test(hash)||!Number.isSafeInteger(size)||size<1||size>32*1024*1024)throw Error('Invalid chunk identity');
+    const networkURL=new URL('../chunks/'+hash+'.bin',url).href;
+    const key=chunkCacheKey(url,hash);
+    if(this.hot.has(key)){
+      const bytes=this.hot.get(key);if(bytes.length!==size)throw Error('Game chunk size conflict');
+      this.hot.delete(key);this.hot.set(key,bytes);return bytes;
+    }
+    if(this.pending.has(key)){
+      const bytes=await this.pending.get(key);if(bytes.length!==size)throw Error('Game chunk size conflict');return bytes;
+    }
     const task=(async()=>{
-      let cache;try{cache=await this.cacheStorage?.open('xray-game-chunks-v1');}catch{}
-      let bytes, cached;try{cached=await cache?.match(key);}catch{}
-      if(cached){bytes=new Uint8Array(await cached.arrayBuffer());if(bytes.length!==size || await this.digest(bytes)!==hash){await cache.delete(key);bytes=null;}else this.stats.cachedChunks++;}
+      let cache;try{cache=await this.cacheStorage?.open(GAME_CHUNK_CACHE);}catch{}
+      let bytes;
+      if(cache){
+        const cached=async candidate=>{
+          try {
+            const hit=await cache.match(candidate);if(!hit)return null;
+            const value=new Uint8Array(await hit.arrayBuffer());
+            if(value.length!==size || await this.digest(value)!==hash){await cache.delete(candidate).catch(()=>{});return null;}
+            return value;
+          }catch{return null;}
+        };
+        bytes=await cached(key);
+        if(!bytes){
+          // Index legacy URL keys once, lazily. No game bytes are fetched while
+          // building this migration index; each candidate is still verified.
+          this.legacyKeys ||= Promise.resolve().then(async()=>{
+            const index=new Map();
+            for(const r of await cache.keys?.()||[]){
+              const candidate=new URL(r.url),match=candidate.pathname.match(/\/chunks\/([a-f0-9]{64})\.bin$/);
+              if(match){const id=candidate.origin+'/'+match[1];if(!index.has(id))index.set(id,[]);index.get(id).push(r.url);}
+            }
+            return index;
+          }).catch(()=>new Map());
+          const legacy=(await this.legacyKeys).get(new URL(url).origin+'/'+hash)||[];
+          for(const candidate of new Set([networkURL,...legacy])){
+            bytes=await cached(candidate);if(!bytes)continue;
+            await cache.put(key,new Response(bytes)).catch(()=>{});break;
+          }
+        }
+        if(bytes)this.stats.cachedChunks++;
+      }
       if(!bytes){
-        const response=await this.fetcher(key);
+        const response=await this.fetcher(networkURL);
         if(!response.ok)throw Error('Game chunk unavailable: '+response.status);
-        // Reject oversized payloads before allocating when the host supplies a length.
         const length=response.headers.get('Content-Length');if(length!==null && Number(length)!==size)throw Error('Game chunk length mismatch');
         bytes=new Uint8Array(await response.arrayBuffer());
         if(bytes.length!==size || await this.digest(bytes)!==hash)throw Error('Game chunk integrity mismatch');
         this.stats.networkChunks++;this.stats.downloadedBytes+=bytes.length;
-        try{await cache?.put(key,new Response(bytes));}catch{} // quota failure must not stop play
+        try{await cache?.put(key,new Response(bytes));}catch{}
       }
       if(bytes.length<=this.budget){
         while(this.bytes+bytes.length>this.budget){const oldest=this.hot.keys().next().value;this.bytes-=this.hot.get(oldest).length;this.hot.delete(oldest);}
