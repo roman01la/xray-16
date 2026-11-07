@@ -612,3 +612,13 @@ not the current implementation.
   collision and persistence; localhost:8090 remains its local preview gateway.
   100–200-player WAN capacity, multiple independent access networks and extended
   endurance are still unverified. No full browser frontend was publicly deployed.
+
+- WebRTC network RTT measured over 90.41 seconds from this laptop to Fly Frankfurt:
+  35 fresh selected-candidate ICE/STUN readings, median 41 ms, p95 44 ms,
+  range 40–45 ms. Successive RTT absolute differences: median 1 ms, p95 3 ms.
+  UDP path to 77.83.143.60:50000 stayed selected; no hidden-tab samples.
+  Gameplay snapshots were active for one probe, without rendered/load peers.
+  This measures network/ICE RTT, not input-to-render or input-ack latency, and
+  does not establish latency under 200-player load. Raw evidence is
+  `acceptance/fly-zaton-network-latency.json`; repeat using the local preview
+  `engine-preview/latency-test.html`. Probe disconnected after completion.

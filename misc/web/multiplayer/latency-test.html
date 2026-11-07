@@ -1,0 +1,5 @@
+<!doctype html><meta charset="utf-8"><title>Zone WAN latency measurement</title>
+<style>body{font:16px system-ui;background:#101719;color:#dfebe4;margin:32px}button{padding:12px}pre{white-space:pre-wrap}</style>
+<h1>WebRTC network latency</h1><p>90 seconds on the selected ICE path. RTT uses STUN responses over the gameplay UDP connection; no HTTP proxy timing. Repeated readings of the same response are excluded. No injected impairment.</p>
+<button id="start">Measure latency</button><button id="stop">Stop</button><p id="status">Ready</p><pre id="results"></pre>
+<script type="module" src="./latency-test.mjs"></script>
