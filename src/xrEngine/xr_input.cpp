@@ -124,11 +124,11 @@ CInput::CInput(const bool exclusive)
         const index = $0 / 4;
         const fixedPoint = $1;
         const canvas = Module['canvas'];
-        // Keep custom bindings usable when the browser lets the page handle
-        // these keys. The default quick-slot keys work without interception.
+        // Cancel page-delivered browser shortcuts while the game has focus.
+        // The browser can still consume Escape to release pointer lock.
         window.addEventListener('keydown', event => {
             if (document.activeElement !== canvas && document.pointerLockElement !== canvas) return;
-            if ((event.code === 'F1' || event.code === 'F3') &&
+            if ((event.code === 'F1' || event.code === 'F3' || event.code === 'Escape') &&
                 !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey)
                 event.preventDefault();
         }, {capture: true});
@@ -301,15 +301,6 @@ void CInput::MouseUpdate()
     }
 }
 
-#ifdef XR_PLATFORM_WEB
-static SDL_Scancode WebKeyboardScancode(SDL_Scancode scancode)
-{
-    return scancode == SDL_SCANCODE_RSHIFT ? SDL_SCANCODE_ESCAPE : scancode;
-}
-#else
-static SDL_Scancode WebKeyboardScancode(SDL_Scancode scancode) { return scancode; }
-#endif
-
 void CInput::KeyUpdate()
 {
     ZoneScoped;
@@ -328,11 +319,11 @@ void CInput::KeyUpdate()
         case SDL_KEYDOWN:
             if (event.key.repeat)
                 continue;
-            keyboardState[WebKeyboardScancode(event.key.keysym.scancode)] = true;
+            keyboardState[event.key.keysym.scancode] = true;
             break;
 
         case SDL_KEYUP:
-            keyboardState[WebKeyboardScancode(event.key.keysym.scancode)] = false;
+            keyboardState[event.key.keysym.scancode] = false;
             break;
         }
     }
@@ -364,11 +355,11 @@ void CInput::KeyUpdate()
         case SDL_KEYDOWN:
             if (event.key.repeat)
                 continue;
-            cbStack.back()->IR_OnKeyboardPress(WebKeyboardScancode(event.key.keysym.scancode));
+            cbStack.back()->IR_OnKeyboardPress(event.key.keysym.scancode);
             break;
 
         case SDL_KEYUP:
-            cbStack.back()->IR_OnKeyboardRelease(WebKeyboardScancode(event.key.keysym.scancode));
+            cbStack.back()->IR_OnKeyboardRelease(event.key.keysym.scancode);
             break;
 
         case SDL_TEXTINPUT:
@@ -616,14 +607,6 @@ bool OtherDevicesKeyToButtonName(const int btn, xr_string& /*result*/)
 
 bool CInput::GetKeyName(const int dik, pstr dest_str, int dest_sz)
 {
-#ifdef XR_PLATFORM_WEB
-    // The browser can consume Escape to leave fullscreen or pointer lock.
-    if (dik == SDL_SCANCODE_ESCAPE)
-    {
-        xr_strcpy(dest_str, dest_sz, "Right Shift / Esc");
-        return true;
-    }
-#endif
     xr_string keyname;
     bool result;
 

@@ -20,6 +20,7 @@ for (const obsolete of ["command-context.js", "gl-constants.js"])
 for (const file of [
   "xr_3da.wasm",
   "ingest-worker.js",
+  "stock-bindings.mjs",
   "engine_data.json",
   "storage-manager.js",
   "save-format.js",

@@ -834,18 +834,6 @@ public:
 ConsoleBindCmds g_consoleBindCmds;
 BOOL g_remapped = false;
 
-#ifdef XR_PLATFORM_WEB
-// Keep stock CoP's browser-reserved quick slots usable in existing profiles.
-static int WebQuickSlotKey(int action, int key)
-{
-    if (action == kQUICK_USE_1 && key == SDL_SCANCODE_F1)
-        return SDL_SCANCODE_LEFTBRACKET;
-    if (action == kQUICK_USE_3 && key == SDL_SCANCODE_F3)
-        return SDL_SCANCODE_RIGHTBRACKET;
-    return key;
-}
-#endif
-
 class CCC_Bind : public IConsole_Command
 {
     int m_workIdx;
@@ -884,10 +872,6 @@ public:
         keyboard_key* keyboard = KeynameToPtr(key);
         if (!keyboard)
             return;
-#ifdef XR_PLATFORM_WEB
-        keyboard = DikToPtr(WebQuickSlotKey(actionId, keyboard->dik), true);
-#endif
-
         key_binding* currBinding = &g_key_bindings[actionId];
 
         currBinding->m_keyboard[m_workIdx] = keyboard;
@@ -1085,11 +1069,7 @@ public:
             for (u8 i = 0; i < bindtypes_count; ++i)
             {
                 if (!binding.m_keyboard[i])
-#ifdef XR_PLATFORM_WEB
-                    binding.m_keyboard[i] = DikToPtr(WebQuickSlotKey(action, keys[i]), true);
-#else
                     binding.m_keyboard[i] = DikToPtr(keys[i], true);
-#endif
             }
 
             TranslateBinding(binding, g_action_bindings[action]);

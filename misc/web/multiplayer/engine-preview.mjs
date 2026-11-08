@@ -9,7 +9,7 @@ import {InventoryClient} from './inventory.mjs';
 import {CorpseSearchClient} from './corpse-search.mjs';
 import {WorldItemsClient} from './world-items.mjs';
 import {createPthreadBridge} from './pthread-bridge.mjs';
-import {prepareMultiplayerStorage} from './storage.mjs';
+import {prepareMultiplayerStorage,storageLayout} from './storage.mjs';
 import {prepareStreaming,streamingConfig} from './streaming.js';
 import {startShaderCompiler} from './shader-compiler-client.mjs';
 const $=id=>document.getElementById(id),log=s=>{s=String(s);if(s.startsWith('XRAY_STREAM_PROGRESS ')){try{window.dispatchEvent(new CustomEvent('xray-stream-progress',{detail:JSON.parse(s.slice(21))}));}catch{}return;}window.dispatchEvent(new CustomEvent('xray-engine-log',{detail:s}));$('log').textContent=(String($('log').textContent)+s+'\n').slice(-30000);$('log').scrollTop=$('log').scrollHeight;};
@@ -47,7 +47,7 @@ try {
   if(!/^[a-z0-9_-]{1,24}$/.test(slot))throw Error('Invalid preview slot');
   const root='zone-engine-preview-'+slot,worker=new Worker('./ingest-worker.js',{type:'module'});
   $('status').textContent='Preparing isolated engine assets…';
-  try {await new Promise((resolve,reject)=>{worker.onmessage=({data})=>{if(data.type==='engine-progress'){window.dispatchEvent(new CustomEvent('xray-engine-progress',{detail:data}));return;}if(data.id!==1)return;data.type==='error'?reject(Error(data.error)):resolve();};worker.onerror=e=>reject(Error(e.message));worker.postMessage({id:1,type:'sync-engine-data',root});});}finally{worker.terminate();}
+  try {await new Promise((resolve,reject)=>{worker.onmessage=({data})=>{if(data.type==='engine-progress'){window.dispatchEvent(new CustomEvent('xray-engine-progress',{detail:data}));return;}if(data.id!==1)return;data.type==='error'?reject(Error(data.error)):resolve();};worker.onerror=e=>reject(Error(e.message));worker.postMessage({id:1,type:'sync-engine-data',root,appDirectory:storageLayout(root).appDirectory});});}finally{worker.terminate();}
   checkActive();
   const pack=new URLSearchParams(location.search).get('stream');if(!pack)throw Error('A same-origin streaming pack URL is required');
   const streamed=await prepareStreaming(pack,root),opfs=await navigator.storage.getDirectory();

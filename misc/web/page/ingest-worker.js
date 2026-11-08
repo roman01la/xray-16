@@ -1,3 +1,5 @@
+import {migrateStockBindings} from './stock-bindings.mjs';
+
 const CHUNK = 16 << 20;
 const SKIP_DIRS = new Set([
   "bin",
@@ -158,7 +160,7 @@ async function removeRetired(game, retired) {
   }
 }
 
-async function syncEngineData(root) {
+async function syncEngineData(root, appDirectory = '_appdata_') {
   const game = await gameDir(root);
   const manifest = await fetch("./engine_data.json");
   if (!manifest.ok)
@@ -194,6 +196,13 @@ async function syncEngineData(root) {
   postMessage({type:'engine-progress',done:files.length,total:files.length});
   for (const sub of ["logs", "savedgames", "screenshots"])
     await ensureDir(game, ["_appdata_", sub]);
+  const migrate = async () => migrateStockBindings(await ensureDir(game, appDirectory.split('/')));
+  try {
+    if (navigator.locks) await navigator.locks.request(`xray-stock-keybinds:${root}:${appDirectory}`, migrate);
+    else await migrate();
+  } catch (error) {
+    console.warn('Could not restore alpha default keybinds. Will retry on the next launch.', error);
+  }
 }
 
 async function status() {
@@ -221,7 +230,7 @@ onmessage = async (e) => {
         postMessage({ id, type: "done" });
         break;
       case "sync-engine-data":
-        await syncEngineData(e.data.root);
+        await syncEngineData(e.data.root, e.data.appDirectory);
         postMessage({ id, type: "done" });
         break;
     }
