@@ -35,12 +35,17 @@ window.addEventListener('xray-engine-progress',({detail:p})=>{
  if(p.done===p.total){phase='Starting the engine…';indeterminate();}
 });
 window.addEventListener('xray-stream-progress',({detail:p})=>{
- transfer=p;
- if(p.error){broken=true;fail('Game data could not load. Check your connection and try again.');detail.textContent=p.error;indeterminate();return;}
+ if(p.phase!=='install')return;
+ if(p.error){broken=true;fail(p.error);indeterminate();return;}
  if(broken)return;
- if(p.active){if(started&&!loadingLevel)phase='Loading game data…';boot.hidden=false;settledFrames=lastFrames;message.textContent='Downloading game data…';meter.max=p.total;meter.value=p.received;}
- else {indeterminate();message.textContent=phase;}
- detail.textContent=`${mb(p.downloadedBytes+p.received)} downloaded · ${mb(p.cachedBytes||0)} from cache`+(p.active?` — current download ${Math.floor(p.received/p.total*100)}%`:'');
+ transfer=p.ready?null:p;
+ if(p.ready){phase='Starting the engine…';message.textContent=phase;indeterminate();return;}
+ boot.hidden=false;
+ message.textContent=p.active?'Downloading the game…':'Checking installed game data…';
+ if(p.packBytes){
+  meter.max=p.packBytes;meter.value=p.checkedBytes;
+  detail.textContent=`${mb(p.checkedBytes)} / ${mb(p.packBytes)} ready · ${mb(p.downloadedBytes+p.received)} downloaded`;
+ }else{indeterminate();detail.textContent='Reading the game manifest…';}
 });
 window.addEventListener('xray-engine-log',({detail:line})=>{
  if(/Loading objects|Creating new game|Loading saved game/.test(line)){loadingLevel=true;boot.hidden=false;phase='Loading the world…';}
@@ -49,19 +54,21 @@ window.addEventListener('xray-engine-log',({detail:line})=>{
  if(line.includes('Loading spawn registry'))phase='Preparing the world…';
  if(line.includes('Loading VB'))phase='Preparing level geometry…';
  if(line.includes('End of synchronization')){loadingLevel=false;settledFrames=lastFrames;phase='Finishing loading…';}
- if(/Archive (read|stat) failed/.test(line)){broken=true;fail('Game data could not load. Check your connection and try again.');}
- if(!broken&&!transfer?.active)message.textContent=phase;
+ if(/Archive (read|stat) failed/.test(line)){broken=true;fail('Installed game data could not be read. Reload to repair it.');}
+ if(!broken&&!transfer)message.textContent=phase;
 });
 const observe=()=>{
- const text=status.textContent,sync=ingest.textContent;
- if(/failed|unavailable|needs |lacks |No WebGPU/i.test(text+' '+sync)){broken=true;fail(text||sync);return;}
  if(broken)return;
- if(multiplayer){if(text.startsWith('C++ tick'))boot.hidden=true;else if(!transfer?.active)message.textContent=text||phase;return;}
+ const text=status.textContent,sync=ingest.textContent;
+ const error=/failed|unavailable|needs |lacks |No WebGPU/i;
+ if(error.test(text)||error.test(sync)){broken=true;fail(error.test(text)?text:sync);return;}
+ if(transfer)return;
+ if(multiplayer){if(text.startsWith('C++ tick'))boot.hidden=true;else message.textContent=text||phase;return;}
  const gpu=document.querySelector('#webgpu-stats')?.textContent||'';
  const frames=Number(gpu.match(/([0-9]+) frames/)?.[1]||0);lastFrames=frames;
  if(!started&&text==='engine running'&&log.textContent.includes('Loading script: game_registrator.script')&&frames>2){started=true;settledFrames=frames;}
- if(started&&!loadingLevel&&!transfer?.active&&frames>settledFrames+2){boot.hidden=true;return;}
- if(text==='engine running'&&!started&&!transfer?.active){message.textContent='Loading the game…';indeterminate();}
+ if(started&&!loadingLevel&&frames>settledFrames+2){boot.hidden=true;return;}
+ if(text==='engine running'&&!started){message.textContent='Loading the game…';indeterminate();}
 };
 const observer=new MutationObserver(observe);observer.observe(status,{childList:true,characterData:true,subtree:true});observer.observe(ingest,{childList:true,characterData:true,subtree:true});observer.observe(log,{childList:true,characterData:true,subtree:true});
 if(!isSecureContext||!crossOriginIsolated||!navigator.gpu||!navigator.storage?.getDirectory){fail('This game needs a desktop browser with WebGPU and local file storage. Please use a current Chrome or Edge browser.');retry.hidden=true;}
@@ -82,5 +89,5 @@ else {
   }
  });
  await import(multiplayer?'./public-ui.mjs':'./main.js');const gpu=document.querySelector('#webgpu-stats');if(gpu)observer.observe(gpu,{childList:true,characterData:true,subtree:true});observe();}
- catch{fail('The game could not start. Check your connection and try again.');}
+ catch(error){fail(error.message||'The game could not start. Check your connection and try again.');}
 }

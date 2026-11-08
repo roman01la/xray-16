@@ -10,9 +10,11 @@ function report(event) {
 }
 // Initialize once at page startup, then sleep in the event loop between jobs.
 // Catch startup failure immediately so every connecting client receives it.
-const ready = createWasmToolchain().then(toolchain => {
+const ready = createWasmToolchain().then(async toolchain => {
+  const store=createShaderStore({fetchManifest:fetch, compile:request => compileProgram(request, toolchain), report});
+  await store.preload();
   stats.ready = true;
-  return {store:createShaderStore({fetchManifest:fetch, compile:request => compileProgram(request, toolchain), report})};
+  return {store};
 }).catch(error => ({error:String(error.stack || error)}));
 let jobs = Promise.resolve();
 ready.then(({error}) => self.postMessage({type:error ? 'error' : 'ready',error,...stats}));

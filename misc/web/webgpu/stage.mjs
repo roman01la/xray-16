@@ -76,10 +76,10 @@ loader =
 const workerLoad = 'worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule})';
 if (!loader.includes(workerLoad)) throw Error('Emscripten worker transfer hook changed');
 loader = loader.replace(workerLoad, 'const shaderCompilerPort=createShaderCompilerPort();worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort,gpuDiagnosticsChannel:globalThis.__xrayGPUDiagnosticsChannel},[shaderCompilerPort])');
-// This hook is JS-only: no WASM rebuild is needed for loader telemetry.
-const progressHook='new module.ChunkReader';
-if(!loader.includes(progressHook))throw Error('Streaming reader hook changed');
-loader=loader.replace(progressHook, 'new module.ChunkReader({onProgress:p=>err("XRAY_STREAM_PROGRESS "+JSON.stringify(p))})');
+// Pack installation completes before engine creation. Game reads never fetch.
+const streamHook=/new module\.ChunkReader(?:\(\))?(?=\);)/;
+if(!streamHook.test(loader))throw Error('Streaming reader hook changed');
+loader=loader.replace(streamHook, "new module.ChunkReader({mode:'installed'})");
 await writeFile(join(output, "xr_3da.js"), loader);
 let main =
   "import {startShaderCompiler} from './shader-compiler-client.mjs';\nawait startShaderCompiler();\nglobalThis.XRAY_WEBGPU = true;\n" +

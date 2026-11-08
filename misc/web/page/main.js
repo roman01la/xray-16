@@ -35,6 +35,21 @@ function print(line) {
   }, 50);
 }
 
+window.addEventListener('xray-stream-progress',({detail:progress})=>{
+  if(progress.phase!=='install')return;
+  const meter=$("progress");
+  meter.hidden=!!(progress.ready||progress.error);
+  if(progress.packBytes){
+    meter.max=progress.packBytes;
+    meter.value=progress.checkedBytes;
+    const gb=bytes=>(bytes/1e9).toFixed(2);
+    $("ingest-status").textContent=`Preparing game data (${gb(progress.checkedBytes)} / ${gb(progress.packBytes)} GB ready)`;
+  }else if(!meter.hidden){
+    meter.removeAttribute("value");
+    $("ingest-status").textContent="Reading the game manifest…";
+  }
+});
+
 print(`crossOriginIsolated=${crossOriginIsolated}`);
 if (location.protocol === "file:")
   print(

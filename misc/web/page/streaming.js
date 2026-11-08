@@ -17,14 +17,33 @@ export function streamingConfig(source) {
   return text;
 }
 export async function prepareStreaming(manifestURL, root='stream-cop') {
-  const url=new URL(manifestURL,location.href);
-  if(url.origin!==location.origin || !url.pathname.endsWith('/pack.json') || url.search || url.hash)throw Error('Streaming pack must be a same-origin /pack.json URL');
-  const response=await fetch(url);if(!response.ok)throw Error('Cannot load game pack: '+response.status);
-  const pack=validatePack(await response.json());
-  const opfs=await navigator.storage.getDirectory(),game=await opfs.getDirectoryHandle(root,{create:true});
-  async function write(name,text){const file=await game.getFileHandle(name,{create:true}),writer=await file.createWritable();await writer.write(text);await writer.close();}
-  const config=await (await game.getFileHandle('fsgame.ltx')).getFile();
-  await write('fsgame.streaming.ltx',streamingConfig(await config.text()));
-  await write('stream.mount',url.href.slice(0,-'/pack.json'.length)+'\n'+pack.files.map(f=>f.path).join('\n')+'\n');
-  return {root,config:`/opfs/${root}/fsgame.streaming.ltx`,mount:`/opfs/${root}/stream.mount`,archives:pack.files.length};
+  const report=detail=>window.dispatchEvent(new CustomEvent('xray-stream-progress',{detail:{phase:'install',...detail}}));
+  report({});
+  try {
+    const url=new URL(manifestURL,location.href);
+    if(url.origin!==location.origin || !url.pathname.endsWith('/pack.json') || url.search || url.hash)throw Error('Game pack must be a same-origin /pack.json URL');
+    const {ChunkReader,gameStorageError}=await import('./chunk-reader.mjs');
+    const response=await fetch(url);if(!response.ok)throw Error('Cannot load game pack: HTTP '+response.status);
+    const pack=validatePack(await response.json()),base=new URL('./',url);
+    const install=()=>new ChunkReader({mode:'install',budget:0,onProgress:report}).install(
+      pack.files.map(file=>({url:new URL(file.path,base).href,size:file.size})));
+    if(navigator.locks)await navigator.locks.request('xray-game-pack-install',install);
+    else await install();
+
+    const opfs=await navigator.storage.getDirectory(),game=await opfs.getDirectoryHandle(root,{create:true});
+    async function write(name,text){
+      try {
+        const file=await game.getFileHandle(name,{create:true}),writer=await file.createWritable();
+        await writer.write(text);await writer.close();
+      } catch(error) {throw gameStorageError(error);}
+    }
+    const config=await (await game.getFileHandle('fsgame.ltx')).getFile();
+    const release=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(url.href));
+    const suffix=Array.from(new Uint8Array(release).subarray(0,16),byte=>byte.toString(16).padStart(2,'0')).join('');
+    const mount=`stream-${suffix}.mount`;
+    await write('fsgame.streaming.ltx',streamingConfig(await config.text()));
+    await write(mount,base.href.slice(0,-1)+'\n'+pack.files.map(f=>f.path).join('\n')+'\n');
+    report({ready:true});
+    return {root,config:`/opfs/${root}/fsgame.streaming.ltx`,mount:`/opfs/${root}/${mount}`,archives:pack.files.length};
+  } catch(error) {report({error:error.message});throw error;}
 }

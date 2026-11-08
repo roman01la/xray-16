@@ -121,3 +121,85 @@ test('download progress reports streamed bytes, completion and failures without 
  await assert.rejects(bad.chunk(url,hash(bytes),4),/length mismatch/);
  assert.ok(broken.some(p=>p.error));assert.equal(broken.at(-1).active,0);assert.equal(broken.at(-1).downloadedBytes,0);
 });
+
+function packCache() {
+  const stores=new Map();
+  return {stores,async open(name){
+    if(!stores.has(name))stores.set(name,updateCache());
+    return stores.get(name).open();
+  }};
+}
+
+test('complete startup installation shares payloads across modes, pins metadata and stays offline during play',async()=>{
+  const shared=Uint8Array.of(1,2),old=Uint8Array.of(3,4),updated=Uint8Array.of(5,6),bootstrap=Uint8Array.of(1);
+  const chunks=new Map([shared,old,updated,bootstrap].map(bytes=>[hash(bytes),bytes]));
+  const cacheStorage=packCache(),requests=[],events=[];
+  const files=['resources/configs.db','levels/levels.db0','patches/game.db'];
+  const archives=version=>files.map(path=>({url:`https://test/packs/${version}/${path}`,size:2}));
+  const options={cacheStorage,digest:async bytes=>hash(bytes),budget:0,fetcher:async url=>{
+    requests.push(url);
+    const path=new URL(url).pathname;
+    if(path.endsWith('.json')){
+      const level=path.includes('/levels/');
+      return Response.json({format:'xray-archive-v1',size:2,chunkBytes:CHUNK_BYTES,
+        chunks:[hash(level?(path.includes('/v2/')?updated:old):shared)],
+        ...(path.includes('/resources/')?{bootstrap:[{offset:0,size:1,hash:hash(bootstrap)}]}:{})});
+    }
+    return new Response(chunks.get(path.split('/').pop().slice(0,-4)));
+  }};
+  const install=async version=>{
+    const reader=new ChunkReader({...options,mode:'install',onProgress:event=>events.push(event)});
+    await reader.install(archives(version));
+    return reader;
+  };
+  const runtime=()=>new ChunkReader({...options,mode:'installed',fetcher:()=>assert.fail('gameplay tried to fetch')});
+  const first=await install('v1');
+  assert.equal(first.stats.networkChunks,3);
+  assert.equal(first.stats.downloadedBytes,5);
+  assert.equal(first.hot.size,0);
+  assert.deepEqual([events.at(-1).checkedBytes,events.at(-1).packBytes],[5,5]);
+  const read=async (reader,url,length)=>{
+    const out=[];assert.equal(await reader.read(url,0,length,bytes=>out.push(...bytes)),length);return out;
+  };
+  const singleplayer=runtime(),multiplayer=runtime();
+  assert.deepEqual(await read(singleplayer,archives('v1')[0].url,1),[1]);
+  assert.deepEqual(await read(multiplayer,archives('v1')[1].url,2),[3,4]);
+  const second=await install('v2');
+  assert.equal(second.stats.networkChunks,1);
+  assert.equal(second.stats.downloadedBytes,2);
+  assert.deepEqual(await read(runtime(),archives('v2')[1].url,2),[5,6]);
+  assert.deepEqual(await read(singleplayer,archives('v1')[1].url,2),[3,4]);
+  assert.equal((await install('v1')).stats.downloadedBytes,0);
+  assert.equal(requests.filter(url=>url.endsWith('.bin')).length,4);
+  await cacheStorage.stores.get('xray-game-chunks-v1').items.delete(`https://test/.xray-cache/game-chunks/${hash(old)}.bin`);
+  await assert.rejects(read(runtime(),archives('v1')[1].url,2),/Reload to repair/);
+  await assert.rejects(read(runtime(),archives('unknown')[0].url,1),/metadata is missing/);
+});
+
+test('a failed startup does not publish archive metadata and resumes verified chunks on retry',async()=>{
+  const good=Uint8Array.of(7),bad=Uint8Array.of(8),cacheStorage=packCache();
+  const files=[{url:'https://test/pack/resources/configs.db',size:1},{url:'https://test/pack/levels/levels.db0',size:1}];
+  let fail=true;
+  const options={cacheStorage,budget:0,mode:'install',digest:async bytes=>hash(bytes),fetcher:async url=>{
+    if(url.endsWith('.json'))return Response.json({format:'xray-archive-v1',size:1,chunkBytes:CHUNK_BYTES,chunks:[hash(url.includes('/resources/')?good:bad)]});
+    if(url.includes(hash(good)))return new Response(good);
+    return fail?new Response('',{status:503}):new Response(bad);
+  }};
+  await assert.rejects(new ChunkReader(options).install(files),/HTTP 503/);
+  assert.equal(cacheStorage.stores.get('xray-game-archives-v1').items.size,0);
+  assert.equal(cacheStorage.stores.get('xray-game-chunks-v1').items.size,1);
+  fail=false;
+  const retry=new ChunkReader(options);
+  await retry.install(files);
+  assert.equal(retry.stats.networkChunks,1);
+  assert.equal(retry.stats.cachedChunks,1);
+  assert.equal(cacheStorage.stores.get('xray-game-archives-v1').items.size,2);
+  const quota=packCache(),open=quota.open.bind(quota);
+  quota.open=async name=>{
+    const cache=await open(name);
+    if(name==='xray-game-chunks-v1')cache.put=()=>{throw new DOMException('full','QuotaExceededError');};
+    return cache;
+  };
+  await assert.rejects(new ChunkReader({...options,cacheStorage:quota}).install(files),/not enough browser storage/);
+  assert.equal(quota.stores.get('xray-game-archives-v1').items.size,0);
+});

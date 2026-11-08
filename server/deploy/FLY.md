@@ -2,7 +2,7 @@
 
 Public URL: **https://roman-stalker-wan.fly.dev/**. One authoritative Rust server
 runs in Frankfurt (`fra`), with a Node 24 HTTP gateway serving the browser build
-and the on-demand game pack, with verified bulk chunks served from Tigris.
+and the game pack, with verified bulk chunks served from Tigris.
 The volume stages uploads; verified bulk chunks are removed after CDN cutover. The user explicitly approved
 public access and confirmed permission to distribute the game assets.
 
@@ -40,9 +40,10 @@ Rust and forwards SIGTERM; Fly allows 25 seconds for shutdown.
   replaced only after every referenced blob has been verified as present.
 
 The initial game payload is approximately 4.44 GiB, including the engine and
-all pack chunks. Browsers request 16-MiB chunks on demand; they do not download
-the whole pack before starting. Validated chunks are cached by content hash
-across releases. Engine overrides also retain their existing per-file checks.
+all pack chunks. The browser installs the full pack at startup before opening
+the game. It downloads only new content hashes on subsequent starts. The
+release service worker also reuses verified engine and frontend files by hash.
+Engine overrides retain their existing per-file checks.
 Old release URL mappings remain available to running clients. Blob garbage
 collection is deliberately not automatic; check capacity before many updates.
 

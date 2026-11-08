@@ -20,7 +20,11 @@ frontend=collect(P(args.frontend).resolve(),args.mode=='multiplayer' or args.uni
 frontend['License.txt']=record(repo/'License.txt')
 if args.unified:
  frontend['index.html']=record(repo/'server/web/game.html')
- for name in ['game-ui.mjs','singleplayer-ui.mjs','public-ui.mjs']:frontend[name]=record(repo/'server/web'/name)
+ for name in ['game-ui.mjs','singleplayer-ui.mjs','public-ui.mjs','release-cache.mjs']:frontend[name]=record(repo/'server/web'/name)
+ bootstrap={'index.html','game-ui.mjs','release-cache.mjs','release-files.json'}
+ release_index=output/'release-files.json'
+ release_index.write_text(json.dumps({name:item for name,item in frontend.items() if name not in bootstrap},sort_keys=True,separators=(',',':')))
+ frontend['release-files.json']=record(release_index)
 elif args.mode=='multiplayer':
  frontend['identity.mjs']=record(repo/'misc/web/multiplayer/identity.mjs')
  frontend['index.html']=record(repo/'server/web/index.html');frontend['public-ui.mjs']=record(repo/'server/web/public-ui.mjs')

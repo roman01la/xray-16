@@ -13,4 +13,16 @@ window.addEventListener('xray-engine-log',({detail:line})=>{
 });
 document.querySelector('#multiplayer-hud').hidden=!multiplayer;
 document.querySelector('#return-menu').onclick=()=>{document.querySelector('#disconnect').click();selectMode('singleplayer');};
-await import('./singleplayer-ui.mjs');
+try {
+ if (/^\/releases\/[a-f0-9]{64}\/index\.html$/.test(location.pathname)) {
+  const {preparePublishedRelease}=await import('./release-cache.mjs');
+  const status=document.querySelector('#boot-status'),meter=document.querySelector('#load-progress');
+  status.textContent='Checking game engine files…';
+  await preparePublishedRelease((done,total)=>{meter.max=total;meter.value=done;});
+  meter.removeAttribute('value');
+ }
+ await import('./singleplayer-ui.mjs');
+} catch(error) {
+ document.querySelector('#boot-status').textContent=error.message;
+ const retry=document.querySelector('#retry');retry.hidden=false;retry.onclick=()=>location.reload();
+}

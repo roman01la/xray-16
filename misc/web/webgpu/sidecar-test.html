@@ -4,25 +4,31 @@
 <p>Exercises the same parked compiler, engine-thread connection and persistent shader cache as the game.</p>
 <button id="cold">Test package and runtime compilation</button>
 <button id="warm">Verify persisted results after reload</button>
-<pre id="status">Starting compiler…</pre><pre id="result"></pre>
+<pre id="status">Select a test.</pre><pre id="result"></pre>
 <script type="module">
 import {startShaderCompiler,createShaderCompilerPort} from './shader-compiler-client.mjs';
 import {shaderKey} from './shader-key.js';
-import {SHADER_CACHE_VERSION} from './shader-cache.mjs';
+import {SHADER_CACHE_VERSION,shaderCacheKey} from './shader-cache.mjs';
 const status=document.querySelector('#status'),result=document.querySelector('#result');
 let stats;
 addEventListener('xray-shader-compiler-status',({detail})=>{stats=detail;status.textContent=JSON.stringify(detail,null,2);});
-const ready=startShaderCompiler();
-ready.catch(error=>result.textContent=String(error.stack||error));
 async function run(cold) {
  document.querySelectorAll('button').forEach(b=>b.disabled=true);
  try {
-  await ready;
   const original=await (await fetch('./sidecar-test-request.json')).json();
   const runtime=structuredClone(original);
   runtime.sources.frag+='\n// runtime-sidecar-regression-v1\n';
   const requests=[original,runtime];
-  if(cold){const cache=await caches.open(SHADER_CACHE_VERSION);for(const request of requests)await cache.delete(new URL('./shaders/'+shaderKey(request)+'.json',location.href));}
+  if(cold){
+   const cache=await caches.open(SHADER_CACHE_VERSION);
+   const keys=new Set(requests.map(request=>shaderKey(request)));
+   for(const entry of await cache.keys()){
+    const match=new URL(entry.url).pathname.match(/\/shaders\/([a-f0-9]{64})\.json$/);
+    if(match&&keys.has(match[1]))await cache.delete(entry);
+   }
+  }
+  status.textContent='Starting compiler…';
+  await startShaderCompiler();
   const worker=new Worker('./sidecar-test-worker.mjs',{type:'module'});
   const port=createShaderCompilerPort();
   const start=performance.now();
@@ -42,7 +48,7 @@ async function run(cold) {
   device.destroy();
   const cache=await caches.open(SHADER_CACHE_VERSION);
   const cached=[];
-  for(const request of requests)cached.push(!!await cache.match(new URL('./shaders/'+shaderKey(request)+'.json',location.href)));
+  for(const request of requests)cached.push(!!await cache.match(shaderCacheKey(location.href,shaderKey(request))));
   const expected=cold ? stats.compiled===1&&stats.package===1 : stats.compiled===0&&stats.package===0&&stats.cache===2;
   const equal=JSON.stringify({...answer[0],key:answer[1].key})===JSON.stringify(answer[1]);
   result.textContent=JSON.stringify({passed:expected&&equal&&cached.every(Boolean)&&!errors.length,mode:cold?'cold':'persisted',elapsedMs,identicalArtifacts:equal,cached,gpuErrors:errors,stats},null,2);

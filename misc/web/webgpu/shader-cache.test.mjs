@@ -100,3 +100,23 @@ test('the release index eliminates HTTP requests for unpackaged shader variants'
   ]);
   assert.deepEqual(reports.map(event=>event.source), ['compiled', 'package']);
 });
+
+test('startup installs every packaged shader, then gameplay compiles new variants without HTTP',async()=>{
+  const next={...request,sources:{...request.sources,vert:'changed vertex'}},added={...program,key:shaderKey(next)};
+  const unknown={...request,sources:{...request.sources,vert:'runtime only'}},runtime={...program,key:shaderKey(unknown)};
+  const cacheStorage=storage(),downloads=[],reported=[];
+  const make=version=>createShaderStore({cacheStorage,report:event=>reported.push(event.source),baseURL:`https://game.test/${version}/shader-cache.mjs`,
+    fetchManifest:async()=>{const keys=version==='v1'?[program.key]:[program.key,added.key];return Response.json({version:3,shaderCount:keys.length,keys});},
+    fetchProgram:async url=>{downloads.push(url);return Response.json(url.includes(program.key)?program:added);},
+    compile:async value=>{assert.deepEqual(value,unknown);return runtime;}});
+  const first=make('v1');await first.preload();
+  assert.deepEqual(await first.load(request),program);
+  assert.deepEqual(await first.load(unknown),runtime);
+  assert.equal(downloads.length,1);
+  const second=make('v2');await second.preload();
+  assert.deepEqual(await second.load(request),program);
+  assert.deepEqual(await second.load(next),added);
+  assert.deepEqual(await second.load(unknown),runtime);
+  assert.deepEqual(downloads,[`https://game.test/v1/shaders/${program.key}.json`,`https://game.test/v2/shaders/${added.key}.json`]);
+  assert.deepEqual(reported,['package','compiled','cache','package','cache']);
+});
