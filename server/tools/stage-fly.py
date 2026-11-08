@@ -5,7 +5,10 @@ import shutil,tempfile
 repo=Path(__file__).resolve().parents[2]
 target=Path(tempfile.mkdtemp(prefix='zone-fly-build-'))
 files=[repo/'server/Cargo.toml',repo/'server/Cargo.lock',repo/'server/deploy/Dockerfile.fly',repo/'server/deploy/fly-entrypoint.sh']
+files.append(repo/'server/tools/migrate-cdn.py')
 files+=list((repo/'server/src').rglob('*.rs'))
+files+=list((repo/'server/config').glob('*.json'))
+files+=list((repo/'server/web').glob('*.mjs'))
 files+=[p for p in (repo/'misc/web/multiplayer').iterdir() if p.is_file() and p.suffix in {'.mjs','.html','.json'}]
 for source in files:
     destination=target/source.relative_to(repo);destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,destination)

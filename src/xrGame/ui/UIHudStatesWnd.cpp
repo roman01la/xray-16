@@ -19,6 +19,9 @@
 #include "PDA.h"
 #include "WeaponMagazinedWGrenade.h"
 #include "xrUICore/XML/UITextureMaster.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/InventoryPresentation.h"
+#endif
 
 CUIHudStatesWnd::CUIHudStatesWnd()
     : CUIWindow(CUIHudStatesWnd::GetDebugType()), m_b_force_update(true)
@@ -339,6 +342,10 @@ void CUIHudStatesWnd::UpdateHealth(CActor* actor)
 void CUIHudStatesWnd::UpdateActiveItemInfo(CActor* actor)
 {
     PIItem item = actor->inventory().ActiveItem();
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (!item)
+        item = zone::inventoryHudWeapon(actor);
+#endif
     if (item)
     {
         if (m_b_force_update)

@@ -122,6 +122,18 @@ fn wire_input_validation() {
     b[16] = 0;
     b[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
     assert!(decode_input(&b).is_none());
+    b[12..16].copy_from_slice(&0.5f32.to_le_bytes());
+    b.extend(61u32.to_le_bytes());
+    b.extend(100u32.to_le_bytes());
+    b.extend((-0.25f32).to_le_bytes());
+    let (input, trigger) = decode_player_input(&b).unwrap();
+    assert_eq!(input.sequence, 42);
+    let trigger = trigger.unwrap();
+    assert_eq!(trigger.sequence, 61);
+    assert_eq!(trigger.aim.tick, 100);
+    assert_eq!(trigger.aim.pitch, -0.25);
+    b[28..32].copy_from_slice(&1.6f32.to_le_bytes());
+    assert!(decode_input(&b).is_none());
 }
 #[test]
 fn crowded_snapshots_are_bounded_and_complete() {

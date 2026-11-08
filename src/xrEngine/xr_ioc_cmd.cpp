@@ -355,6 +355,16 @@ public:
 class CCC_VidMode : public CCC_Token
 {
     u32 _dummy = 0;
+#ifdef XR_PLATFORM_WEB
+    // The browser viewport and pixel ratio are independent of render size.
+    // Leave room for a custom resolution from the player's existing config.
+    xr_token m_webModes[8] = {
+        { "960x540", 0 }, { "1280x720", 1 }, { "1600x900", 2 },
+        { "1920x1080", 3 }, { "2560x1440", 4 }, { "3840x2160", 5 },
+        {}, {},
+    };
+    TStatus m_webCurrent{};
+#endif
 
 public:
     CCC_VidMode(pcstr name) : CCC_Token(name, &_dummy, nullptr) {}
@@ -363,16 +373,25 @@ public:
     {
         u32 w, h, r = 0;
         const int cnt = sscanf(args, "%ux%u (%uHz)", &w, &h, &r);
+#ifdef XR_PLATFORM_WEB
+        if (cnt >= 2 && (w < 640 || h < 480 || w > 4096 || h > 4096))
+        {
+            Msg("! Unsupported browser render resolution [%s]", args);
+            return;
+        }
+#endif
         if (cnt >= 2)
         {
             psDeviceMode.Width = w;
             psDeviceMode.Height = h;
 
+#ifndef XR_PLATFORM_WEB
             if (cnt == 3)
             {
                 psDeviceMode.RefreshRate = r;
                 m_Refresh60hz.set(fl_Refresh60hz, psDeviceMode.RefreshRate == 60);
             }
+#endif
         }
         else
         {
@@ -382,23 +401,48 @@ public:
 
     const xr_token* GetToken() noexcept override
     {
+#ifdef XR_PLATFORM_WEB
+        auto* const custom = std::end(m_webModes) - 2;
+        GetStatus(m_webCurrent);
+        const auto current = std::find_if(std::begin(m_webModes), custom, [this](const xr_token& token)
+        {
+            return xr_strcmp(token.name, m_webCurrent) == 0;
+        });
+        *custom = {};
+        if (psDeviceMode.Width && psDeviceMode.Height && current == custom)
+            *custom = { m_webCurrent, static_cast<int>(custom - m_webModes) };
+        return m_webModes;
+#else
         return vid_mode_token[psDeviceMode.Monitor].data();
+#endif
     }
 
     void GetStatus(TStatus& S) override
     {
+#ifdef XR_PLATFORM_WEB
+        xr_sprintf(S, "%ux%u", psDeviceMode.Width, psDeviceMode.Height);
+#else
         xr_sprintf(S, "%ux%u (%uHz)", psDeviceMode.Width, psDeviceMode.Height, psDeviceMode.RefreshRate);
+#endif
     }
 
     void Info(TInfo& I) override
     {
+#ifdef XR_PLATFORM_WEB
+        xr_strcpy(I, sizeof(I), "change render resolution WxH");
+#else
         xr_strcpy(I, sizeof(I), "change screen resolution WxH (RHz)");
+#endif
     }
 
     void fill_tips(vecTips& tips, u32 /*mode*/) override
     {
         TStatus buf;
+#ifdef XR_PLATFORM_WEB
+        xr_sprintf(buf, "%ux%u (current)", psDeviceMode.Width, psDeviceMode.Height);
+#else
         xr_sprintf(buf, "%ux%u (%dHz) (current)", psDeviceMode.Width, psDeviceMode.Height, psDeviceMode.RefreshRate);
+#endif
         tips.push_back(buf);
 
         const xr_token* tok = GetToken();
@@ -448,9 +492,21 @@ class CCC_VidWindowMode final : public CCC_Token
 public:
     CCC_VidWindowMode(pcstr name) : CCC_Token(name, &psDeviceMode.WindowStyle, vid_window_mode_token) {}
 
+#ifdef XR_PLATFORM_WEB
+    const xr_token* GetToken() noexcept override
+    {
+        static const xr_token browserModes[] = { { "st_opt_windowed_borderless", rsWindowedBorderless }, {} };
+        return browserModes;
+    }
+#endif
+
     void Execute(pcstr args) override
     {
+#ifdef XR_PLATFORM_WEB
+        psDeviceMode.WindowStyle = rsWindowedBorderless;
+#else
         CCC_Token::Execute(args);
+#endif
         m_fullscreen.set(fl_fullscreen, psDeviceMode.WindowStyle == rsFullscreen);
     }
 

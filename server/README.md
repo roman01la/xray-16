@@ -64,10 +64,11 @@ For a second engine, append `&slot=b`. Each slot has a separate writable OPFS
 root, including settings and saves; immutable asset cache entries are shared.
 Close extra engine tabs after testing.
 
-Controls: WASD movement, Shift sprint, Space jump, C crouch, V first-person
-camera, mouse aim in first person, F/left-click fire, R reload, Enter respawn.
-The development page displays authoritative ammo and action results. There is
-no first-person weapon model, firing sound/effect or inventory UI yet.
+Controls include WASD movement, Shift sprint, Space jump, C crouch, J to toggle
+first-person view, V for launcher mode, mouse aim in first person, left-click
+fire, R reload and Enter respawn.
+The development page displays authoritative ammo and action results.
+Survival mode uses the original inventory screen and item-backed HUD.
 
 The separately staged `load-test.html` supports anonymous and persistent modes.
 It runs 200 moving WebRTC peers for one minute by default; `seconds=600` enables
@@ -82,8 +83,10 @@ tests, not production launcher flows.
 
 The experimental preset writes only beneath its build tree. The normal
 single-player preset and deployed files remain unchanged. Capability metadata
-still says `actorAdapter: false`: proxies are render-only objects, not native
-CActor gameplay instances. Map-only loading bypasses native ALife/server updates.
+still says `actorAdapter: false`: full native actor/weapon gameplay adaptation
+is incomplete. The local build creates a native CActor and original item objects
+for inventory presentation, while world actors remain proxies. It does not run
+native ALife/server or local actor simulation.
 
 ## Simulation and movement
 
@@ -110,7 +113,7 @@ moving platforms, water/hazards, broad stairs/corners and WAN testing remain.
 ## Replication and transport
 
 `str0m` sans-I/O WebRTC runs in one simulation/network task with one UDP socket.
-Axum handles HTTP separately. State channel ID 0 uses protocol `zone-v2`,
+Axum handles HTTP separately. State channel ID 0 uses protocol `zone-v3`,
 `ordered:false`, `maxRetransmits:0`; control ID 2 is ordered/reliable. Both share
 SCTP/DTLS/ICE congestion control. No media permission or WebSocket fallback.
 
@@ -140,9 +143,9 @@ and sampled p95 replication+transport was 15.71 ms. An earlier run failed
 freshness; details and recovery evidence remain in PLAN.md. This is not a WAN,
 prolonged-soak or 200-independent-machine capacity claim.
 
-## Wire v2
+## Wire v3
 
-Binary fields are little endian, magic `0x5a58`, version 2. Inputs are 20 bytes:
+Binary fields are little endian, magic `0x5a58`, version 3. Inputs are 20 bytes:
 magic:u16, version:u8, type=1:u8, sequence:u32, x:i16, z:i16, yaw:f32,
 flags:u16 (sprint/jump/crouch bits 0/1/2), reserved:u16=0.
 
@@ -162,11 +165,44 @@ ID. Every packet is at most 1100 bytes. Type 4 ACK and type 5 resync feedback ar
 8 bytes: magic/version/type plus tick:u32 (zero for resync). The old full-record
 codec is retained for fixtures, not used by live replication.
 
-Signaling `POST /offer` supplies `{version:2,contract,offer:{type:"offer",sdp}}`.
+Signaling `POST /offer` supplies `{version:3,contract,offer:{type:"offer",sdp}}`.
 World, content, authority and rates must match exactly. `/world.json` exposes the
-selected contract. Control JSON includes welcome, lifecycle, owner weapon state,
-fire/reload/respawn/leave actions and correlated action results. Actions have
-session sequence protection; they are not durable inventory transactions.
+selected contract. Every WebRTC message is binary; JSON remains only in HTTPS
+APIs and internal structured values. There is no dual-format compatibility path.
+
+Reliable control starts with magic:u16, version:u8, opcode:u8. Client commands
+then carry sequence:u32: attack=1 adds target:u32 (12 bytes total); reload=2
+and leave=5 are 8 bytes. Respawn=3 adds a 16-byte request ID and life:u32
+(28 bytes); fire=4 adds tick:u32, yaw:f32, pitch:f32 (20 bytes).
+Inventory_list=6 carries a 16-byte cursor and generation:u64 (32 bytes total;
+all-zero cursor starts a view, all-one generation means unspecified).
+Inventory_move=7 carries request ID:16 bytes, life:u32, item ID:16 bytes,
+revision:u32, action:u8, placement:u8 and source ID:16 bytes (66 bytes total).
+Unknown opcodes, extra bytes, wrong versions and nonfinite aim fail closed.
+All commands use session sequence protection; inventory mutations and survival
+respawn additionally use durable request IDs and recorded transaction outcomes.
+
+Server event opcodes and positional fields are: welcome=16 (version, contract,
+playerId, principalId, tickHz, safeZones); ownership_dirty=17 (no fields);
+weapon=18 (state); lifecycle=19 (revision, tick, upsert, remove); action_result=20
+(sequence, result); inventory_dirty=21 (no fields). Fields use binary tags:
+0=null, 1=false, 2=true, 3=u32, 4=f64,
+5=UTF-8 string, 6=array, 7=map. Strings and collection counts have u16 lengths;
+map keys are length-prefixed UTF-8. Nested field names remain strings, while
+common envelope names and action names are replaced by opcodes/positions.
+Decoding bounds event size to 16 KiB, nesting to eight, and collection size to
+1024; malformed UTF-8, duplicate/prototype map keys and trailing bytes reject the
+message. Rust/JS acceptance fixtures exercise both directions with actual codecs.
+
+One UDP socket serves all sessions. An address-to-peer hash map routes established
+traffic, revalidated by `Rtc::accepts`; cache misses search sessions (O(N)) for ICE
+negotiation or address changes. Each peer owns separate ICE/DTLS/SCTP state and
+replication baselines. Outbound datagrams use the same socket with each peer's
+address. The simulation/network task is serial, with 30-Hz simulation and a
+10-ms WebRTC timer scan; HTTP and persistence work are separate. Dense encounters
+still require individual encrypted snapshots for every recipient, not multicast.
+The important scaling limits are packet processing/crypto, per-recipient AOI and
+delta work, queue pressure and egress, rather than a need for one socket per user.
 
 ## Prototype weapon and lifecycle
 
@@ -199,6 +235,7 @@ are implemented separately below; this build is not a public survival server.
 | `ZONE_MAX_PLAYERS` | `200` | Includes pending connections, max 4096 |
 | `ZONE_COLLISION_MANIFEST` | unset | Enables pinned Zaton map simulation |
 | `ZONE_SPAWN_X`, `ZONE_SPAWN_Z` | `87.599976`, `115` | Validated map spawn |
+| `ZONE_SPAWN_Y` | unset | Optional floor-height anchor for map spawn and respawn |
 
 The dev token is not player authentication. Internet deployment still needs
 HTTPS/signaling proxy, reachable UDP/TURN, account/session authentication,
@@ -389,6 +426,54 @@ This exercises application reconciliation and combat under delayed delivery,
 not actual WAN RTT, ICE behavior or SCTP congestion. The test log records queue
 loss/overflow counters. Keep real WAN and prolonged soak gates open.
 
+## Inventory mechanics backend
+
+`src/inventory.rs` adds schema v7 durable item/container transactions to the bounded
+SQLite worker. Binary WebRTC commands expose inventory paging, pickup/drop/equip
+and durable respawn when `ZONE_ITEM_CATALOG` enables survival mode. Death is an
+internal simulation operation. Session identity, authorization epoch, life and
+position are validated at commit; clients cannot mint items or supply item state.
+Original catalog definitions govern equipment and per-instance state. The browser
+adapter journals commands before sending and reconciles coherent inventory pages.
+
+`ZONE_SURVIVAL_RULES` selects configurable development defaults, including the
+per-life starter kit, respawn delay and corpse/drop expiry. Loot refill and logout
+policy fields are defined but their simulation enforcement is still pending.
+The complete actor-backed inventory UI acceptance remains an integration gate. These local
+mechanics changes have not been deployed.
+
+`inventory-abi.mjs` and `multiplayer/InventoryState.h` connect coherent inventory
+views to the application pthread. Native state includes stable IDs/revisions,
+placement, condition, upgrades, cartridge order, launcher cartridges, attachments
+and remaining consumable/ammo quantities. Whole-view validation precedes atomic
+replacement; malformed or older views cannot partially change native state.
+Worker intents carry the displayed life and item revision, then enter the same
+durable journal as other inventory actions. The bridge retains one in-flight view
+plus the latest replacement when rendering pauses. This store does not itself
+spawn native actors/items. `InventoryPresentation` now supplies that binding,
+retaining original item factories and menu UI without starting local gameplay.
+Browser verification covers menu opening, one server-authoritative Drop,
+reconnect, rifle equip, drag between weapon slots and return to the rucksack;
+real-map pickup, outfit/belt interactions, batch drops, corpse/storage search and complete
+weapon state remain open. Pending journaled commands retry after lost replies
+with capped exponential backoff; session closure cancels retries.
+
+Two real browser WebRTC clients passed pickup contention, equip/drop/re-loot,
+full-loss death, reconnect and respawn on the optimized server. Restart verification
+preserved both identities, life counters and exact item state. Evidence:
+[`inventory-transport.png`](acceptance/inventory-transport.png),
+[`inventory-restart.png`](acceptance/inventory-restart.png), and
+[`inventory-transport-metrics.json`](acceptance/inventory-transport-metrics.json).
+This is transport/persistence acceptance, not original game UI or capacity acceptance.
+
+See [MECHANICS.md](MECHANICS.md#implementation-checkpoint--2026-11-08) for the
+implemented boundary and remaining playable acceptance. Run its transaction suite:
+
+```sh
+cargo +1.93.1 test --locked --manifest-path server/Cargo.toml --test inventory
+cargo +1.93.1 test --release --locked --manifest-path server/Cargo.toml --test inventory
+```
+
 ## Community references and decisions
 
 Sources reviewed on 2026-11-07, pinned to exact revisions:
@@ -405,6 +490,22 @@ Sources reviewed on 2026-11-07, pinned to exact revisions:
   recipient and available-balance checks guide authorization boundaries. Our
   generic ownership transfers commit owner/revision/outcome atomically, verified
   independently with concurrency and crash/replay tests; no economy is imported.
+  Revisited `OnPlayerDisconnect` at the same revision on 2026-11-08 for the
+  inventory boundary: retain explicit per-instance condition, ammunition and
+  attachment state. Reject its PDA/bolt/binocular/backpack exclusions for this
+  game's full-loss rule. Our death transaction moves every carried placement;
+  tests cover equipped/belt items, private storage, retry after looting and
+  all-or-nothing rollback. The reference's disconnect-time delete/save loop is
+  not adopted. Original catalog, equip/use behaviour and engine UI acceptance
+  remain pending; preserving fields is not proof of gameplay equivalence.
+- [IX-Ray FreeMP client](https://github.com/ixray-team/ixray-1.6-stcop/blob/f1188825e86774a488489f043f8aeee9ca4fbfb2/src/xrGame/FreeMP/game_cl_freemp.cpp),
+  revisited on 2026-11-08: `createGameUI`/`SetGameUI` retain a native game UI;
+  `TranslateGameMessage` resolves a native item from the object registry before
+  updating its actor menu. Retain that actor/item-backed presentation boundary.
+  Our worker bridge supplies Rust-owned coherent state and durable intents;
+  importing the native server's authority or replacing the inventory with HTML
+  is not part of the implementation. The native actor/menu binding now opens the
+  original screen and routes a single-item Drop; broader UI acceptance is open.
 - [Zone authority](https://github.com/AnarchadiaMC/Zone/blob/1eb99802b41e525f3896d710dee881f67c7e8fa9/docs/AUTHORITY_MODEL.md),
   [AOI](https://github.com/AnarchadiaMC/Zone/blob/1eb99802b41e525f3896d710dee881f67c7e8fa9/zone-server/internal/game/aoi_manager.go),
   [safe zones](https://github.com/AnarchadiaMC/Zone/blob/1eb99802b41e525f3896d710dee881f67c7e8fa9/zone-server/internal/game/safezone.go):
@@ -421,9 +522,10 @@ Revisit and record the relevant implementation when adding each subsystem.
 
 ### Persistent scene and operations boundary
 
-See [deployment and recovery](deploy/README.md) for schema v4 administration,
+See [deployment and recovery](deploy/README.md) for schema v4/v5 administration,
 backups, shutdown, credential lifecycle, bounded worker metrics and deployment
-configuration. Stable entity IDs are replicated as reliable lifecycle metadata;
+configuration. Mechanics databases use schema v7; deployed databases remain on
+their deployed image's schema until an explicit upgrade. Stable entity IDs are replicated as reliable lifecycle metadata;
 trusted scene descriptors materialize authoritative, noninteractive proxy actors.
 Ownership stays private and independent of spatial visibility.
 

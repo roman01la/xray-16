@@ -1,0 +1,24 @@
+{
+  "scope": "optimized Zaton server, authored stash bootstrap and disposable depletion before restart",
+  "manifestSha256": "df892f3340ba364de0372124bf4af5019d26eac83acf62c92fd028901fb42a2a",
+  "serverSha256": "98bd1c9386cf7ed4a8bb51944ba8b747c730111e88c52ecd3e50939fa88fa58c",
+  "schema": 9,
+  "stashes": 52,
+  "slots": 226,
+  "seededItems": 214,
+  "maxPopulatedPerStash": 8,
+  "restartItems": 213,
+  "changedManifestRejected": true,
+  "originalSpawnSha256": "899e69538ec75684ce2422b8c89943d44878448bab05ce7f4a08b076735e128d",
+  "sourceVertices": 6464,
+  "campaignStashes": 141,
+  "sharedStashes": 131,
+  "sharedPositions": 683,
+  "reviewStashes": 10,
+  "exactOriginalFloatCoordinates": true,
+  "openGates": [
+    "Refill interval and player proximity",
+    "Loose placement approval and one-time import",
+    "Two browser clients discovering and competing for original loot"
+  ]
+}

@@ -42,9 +42,23 @@ pub enum Operation {
     ListEntities(String, Option<u64>),
     Transfer(crate::ownership::Transfer),
     TransferWithContext(crate::ownership::Transfer, crate::policy::ActionContext),
+    ListInventory(String, Option<u64>),
+    Corpses(String, crate::inventory::Context),
+    CorpseItems(String, String, Option<u64>, crate::inventory::Context),
+    WorldItems(String, crate::inventory::Context),
+    MoveInventory(crate::inventory::Move, crate::inventory::Context),
+    // Internal operation; never route a client command to this variant.
+    InventoryDeath(crate::inventory::Context),
+    ResolveBlast(crate::survival::Blast),
+    FireWeapon(String, Option<crate::combat::ShotTarget>, Option<u32>),
+    LoadCondition,
+    SaveCondition(crate::survival::Record, crate::survival::Location),
+    Consume(crate::inventory::Move, crate::inventory::Context, crate::survival::Record),
+    InventoryRespawn(crate::inventory::Respawn,crate::inventory::Context),
 }
 struct Job {
     secret: String,
+    session: Option<crate::inventory::Context>,
     operation: Option<Operation>,
     reply: oneshot::Sender<Result<Value, String>>,
     enqueued: std::time::Instant,
@@ -55,9 +69,34 @@ pub struct Persistence {
     runtime: watch::Receiver<crate::scene::RuntimeState>,
     stats: Arc<StoreMetrics>,
     updates: broadcast::Sender<OwnershipChange>,
+    loot_presence: Option<watch::Sender<Option<crate::loot::Presence>>>,
 }
 impl Persistence {
     pub fn start(path: &Path) -> Result<Self> {
+        Self::start_with_catalog(path,None)
+    }
+    pub fn start_with_catalog(path: &Path, catalog: Option<Arc<crate::catalog::Catalog>>) -> Result<Self> {
+        Self::start_with_rules(path,catalog,None)
+    }
+    pub fn start_with_rules(path:&Path,catalog:Option<Arc<crate::catalog::Catalog>>,rules:Option<Arc<crate::survival_rules::SurvivalRules>>)->Result<Self>{
+        Self::start_with_loot(path, catalog, rules, None)
+    }
+    pub fn start_with_loot(
+        path: &Path,
+        catalog: Option<Arc<crate::catalog::Catalog>>,
+        rules: Option<Arc<crate::survival_rules::SurvivalRules>>,
+        loot: Option<crate::loot::AuthoredLoot>,
+    ) -> Result<Self> {
+        Self::start_for_world(path, catalog, rules, loot, None).map(|(store, _)| store)
+    }
+    pub fn start_for_world(
+        path: &Path,
+        catalog: Option<Arc<crate::catalog::Catalog>>,
+        rules: Option<Arc<crate::survival_rules::SurvivalRules>>,
+        loot: Option<crate::loot::AuthoredLoot>,
+        world: Option<&crate::contract::Contract>,
+    ) -> Result<(Self, Vec<crate::survival::SavedLogout>)> {
+        if let Some(rules)=&rules{rules.validate(catalog.as_deref().context("survival rules require item catalog")?)?;}
         let canonical;
         let path = if path == Path::new(":memory:") {
             path
@@ -90,6 +129,23 @@ impl Persistence {
             Some(file)
         };
         let mut db = Database::open(path)?;
+        let logouts = if let (Some(contract), Some(catalog)) = (world, catalog.as_deref()) {
+            crate::survival::load_logouts(&db.connection.transaction()?, contract, catalog)?
+        } else { Vec::new() };
+        db.catalog=catalog;
+        db.rules=rules;
+        if let Some(loot) = &loot {
+            let rules = db.rules.as_deref().context("authored loot requires survival rules")?;
+            let tx = db.connection.transaction()?;
+            loot.seed(&tx, rules)?;
+            tx.commit()?;
+        }
+        let (loot_presence, presence_updates) = if loot.is_some() {
+            let (tx, rx) = watch::channel(None::<crate::loot::Presence>);
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         let stats = Arc::new(StoreMetrics::default());
         let worker_stats = stats.clone();
         let (tx, rx) = mpsc::sync_channel::<Job>(32);
@@ -103,6 +159,14 @@ impl Persistence {
                 let mut polled = std::time::Instant::now();
                 loop {
                     if polled.elapsed() >= Duration::from_secs(1) {
+                        if let Err(error)=db.expire_inventory(crate::survival_rules::unix_millis().unwrap_or(0)){tracing::error!("inventory expiry failed: {error}");}
+                        if let (Some(loot), Some(updates)) = (&loot, &presence_updates) {
+                            let sample = updates.borrow().clone();
+                            if let Some(sample) = sample.filter(|sample| sample.fresh())
+                                && let Err(error) = db.replenish_loot(loot, &sample) {
+                                tracing::error!("authored loot replenishment failed: {error}");
+                            }
+                        }
                         let state = db.runtime_state().unwrap_or_default();
                         runtime_sender.send_if_modified(|current| {
                             if *current != state {
@@ -133,7 +197,10 @@ impl Persistence {
                     } else {
                         None
                     };
-                    let result = db.execute(&job.secret, operation).map_err(|error| {
+                    let result = match job.session {
+                        Some(context)=>db.execute_session(&context,operation),
+                        None=>db.execute(&job.secret, operation),
+                    }.map_err(|error| {
                         tracing::warn!("persistence operation failed: {error}");
                         "persistence unavailable".to_string()
                     });
@@ -160,17 +227,19 @@ impl Persistence {
                     let _ = job.reply.send(result);
                 }
             })?;
-        Ok(Self {
+        Ok((Self {
             tx,
             updates,
             runtime,
             stats,
-        })
+            loot_presence,
+        }, logouts))
     }
     pub async fn flush(&self) -> Result<(), String> {
         let (reply, done) = oneshot::channel();
         let mut job = Job {
             secret: String::new(),
+            session: None,
             operation: None,
             reply,
             enqueued: std::time::Instant::now(),
@@ -198,6 +267,11 @@ impl Persistence {
     pub fn metrics(&self) -> Value {
         json!({"queued":self.stats.queued.load(Ordering::Relaxed),"peakQueued":self.stats.peak.load(Ordering::Relaxed),"completed":self.stats.completed.load(Ordering::Relaxed),"rejected":self.stats.rejected.load(Ordering::Relaxed),"lastUs":self.stats.last_us.load(Ordering::Relaxed),"maxUs":self.stats.max_us.load(Ordering::Relaxed)})
     }
+    pub fn observe_loot_players(&self, world: &crate::world::World) {
+        if let Some(presence) = &self.loot_presence {
+            presence.send_replace(Some(crate::loot::Presence::capture(world)));
+        }
+    }
     pub fn runtime(&self) -> watch::Receiver<crate::scene::RuntimeState> {
         self.runtime.clone()
     }
@@ -208,6 +282,19 @@ impl Persistence {
         if !valid_secret(&secret) {
             return Err("invalid identity credential".into());
         }
+        let rx=self.enqueue(secret,None,operation)?;
+        tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .map_err(|_| "persistence timeout; outcome unknown")?
+            .map_err(|_| "persistence unavailable")?
+    }
+    /// Nonblocking simulation submission. A peer can keep one receiver in flight;
+    /// the global queue is still bounded at 32 and SQLite stays on its worker.
+    pub fn inventory_request(&self,context:crate::inventory::Context,operation:Operation)->Result<oneshot::Receiver<Result<Value,String>>,String>{
+        validate_session_operation(&operation).map_err(|_|"invalid session operation")?;
+        self.enqueue(String::new(),Some(context),operation)
+    }
+    fn enqueue(&self,secret:String,session:Option<crate::inventory::Context>,operation:Operation)->Result<oneshot::Receiver<Result<Value,String>>,String>{
         validate_operation(&operation).map_err(|_| "invalid mutation")?;
         let (reply, rx) = oneshot::channel();
         let queued = self.stats.queued.fetch_add(1, Ordering::Relaxed) + 1;
@@ -216,6 +303,7 @@ impl Persistence {
             .tx
             .try_send(Job {
                 secret,
+                session,
                 operation: Some(operation),
                 reply,
                 enqueued: std::time::Instant::now(),
@@ -226,11 +314,11 @@ impl Persistence {
             self.stats.rejected.fetch_add(1, Ordering::Relaxed);
             return Err("persistence busy".into());
         }
-        tokio::time::timeout(Duration::from_secs(5), rx)
-            .await
-            .map_err(|_| "persistence timeout; outcome unknown")?
-            .map_err(|_| "persistence unavailable")?
+        Ok(rx)
     }
+}
+fn validate_session_operation(operation:&Operation)->Result<()> {
+    ensure!(matches!(operation,Operation::Corpses(..)|Operation::CorpseItems(..)|Operation::WorldItems(..)|Operation::ListInventory(..)|Operation::MoveInventory(..)|Operation::InventoryDeath(..)|Operation::InventoryRespawn(..)|Operation::ResolveBlast(..)|Operation::FireWeapon(..)|Operation::LoadCondition|Operation::SaveCondition(..)|Operation::Consume(..)),"not an inventory session operation");Ok(())
 }
 fn valid_secret(s: &str) -> bool {
     s.len() == 64
@@ -250,11 +338,38 @@ pub(crate) fn validate_request_id(id: &str) -> Result<()> {
 }
 fn validate_operation(operation: &Operation) -> Result<()> {
     match operation {
+        Operation::InventoryRespawn(command,_)=>validate_request_id(&command.request_id),
         Operation::Write(m) => validate_mutation(m),
         Operation::Transfer(m) | Operation::TransferWithContext(m, _) => {
             crate::ownership::validate(m)
         }
-        Operation::ListEntities(cursor, generation) => {
+        Operation::MoveInventory(command, _) => command.validate(),
+        Operation::Consume(command, _, _) => {
+            ensure!(matches!(command.action, crate::inventory::MoveAction::Consume), "expected consume action");
+            command.validate()
+        }
+        Operation::FireWeapon(item, target, _) => {
+            ensure!(crate::ownership::valid_id(item), "invalid weapon id");
+            if let Some(target) = target {
+                ensure!(crate::ownership::valid_id(&target.character.principal)
+                    && (0.0..=crate::combat::MAX_OWNED_RANGE).contains(&target.distance), "invalid shot target");
+            }
+            Ok(())
+        }
+        Operation::ResolveBlast(blast) => {
+            ensure!((0.0..=100.0).contains(&blast.power), "invalid blast power");
+            Ok(())
+        }
+
+        Operation::WorldItems(cursor,_) | Operation::Corpses(cursor,_) => {
+            ensure!(cursor.is_empty() || crate::ownership::valid_id(cursor), "invalid world item cursor");Ok(())
+        }
+        Operation::CorpseItems(source,cursor,generation,_) => {
+            ensure!(crate::ownership::valid_id(source),"invalid corpse id");
+            ensure!(generation.is_none_or(|g|g<=9007199254740991),"invalid generation");
+            ensure!(cursor.is_empty() || (crate::ownership::valid_id(cursor) && generation.is_some()),"invalid corpse cursor");Ok(())
+        }
+        Operation::ListEntities(cursor, generation) | Operation::ListInventory(cursor, generation) => {
             ensure!(
                 generation.is_none_or(|g| g <= 9007199254740991),
                 "invalid generation"
@@ -282,6 +397,8 @@ fn validate_mutation(m: &Mutation) -> Result<()> {
 }
 pub struct Database {
     connection: Connection,
+    catalog: Option<Arc<crate::catalog::Catalog>>,
+    rules: Option<Arc<crate::survival_rules::SurvivalRules>>,
 }
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
@@ -291,7 +408,7 @@ impl Database {
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(version <= 4, "unsupported persistence schema {version}");
+        ensure!(version <= 13, "unsupported persistence schema {version}");
         if version == 0 {
             let tx = connection.transaction()?;
             tx.execute_batch("CREATE TABLE principals (id TEXT PRIMARY KEY, credential_hash TEXT NOT NULL UNIQUE);
@@ -327,7 +444,89 @@ impl Database {
                 PRAGMA user_version=4;")?;
             tx.commit()?;
         }
-        Ok(Self { connection })
+        if version < 5 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::inventory::SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 6 {
+            let tx=connection.transaction()?;tx.execute_batch(crate::inventory::LIFECYCLE_SCHEMA)?;tx.commit()?;
+        }
+        if version < 7 {
+            let tx=connection.transaction()?;
+            tx.execute_batch("CREATE INDEX inventory_world_nearby ON item_containers(kind,world,x); PRAGMA user_version=7;")?;
+            tx.commit()?;
+        }
+        if version < 8 {
+            let tx=connection.transaction()?;tx.execute_batch(crate::inventory::CONTAINER_SCHEMA)?;tx.commit()?;
+        }
+        if version < 9 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::loot::SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 10 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::loot::REFILL_SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 11 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::loot::LOOSE_SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 12 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::survival::SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 13 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::survival::LOCATION_SCHEMA)?;
+            tx.commit()?;
+        }
+        Ok(Self { connection, catalog: None, rules:None })
+    }
+    fn replenish_loot(&mut self, loot: &crate::loot::AuthoredLoot, sample: &crate::loot::Presence) -> Result<()> {
+        let rules = self.rules.as_deref().context("authored loot requires survival rules")?;
+        let tx = self.connection.transaction()?;
+        let count = loot.refill(&tx, rules, sample, crate::survival_rules::unix_millis()?)?;
+        if sample.fresh() {
+            tx.commit()?;
+            if count > 0 {
+                tracing::debug!(count, "replenished authored loot");
+            }
+        }
+        Ok(())
+    }
+    pub fn set_catalog(&mut self,catalog:Arc<crate::catalog::Catalog>){self.catalog=Some(catalog);}
+    pub fn set_survival_rules(&mut self,rules:Arc<crate::survival_rules::SurvivalRules>)->Result<()>{rules.validate(self.catalog.as_deref().context("rules require catalog")?)?;self.rules=Some(rules);Ok(())}
+    pub fn expire_inventory(&mut self,now:i64)->Result<usize>{let tx=self.connection.transaction()?;let count=crate::inventory::expire(&tx,now)?;tx.commit()?;Ok(count)}
+    /// Trusted import/setup only, not a client inventory API. Existing characters
+    /// retain their life/death state; reconnect does not grant any equipment.
+    pub fn initialize_inventory(&mut self, principal: &str) -> Result<Value> {
+        let tx = self.connection.transaction()?;
+        crate::inventory::initialize(&tx, principal)?;
+        let carried = crate::inventory::personal_container(&tx, principal, "carried")?;
+        let storage = crate::inventory::personal_container(&tx, principal, "storage")?;
+        tx.commit()?;
+        Ok(json!({"carried":carried,"storage":storage}))
+    }
+    /// Trusted original-placement importer only. No HTTP/WebRTC mint route.
+    pub fn provision_world_container(&mut self, world: &str, position: [f64; 3]) -> Result<String> {
+        let tx = self.connection.transaction()?;
+        let id = crate::inventory::world_container(&tx, "world", world, position)?;
+        tx.commit()?;
+        Ok(id)
+    }
+    /// Trusted item importer only. Catalog compatibility must be checked by the
+    /// importer before provisioning equipped items; this is not an equip action.
+    pub fn provision_inventory_item(&mut self, container: &str, section: &str, state: &crate::inventory::ItemState, place: &str) -> Result<String> {
+        if let Some(catalog)=&self.catalog {catalog.validate_state(section,state)?;}
+        let tx = self.connection.transaction()?;
+        let id = crate::inventory::provision(&tx, container, section, state, place)?;
+        tx.commit()?;
+        Ok(id)
     }
     pub fn runtime_state(&self) -> Result<crate::scene::RuntimeState> {
         let auth_epoch = self.connection.query_row(
@@ -392,6 +591,13 @@ impl Database {
             "{:x}",
             Sha256::digest(format!("zone-identity-v1\n{secret}"))
         );
+        self.execute_authenticated(Some(&hash),None,operation)
+    }
+    fn execute_session(&mut self,context:&crate::inventory::Context,operation:Operation)->Result<Value>{
+        validate_session_operation(&operation)?;
+        self.execute_authenticated(None,Some(context),operation)
+    }
+    fn execute_authenticated(&mut self,hash:Option<&str>,session:Option<&crate::inventory::Context>,operation:Operation)->Result<Value>{
         validate_operation(&operation)?;
         let tx = self
             .connection
@@ -399,18 +605,27 @@ impl Database {
         if matches!(operation, Operation::Register) {
             tx.execute("INSERT INTO principals(id,credential_hash) VALUES(lower(hex(randomblob(16))),?1) ON CONFLICT(credential_hash) DO NOTHING", [&hash])?;
         }
-        let principal: Option<String> = tx
+        let principal: Option<String> = if let Some(context)=session {
+            if context.expires<=std::time::Instant::now(){return Ok(json!({"error":"expired session authority"}));}
+            tx.query_row("SELECT p.id FROM principals p,runtime_meta m WHERE p.id=?1 AND p.revoked=0 AND m.id=1 AND m.auth_epoch=?2",params![context.principal,i64::try_from(context.auth_epoch)?],|r|r.get(0)).optional()?
+        }else {tx
             .query_row(
                 "SELECT id FROM principals WHERE credential_hash=?1 AND revoked=0",
                 [&hash],
                 |r| r.get(0),
             )
-            .optional()?;
+            .optional()?};
         let Some(principal) = principal else {
+            if let Some(context) = session && matches!(operation, Operation::InventoryDeath(..)) {
+                let revoked: Option<bool> = tx.query_row("SELECT revoked FROM principals WHERE id=?1", [&context.principal], |row| row.get(0)).optional()?;
+                return Ok(json!({"error":"unauthorized identity","revoked":revoked.unwrap_or(true)}));
+            }
             return Ok(json!({"error":"unauthorized identity"}));
         };
         tx.execute("INSERT INTO records(principal,revision,value) VALUES(?1,0,'null') ON CONFLICT DO NOTHING", [&principal])?;
-        let result = match operation {
+        let loadout_update = session.is_some() && matches!(operation,
+            Operation::MoveInventory(..) | Operation::InventoryDeath(..) | Operation::InventoryRespawn(..) | Operation::Consume(..));
+        let mut result = match operation {
             Operation::Register | Operation::Resume => {
                 let epoch: i64 =
                     tx.query_row("SELECT auth_epoch FROM runtime_meta WHERE id=1", [], |r| {
@@ -434,6 +649,61 @@ impl Database {
             }
             Operation::TransferWithContext(command, context) => {
                 crate::ownership::transfer(&tx, &principal, &command, Some(&context))?
+            }
+            Operation::ListInventory(after, generation) => {
+                crate::inventory::initialize_with_rules(&tx, &principal,self.catalog.as_deref(),self.rules.as_deref())?;
+                crate::inventory::list(&tx, &principal, &after, generation)?
+            }
+            Operation::Corpses(after,context)=>{
+                crate::inventory::initialize(&tx,&principal)?;
+                crate::inventory::corpses(&tx,&principal,&after,&context)?
+            }
+            Operation::CorpseItems(source,after,generation,context)=>{
+                crate::inventory::initialize(&tx,&principal)?;
+                crate::inventory::container_items(&tx,&principal,&source,&after,generation,&context,self.rules.as_deref())?
+            }
+            Operation::WorldItems(after, context) => {
+                crate::inventory::initialize(&tx, &principal)?;
+                crate::inventory::world_items(&tx, &principal, &after, &context, self.rules.as_deref())?
+            }
+            Operation::MoveInventory(command, context) => {
+                crate::inventory::initialize_with_rules(&tx, &principal,self.catalog.as_deref(),self.rules.as_deref())?;
+                crate::inventory::move_item(&tx, &principal, &command, &context, self.catalog.as_deref(),self.rules.as_deref(),None)?
+            }
+            Operation::LoadCondition => {
+                session.context("condition requires a live session")?;
+                crate::inventory::initialize_with_rules(&tx, &principal, self.catalog.as_deref(), self.rules.as_deref())?;
+                let (life, alive, record, location) = crate::survival::load(&tx, &principal)?;
+                let loadout = self.catalog.as_deref().map(|catalog| crate::inventory::loadout(&tx, &principal, catalog)).transpose()?.unwrap_or_default();
+                json!({"life":life,"alive":alive,"condition":record,"location":location,"loadout":loadout})
+            }
+            Operation::SaveCondition(record, location) => {
+                let context = session.context("condition requires a live session")?;
+                json!({"saved":crate::survival::checkpoint(&tx, &principal, context.life, &record, &location)?})
+            }
+            Operation::Consume(command, context, record) => {
+                session.context("consumption requires a live session")?;
+                crate::inventory::move_item(&tx, &principal, &command, &context, self.catalog.as_deref(),
+                    self.rules.as_deref(), Some(record))?
+            }
+            Operation::FireWeapon(item, target, queue_index) => {
+                let context = session.context("firing requires a live session")?;
+                crate::weapon_inventory::debit_shot(&tx, &principal, context.life, &item,
+                    self.catalog.as_deref().context("firing requires item catalog")?, target.as_ref(), queue_index)?
+            }
+            Operation::ResolveBlast(blast) => {
+                let context = session.context("blast requires a live session")?;
+                let result = crate::survival::resolve_blast(&tx,
+                    self.catalog.as_deref().context("blast requires item catalog")?,
+                    self.rules.as_deref(), context, blast)?;
+                serde_json::to_value(result)?
+            }
+            Operation::InventoryDeath(context) => {
+                crate::inventory::initialize(&tx, &principal)?;
+                crate::inventory::die(&tx, &principal, &context,self.rules.as_deref())?
+            }
+            Operation::InventoryRespawn(command,context)=>{
+                crate::inventory::respawn(&tx,&principal,&command,&context,self.catalog.as_deref().context("respawn requires catalog")?,self.rules.as_deref().context("respawn requires rules")?)?
             }
             Operation::Write(m) => {
                 let request = serde_json::to_string(&m)?;
@@ -476,6 +746,11 @@ impl Database {
                 response
             }
         };
+        if loadout_update && matches!(result["status"].as_str(), Some("committed" | "respawned"))
+            && let Some(catalog) = self.catalog.as_deref()
+        {
+            result["loadout"] = serde_json::to_value(crate::inventory::loadout(&tx, &principal, catalog)?)?;
+        }
         tx.commit()?;
         Ok(result)
     }

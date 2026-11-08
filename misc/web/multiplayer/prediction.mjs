@@ -2,7 +2,7 @@ import {newer} from './protocol.mjs';
 export const MAX_REPLAY=8,MAX_HISTORY=32;
 export class Reconciler {
  constructor(motor,now=()=>performance.now()){this.motor=motor;this.now=now;this.snapshot=null;this.history=[];this.result=null;this.updated=0;this.replays=0;}
- snapshotReceived(snapshot){this.snapshot=snapshot;this.updated=this.now();this.reconcile();}
+ snapshotReceived(snapshot,vitals=null){this.snapshot=snapshot;this.vitals=vitals;this.updated=this.now();this.reconcile();}
  inputsReceived(history){
   if(!Array.isArray(history)||history.length>MAX_HISTORY||history.some((i,n)=>!Number.isInteger(i.sequence)||i.sequence<0||i.sequence>0xffffffff||!['x','z','yaw'].every(k=>Number.isFinite(i[k]))||Math.abs(i.x)>1.001||Math.abs(i.z)>1.001||typeof i.sprint!=='boolean'||(i.jump!==undefined&&typeof i.jump!=='boolean')||(i.crouch!==undefined&&typeof i.crouch!=='boolean')||(n>0&&!newer(i.sequence,history[n-1].sequence))))throw Error('Invalid prediction history');
   this.history=history;this.reconcile();
@@ -15,7 +15,16 @@ export class Reconciler {
   // burst of old commands or running far ahead of the server.
   if(pending.length>MAX_REPLAY){this.result=null;return;}
   this.motor.reset(player);let yaw=player.yaw;
-  for(const i of pending){this.motor.step(i);yaw=i.yaw;}
+  for(const i of pending){
+   if(this.vitals){
+    const flags=this.vitals[6],scale=this.vitals[10]/1000,moving=i.x!==0||i.z!==0;
+    const stopped=moving&&(flags&2)===0;
+    const normalizer=Math.max(1,Math.hypot(i.x,i.z));
+    this.motor.step({...i,x:stopped?0:i.x*scale/normalizer,z:stopped?0:i.z*scale/normalizer,
+      sprint:i.sprint&&(flags&1)!==0,jump:i.jump&&!stopped});
+   }else this.motor.step(i);
+   yaw=i.yaw;
+  }
   this.replays=pending.length;this.result={...this.motor.state(),yaw};
  }
  position(){return this.now()-this.updated<=350?this.result:null;}

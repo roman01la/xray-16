@@ -39,12 +39,15 @@ impl SessionConfig {
             collision: None,
         }
     }
-    pub fn zaton(map: CollisionMap, x: f32, z: f32) -> Result<Self> {
+    pub fn zaton(map: CollisionMap, x: f32, z: f32, height: Option<f32>) -> Result<Self> {
         ensure!(
             map.manifest.level == "zaton" && map.actor_ready(),
             "Zaton material-aware geometry required"
         );
-        let p = map.spawn_feet(x, z)?;
+        let p = match height {
+            Some(y) => map.spawn_feet_near(x, y, z)?,
+            None => map.spawn_feet(x, z)?,
+        };
         let geometry = map.manifest.sha256.clone();
         let materials = map.manifest.materials.as_ref().unwrap().sha256.clone();
         let mut contract = contract::current().clone();
@@ -65,6 +68,7 @@ impl SessionConfig {
             collision: Some(Arc::new(map)),
         })
     }
+    pub fn collision(&self) -> Option<Arc<CollisionMap>> {self.collision.clone()}
     pub fn scene_position(&self, x: f32, z: f32) -> Result<Vec3> {
         if let Some(map) = &self.collision {
             let p = map.spawn_feet(x, z)?;

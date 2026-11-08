@@ -2,13 +2,22 @@
 //! dependency on lost baselines. No message exceeds 1100 application bytes.
 use crate::world::{Input, SnapshotEntity};
 pub const MAGIC: u16 = 0x5a58;
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 pub const MAX_PACKET: usize = 1100;
 pub const HEADER: usize = 24;
 pub const ENTITY_BYTES: usize = 36;
 pub const PER_PACKET: usize = (MAX_PACKET - HEADER) / ENTITY_BYTES;
 pub fn decode_input(data: &[u8]) -> Option<Input> {
-    if data.len() != 20
+    decode_player_input(data).map(|(input, _)| input)
+}
+
+pub struct TriggerSample {
+    pub sequence: u32,
+    pub aim: crate::combat::Aim,
+}
+
+pub fn decode_player_input(data: &[u8]) -> Option<(Input, Option<TriggerSample>)> {
+    if !matches!(data.len(), 20 | 32)
         || u16::from_le_bytes(data[0..2].try_into().ok()?) != MAGIC
         || data[2] != VERSION
         || data[3] != 1
@@ -23,7 +32,20 @@ pub fn decode_input(data: &[u8]) -> Option<Input> {
     if !yaw.is_finite() || flags & !7 != 0 || data[18..20] != [0, 0] {
         return None;
     }
-    Some(Input {
+    let trigger = if data.len() == 32 {
+        let read = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap());
+        let pitch = f32::from_bits(read(28));
+        if !pitch.is_finite() || pitch.abs() > 1.55 {
+            return None;
+        }
+        Some(TriggerSample {
+            sequence: read(20),
+            aim: crate::combat::Aim { tick: read(24), yaw, pitch },
+        })
+    } else {
+        None
+    };
+    Some((Input {
         sequence,
         x,
         z,
@@ -31,7 +53,7 @@ pub fn decode_input(data: &[u8]) -> Option<Input> {
         sprint: flags & 1 != 0,
         jump: flags & 2 != 0,
         crouch: flags & 4 != 0,
-    })
+    }, trigger))
 }
 pub fn encode_snapshots(
     tick: u32,

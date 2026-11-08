@@ -85,6 +85,10 @@ public:
     void PlaySound(pcstr alias, const Fvector& position, const IGameObject* parent,
         bool hud_mode, bool looped = false, u8 index = u8(-1));
 
+#ifdef XRAY_WEB_MULTIPLAYER
+    void PlayOneShot(pcstr alias, Fvector position);
+#endif
+
     void StopSound(pcstr alias);
     void StopAllSounds();
 

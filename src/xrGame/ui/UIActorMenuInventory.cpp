@@ -36,6 +36,10 @@
 #include "PDA.h"
 #include "actor_defs.h"
 #include "script_game_object_impl.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/EngineAdapter.h"
+#include "multiplayer/InventoryPresentation.h"
+#endif
 
 void move_item_from_to(u16 from_id, u16 to_id, u16 what_id);
 
@@ -135,6 +139,9 @@ void CUIActorMenu::SendEvent_Item_Eat(PIItem pItem, u16 recipient)
 
 void CUIActorMenu::SendEvent_Item_Drop(PIItem pItem, u16 recipient)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled()) {zone::inventoryMenuAction(pItem,1);return;}
+#endif
     R_ASSERT(pItem->parent_id() == recipient);
     if (!IsGameTypeSingle())
         pItem->DenyTrade();
@@ -149,6 +156,21 @@ void CUIActorMenu::SendEvent_Item_Drop(PIItem pItem, u16 recipient)
 
 void CUIActorMenu::DropAllCurrentItem()
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled())
+    {
+        if (CurrentIItem() && !CurrentIItem()->IsQuestItem())
+        {
+            zone::inventoryBatchBegin();
+            for (u32 i = 0; i < CurrentItem()->ChildsCount(); ++i)
+                zone::inventoryMenuAction((PIItem)CurrentItem()->Child(i)->m_pData, 1);
+            zone::inventoryMenuAction(CurrentIItem(), 1);
+            zone::inventoryBatchEnd();
+        }
+        SetCurrentItem(NULL);
+        return;
+    }
+#endif
     if (CurrentIItem() && !CurrentIItem()->IsQuestItem())
     {
         u32 const cnt = CurrentItem()->ChildsCount();
@@ -171,6 +193,24 @@ bool CUIActorMenu::DropAllItemsFromRuck(bool quest_force)
         return false;
     }
 
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled())
+    {
+        zone::inventoryBatchBegin();
+        for (u32 i = 0; i < m_pLists[eInventoryBagList]->ItemsCount(); ++i)
+        {
+            CUICellItem* ci = m_pLists[eInventoryBagList]->GetItemIdx(i);
+            PIItem item = (PIItem)ci->m_pData;
+            if (!quest_force && item->IsQuestItem()) continue;
+            for (u32 j = 0; j < ci->ChildsCount(); ++j)
+                zone::inventoryMenuAction((PIItem)ci->Child(j)->m_pData, 1);
+            zone::inventoryMenuAction(item, 1);
+        }
+        zone::inventoryBatchEnd();
+        SetCurrentItem(NULL);
+        return true;
+    }
+#endif
     u32 const ci_count = m_pLists[eInventoryBagList]->ItemsCount();
     for (u32 i = 0; i < ci_count; ++i)
     {
@@ -353,6 +393,14 @@ void CUIActorMenu::OnInventoryAction(PIItem pItem, u16 action_type)
 }
 void CUIActorMenu::AttachAddon(PIItem item_to_upgrade)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled())
+    {
+        if (zone::inventoryAttach(item_to_upgrade, CurrentIItem()))
+            PlaySnd(eAttachAddon);
+        return;
+    }
+#endif
     PlaySnd(eAttachAddon);
     R_ASSERT(item_to_upgrade);
     if (OnClient())
@@ -490,6 +538,13 @@ void CUIActorMenu::InitInventoryContents(CUIDragDropListEx* pBagList, bool onlyB
     for (; itb != ite; ++itb)
     {
         CUICellItem* itm = create_cell_item(*itb);
+#ifdef XRAY_WEB_MULTIPLAYER
+        if (zone::mapPreviewEnabled()) {
+            const int cell=zone::inventoryBeltCell(*itb);
+            R_ASSERT(cell>=0);
+            curr_list->SetItem(itm,Ivector2().set(cell,0));
+        } else
+#endif
         curr_list->SetItem(itm);
         if (m_currMenuMode == mmTrade && m_pPartnerInvOwner)
             ColorizeItem(itm, !CanMoveToPartner(*itb));
@@ -503,6 +558,10 @@ bool CUIActorMenu::TryActiveSlot(CUICellItem* itm)
 {
     PIItem iitem = (PIItem)itm->m_pData;
     u16 slot = iitem->BaseSlot();
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled() && slot==GRENADE_SLOT)
+        return zone::inventoryMenuAction(iitem,3,slot);
+#endif
 
     if (slot == GRENADE_SLOT)
     {
@@ -547,6 +606,22 @@ bool CUIActorMenu::ToSlotScript(CScriptGameObject* GO, bool force_place, u16 slo
 
 bool CUIActorMenu::ToSlot(CUICellItem* itm, bool force_place, u16 slot_id)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled()) {
+        auto* item=static_cast<PIItem>(itm->m_pData);
+        auto& inv=m_pActorInvOwner->inventory();
+        if (slot_id<inv.FirstSlot() || slot_id>inv.LastSlot()) return false;
+        if (!inv.CanPutInSlot(item,slot_id)) {
+            // Preserve the original fallback: a failed ordinary slot attempt
+            // must allow double-click to try the artefact belt next.
+            if (!force_place || (inv.SlotIsPersistent(slot_id) && slot_id!=DETECTOR_SLOT)) return false;
+            if (slot_id==INV_SLOT_2 && inv.CanPutInSlot(item,INV_SLOT_3)) slot_id=INV_SLOT_3;
+            else if (slot_id==INV_SLOT_3 && inv.CanPutInSlot(item,INV_SLOT_2)) slot_id=INV_SLOT_2;
+            else if (!inv.ItemFromSlot(slot_id) || !m_pActorInvOwner->CanPutInSlot(item,slot_id)) return false;
+        }
+        return zone::inventoryMenuAction(item,3,slot_id);
+    }
+#endif
     CUIDragDropListEx* old_owner = itm->OwnerList();
     PIItem iitem = (PIItem)itm->m_pData;
 
@@ -679,6 +754,13 @@ bool CUIActorMenu::ToSlot(CUICellItem* itm, bool force_place, u16 slot_id)
 bool CUIActorMenu::ToBag(CUICellItem* itm, bool b_use_cursor_pos)
 {
     PIItem iitem = (PIItem)itm->m_pData;
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled() && m_currMenuMode == mmDeadBodySearch &&
+        itm->OwnerList() == m_pLists[eSearchLootBagList])
+        return zone::inventoryTakeCorpseItem(iitem);
+    if (zone::mapPreviewEnabled() && !m_pActorInvOwner->inventory().InRuck(iitem))
+        return zone::inventoryMenuAction(iitem,2);
+#endif
 
     bool b_own_item = (iitem->parent_id() == m_pActorInvOwner->object_id());
 
@@ -746,6 +828,27 @@ bool CUIActorMenu::ToBeltScript(CScriptGameObject* GO, bool b_use_cursor_pos)
 bool CUIActorMenu::ToBelt(CUICellItem* itm, bool b_use_cursor_pos)
 {
     PIItem iitem = (PIItem)itm->m_pData;
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled()) {
+        const auto& size=itm->GetGridSize();
+        const int width=m_pActorInvOwner->inventory().BeltWidth();
+        if (!iitem->Belt() || size.y!=1 || size.x<=0 || size.x>width) return false;
+        if (b_use_cursor_pos) {
+            const auto cell=m_pLists[eInventoryBeltList]->PickCell(GetUICursor().GetCursorPosition());
+            if (cell.y!=0 || cell.x<0 || cell.x+size.x>width) return false;
+            return zone::inventoryMenuAction(iitem,4,cell.x);
+        }
+        for (int cell=0;cell+size.x<=width;++cell) {
+            bool occupied=false;
+            for(const auto& state:zone::inventory().items)if(state.placement==2) {
+                const int otherWidth=pSettings->r_u32(state.section.c_str(),"inv_grid_width");
+                if(cell<state.index+otherWidth && state.index<cell+size.x)occupied=true;
+            }
+            if(!occupied)return zone::inventoryMenuAction(iitem,4,cell);
+        }
+        return false;
+    }
+#endif
     bool b_own_item = (iitem->parent_id() == m_pActorInvOwner->object_id());
 
     if (m_pActorInvOwner->inventory().CanPutInBelt(iitem))
@@ -861,6 +964,10 @@ bool CUIActorMenu::TryUseItem(CUICellItem* cell_itm)
     {
         return false;
     }
+
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled()) return zone::inventoryMenuAction(item, zone::InventoryConsume);
+#endif
 
     //cell_itm->UpdateConditionProgressBar(); //Alundaio
 
@@ -1360,7 +1467,36 @@ void CUIActorMenu::ProcessPropertiesBoxClicked(CUIWindow* w, void* d)
     }
     CWeapon* weapon = smart_cast<CWeapon*>(item);
 
-    switch (m_UIPropertiesBox->GetClickedItem()->GetTAG())
+    const auto action = m_UIPropertiesBox->GetClickedItem()->GetTAG();
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled())
+    {
+        int slot = -1;
+        switch (action)
+        {
+        case INVENTORY_DETACH_SCOPE_ADDON: slot = 0; break;
+        case INVENTORY_DETACH_SILENCER_ADDON: slot = 1; break;
+        case INVENTORY_DETACH_GRENADE_LAUNCHER_ADDON: slot = 2; break;
+        }
+        if (slot >= 0)
+        {
+            zone::inventoryBatchBegin();
+            bool submitted = zone::inventoryDetach(item, slot);
+            for (u32 i = 0; i < cell_item->ChildsCount(); ++i)
+                submitted |= zone::inventoryDetach(static_cast<PIItem>(cell_item->Child(i)->m_pData), slot);
+            zone::inventoryBatchEnd();
+            if (submitted)
+                PlaySnd(eDetachAddon);
+            return;
+        }
+        if (action == INVENTORY_ATTACH_ADDON)
+        {
+            AttachAddon(static_cast<PIItem>(m_UIPropertiesBox->GetClickedItem()->GetData()));
+            return;
+        }
+    }
+#endif
+    switch (action)
     {
     case INVENTORY_TO_SLOT_ACTION: ToSlot(cell_item, true, item->BaseSlot()); break;
     case INVENTORY_TO_BELT_ACTION: ToBelt(cell_item, false); break;
@@ -1494,6 +1630,13 @@ void CUIActorMenu::ProcessPropertiesBoxClicked(CUIWindow* w, void* d)
         }
         break;
     case INVENTORY_RELOAD_MAGAZINE:
+#ifdef XRAY_WEB_MULTIPLAYER
+        if (zone::mapPreviewEnabled())
+        {
+            zone::inventoryMenuAction(CurrentIItem(), zone::InventoryReload);
+            break;
+        }
+#endif
         if (weapon)
         {
             weapon->Action(kWPN_RELOAD, CMD_START);
@@ -1501,6 +1644,17 @@ void CUIActorMenu::ProcessPropertiesBoxClicked(CUIWindow* w, void* d)
         break;
     case INVENTORY_UNLOAD_MAGAZINE:
     {
+#ifdef XRAY_WEB_MULTIPLAYER
+        if (zone::mapPreviewEnabled())
+        {
+            zone::inventoryBatchBegin();
+            zone::inventoryMenuAction(CurrentIItem(), zone::InventoryUnload);
+            for (u32 i = 0; i < cell_item->ChildsCount(); ++i)
+                zone::inventoryMenuAction(static_cast<PIItem>(cell_item->Child(i)->m_pData), zone::InventoryUnload);
+            zone::inventoryBatchEnd();
+            break;
+        }
+#endif
         CWeaponMagazined* weap_mag = smart_cast<CWeaponMagazined*>((CWeapon*)cell_item->m_pData);
         if (!weap_mag)
         {

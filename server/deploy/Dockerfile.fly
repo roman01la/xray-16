@@ -2,11 +2,14 @@ FROM rust:1.93.1-bookworm AS build
 WORKDIR /src
 COPY server/Cargo.toml server/Cargo.lock ./server/
 COPY server/src ./server/src
+COPY server/config ./server/config
 COPY misc/web/multiplayer ./misc/web/multiplayer
 RUN cargo build --release --locked --manifest-path server/Cargo.toml --bin zone-server
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends util-linux && rm -rf /var/lib/apt/lists/* && groupadd --gid 10001 zone && useradd --uid 10001 --gid zone --no-create-home zone && mkdir /data
+FROM node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux python3-boto3 && rm -rf /var/lib/apt/lists/* && groupadd --gid 10001 zone && useradd --uid 10001 --gid zone --no-create-home zone && mkdir /data
 COPY --from=build /src/server/target/release/zone-server /usr/local/bin/zone-server
 COPY --chmod=0755 server/deploy/fly-entrypoint.sh /usr/local/bin/zone-fly-entrypoint
-EXPOSE 8082/tcp 50000/udp
+COPY server/web /app/web
+COPY server/tools/migrate-cdn.py /app/tools/migrate-cdn.py
+EXPOSE 8080/tcp 50000/udp
 ENTRYPOINT ["/usr/local/bin/zone-fly-entrypoint"]

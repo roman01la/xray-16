@@ -4,6 +4,8 @@
 !server/Cargo.lock
 !server/src/
 !server/src/**
+!server/config/
+!server/config/survival-development.json
 !misc/
 !misc/web/
 !misc/web/multiplayer/

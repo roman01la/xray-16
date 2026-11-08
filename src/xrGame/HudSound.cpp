@@ -222,6 +222,22 @@ void HUD_SOUND_COLLECTION_LAYERED::PlaySound(pcstr alias, const Fvector& positio
             sound_item.PlaySound(alias, position, parent, hud_mode, looped, index);
 }
 
+#ifdef XRAY_WEB_MULTIPLAYER
+void HUD_SOUND_COLLECTION_LAYERED::PlayOneShot(pcstr alias, Fvector position)
+{
+    for (auto& layer : m_sound_layered_items)
+    {
+        if (layer.m_alias != alias)
+            continue;
+        auto* item = layer.FindSoundItem(alias, false);
+        if (!item || item->sounds.empty())
+            continue;
+        auto& voice = item->sounds[Random.randI(item->sounds.size())];
+        voice.snd.play_no_feedback(nullptr, 0, voice.delay, &position, &voice.volume);
+    }
+}
+#endif
+
 
 HUD_SOUND_ITEM* HUD_SOUND_COLLECTION_LAYERED::FindSoundItem(pcstr alias, bool b_assert)
 {

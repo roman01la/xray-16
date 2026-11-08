@@ -8,7 +8,7 @@ use parry3d::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 const MAX_BYTES: u64 = 256 * 1024 * 1024;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +43,7 @@ pub struct MaterialAsset {
     pub sha256: String,
     pub bytes: u64,
 }
+#[derive(Debug)]
 pub struct CollisionMap {
     pub manifest: Manifest,
     mesh: TriMesh,
@@ -50,6 +51,7 @@ pub struct CollisionMap {
     pub actor_triangle_ids: Vec<u32>,
     /// Original packed material/shadow/sector metadata, indexed by triangle ID.
     pub triangle_metadata: Vec<u32>,
+    materials: BTreeMap<u32, crate::materials::Material>,
 }
 impl CollisionMap {
     pub fn load(path: &Path) -> Result<Self> {
@@ -186,6 +188,7 @@ impl CollisionMap {
             actor_mesh: None,
             actor_triangle_ids: Vec::new(),
             triangle_metadata: metadata,
+            materials: BTreeMap::new(),
         })
     }
     pub fn attach_materials(&mut self, bytes: &[u8]) -> Result<()> {
@@ -199,14 +202,15 @@ impl CollisionMap {
                 && format!("{:x}", Sha256::digest(bytes)) == asset.sha256,
             "material hash mismatch"
         );
-        let flags = crate::materials::parse(bytes)?;
+        let materials = crate::materials::parse(bytes)?;
         let mut faces = Vec::new();
         let mut ids = Vec::new();
         for (i, metadata) in self.triangle_metadata.iter().enumerate() {
             let id = metadata & 0x3fff;
-            let f = *flags
+            let material = materials
                 .get(&id)
                 .with_context(|| format!("unknown CFORM material ID {id}"))?;
+            let f = material.flags;
             ensure!(
                 f & crate::materials::DYNAMIC == 0,
                 "dynamic material on static geometry"
@@ -221,6 +225,7 @@ impl CollisionMap {
             .context("build actor collision BVH")?;
         self.actor_mesh = Some(mesh);
         self.actor_triangle_ids = ids;
+        self.materials = materials;
         Ok(())
     }
     /// Conservative static spawn: lower a complete capsule from above the map.
@@ -250,6 +255,17 @@ impl CollisionMap {
             feet += delta;
         }
         anyhow::bail!("no actor support at spawn")
+    }
+    /// Resolve an authored spawn on a specific floor instead of the roof above it.
+    pub fn spawn_feet_near(&self, x: f32, y: f32, z: f32) -> Result<Vector> {
+        let start = Vector::new(x, y, z);
+        let bounds = &self.manifest.bounds;
+        ensure!(start.to_array().into_iter().zip(bounds.min.into_iter().zip(bounds.max))
+            .all(|(value, (min, max))| (min..=max).contains(&value)), "spawn outside map bounds");
+        let down = -Vector::Y * 1.5;
+        let hit = self.sweep_actor(start, down)?.context("no actor support near spawn height")?;
+        ensure!(hit.time_of_impact > 0.0 && self.walkable_contact(&hit), "spawn anchor lacks clear walkable support");
+        Ok(start + down * hit.time_of_impact + Vector::Y * 0.005)
     }
     pub fn actor_ready(&self) -> bool {
         self.actor_mesh.is_some()
@@ -309,17 +325,28 @@ impl CollisionMap {
     }
     /// Double-sided ray query in original world coordinates; direction must be unit length.
     pub fn ray(&self, origin: Vector, direction: Vector, distance: f32) -> Result<Option<f32>> {
-        ensure!(
-            origin.is_finite()
-                && direction.is_finite()
-                && distance.is_finite()
-                && distance > 0.0
-                && (direction.length_squared() - 1.0).abs() < 0.001,
-            "invalid ray"
-        );
-        Ok(self
-            .mesh
-            .cast_local_ray(&Ray::new(origin, direction), distance, true))
+        let ray = checked_ray(origin, direction, distance)?;
+        Ok(self.mesh.cast_local_ray(&ray, distance, true))
+    }
+    /// CoP explosion cover uses OPT_CULL and the original single-player
+    /// material factor for every intersected static surface.
+    pub fn blast_transmission(&self, origin: Vector, direction: Vector, distance: f32) -> Result<f32> {
+        let ray = checked_ray(origin, direction, distance)?;
+        let mut transmission = 1.0;
+        for id in self.mesh.bvh().leaves(|node| node.cast_ray(&ray, distance) <= distance) {
+            let triangle = self.mesh.triangle(id);
+            if triangle.scaled_normal().dot(direction) >= 0.0
+                || triangle.cast_local_ray(&ray, distance, true).is_none()
+            {
+                continue;
+            }
+            let material = self.triangle_metadata[id as usize] & 0x3fff;
+            transmission *= 1.0 - self.materials.get(&material).map_or(1.0, |m| m.shoot_factor);
+            if transmission == 0.0 {
+                break;
+            }
+        }
+        Ok(transmission)
     }
     /// Continuous standing-capsule sweep, using feet coordinates. This query is
     /// a controller primitive, not yet step/slide/gravity or collision response.
@@ -363,6 +390,17 @@ impl CollisionMap {
         .map_err(|_| anyhow::anyhow!("unsupported capsule query"))
     }
 }
+fn checked_ray(origin: Vector, direction: Vector, distance: f32) -> Result<Ray> {
+    ensure!(
+        origin.is_finite()
+            && direction.is_finite()
+            && distance.is_finite()
+            && distance > 0.0
+            && (direction.length_squared() - 1.0).abs() < 0.001,
+        "invalid ray"
+    );
+    Ok(Ray::new(origin, direction))
+}
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -391,7 +429,7 @@ pub(crate) mod tests {
                 b.extend(f32::to_le_bytes(v));
             }
         }
-        for t in [[0u32, 2, 1, 7], [3, 5, 4, 9], [6, 7, 8, 11]] {
+        for t in [[0u32, 2, 1, 7], [3, 5, 4, 9], [6, 8, 7, 11]] {
             for v in t {
                 b.extend(v.to_le_bytes());
             }
@@ -417,8 +455,11 @@ pub(crate) mod tests {
         (m, b)
     }
     pub(crate) fn actor_fixture(wall_flags: u32) -> CollisionMap {
+        cover_fixture([(7, 0, 1.0), (9, 0, 1.0), (11, wall_flags, 1.0)])
+    }
+    pub(crate) fn cover_fixture(factors: [(u32, u32, f32); 3]) -> CollisionMap {
         let (mut m, b) = fixture();
-        let materials = crate::materials::fixture(&[(7, 0), (9, 0), (11, wall_flags)]);
+        let materials = crate::materials::fixture_with_factors(&factors);
         m.materials = Some(MaterialAsset {
             sha256: format!("{:x}", Sha256::digest(&materials)),
             bytes: materials.len() as u64,
@@ -426,6 +467,16 @@ pub(crate) mod tests {
         let mut map = CollisionMap::from_bytes(m, &b).unwrap();
         map.attach_materials(&materials).unwrap();
         map
+    }
+    #[test]
+    fn blast_transmission_combines_front_faces_without_changing_solid_rays() {
+        let map = cover_fixture([(7, 0, 0.25), (9, 0, 0.5), (11, 0, 1.0)]);
+        let origin = Vector::new(0.0, 4.0, 0.0);
+        assert_eq!(map.blast_transmission(origin, -Vector::Y, 5.0).unwrap(), 0.375);
+        assert_eq!(map.blast_transmission(origin, -Vector::Y, 2.0).unwrap(), 0.5);
+        assert_eq!(map.blast_transmission(Vector::new(0.0, -1.0, 0.0), Vector::Y, 5.0).unwrap(), 1.0);
+        assert_eq!(map.ray(origin, -Vector::Y, 5.0).unwrap(), Some(1.0));
+        assert_eq!(map.blast_transmission(Vector::Y, Vector::X, 3.0).unwrap(), 0.0);
     }
     #[test]
     fn material_filtering_preserves_actor_obstacles() {
@@ -509,7 +560,7 @@ pub(crate) mod tests {
         assert!((a.feet - b.feet).length() < 1e-6);
         assert!((a.feet.x * a.feet.x + a.feet.z * a.feet.z).sqrt() <= 4. / 30. + 1e-6);
     }
-    fn step_fixture(height: f32, ceiling: bool) -> CollisionMap {
+    pub(crate) fn step_fixture(height: f32, ceiling: bool) -> CollisionMap {
         let mut vertices = Vec::<[f32; 3]>::new();
         let mut indices = Vec::<[u32; 3]>::new();
         let mut quad = |p: [[f32; 3]; 4]| {
@@ -596,56 +647,11 @@ pub(crate) mod tests {
         let map = actor_fixture(0);
         let p = map.spawn_feet(0., 0.).unwrap();
         assert!((p.y - 3.010).abs() < 0.002, "{p:?}");
+        let lower_floor = map.spawn_feet_near(0., 0.5, 0.).unwrap();
+        assert!((lower_floor.y - 0.010).abs() < 0.002, "{lower_floor:?}");
+        assert!(map.spawn_feet_near(0., f32::NAN, 0.).is_err());
         assert!(map.spawn_feet(100., 0.).is_err());
         assert!(map.spawn_feet(f32::NAN, 0.).is_err());
-    }
-    #[test]
-    fn world_applies_collision_and_stops_stale_input() {
-        use crate::world::{INPUT_TIMEOUT_TICKS, Input, Kind, World};
-        let map = std::sync::Arc::new(step_fixture(0.8, false));
-        let mut world = World::with_collision(map).unwrap();
-        let id = world.spawn_on_map(Kind::Player, 0., 0.).unwrap();
-        for sequence in 1..31 {
-            assert!(world.input(
-                id,
-                Input {
-                    sequence,
-                    x: 1.,
-                    z: 0.,
-                    yaw: 0.,
-                    sprint: true,
-                    jump: false,
-                    crouch: false
-                }
-            ));
-            world.step();
-        }
-        assert!(world.entities[&id].position.x < 0.66);
-        assert_eq!(world.movement_errors, 0);
-        assert!(world.input(
-            id,
-            Input {
-                sequence: 31,
-                x: -1.,
-                z: 0.,
-                yaw: 0.,
-                sprint: false,
-                jump: false,
-                crouch: false
-            }
-        ));
-        for _ in 0..INPUT_TIMEOUT_TICKS + 2 {
-            world.step();
-        }
-        let x = world.entities[&id].position.x;
-        for _ in 0..10 {
-            world.step();
-        }
-        assert!((world.entities[&id].position.x - x).abs() < 0.001);
-        assert!(world.visible_to(id)[0].position.y > 0.);
-        world.remove(id);
-        assert!(world.entities.is_empty());
-        world.step();
     }
     #[test]
     fn jump_requires_ground_and_new_press() {

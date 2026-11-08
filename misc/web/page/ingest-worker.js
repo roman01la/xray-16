@@ -119,6 +119,7 @@ async function ingest(sourceDir, root) {
       total,
     });
   }
+  postMessage({type:'engine-progress',done:files.length,total:files.length});
   for (const sub of ["logs", "savedgames", "screenshots"])
     await ensureDir(game, ["_appdata_", sub]);
   await writeBlob(game, ".ingested", new Blob([new Date().toISOString()]));
@@ -164,7 +165,9 @@ async function syncEngineData(root) {
     throw new Error("Cannot download engine manifest: HTTP " + manifest.status);
   const { files, retired } = await manifest.json();
   await removeRetired(game, retired);
+  let checked=0;
   for (const entry of files) {
+    postMessage({type:'engine-progress',done:checked++,total:files.length});
     const parts = entry.path.split("/");
     const name = parts.pop();
     const dir = await ensureDir(game, parts);
@@ -188,6 +191,7 @@ async function syncEngineData(root) {
       throw new Error("Integrity check failed: " + entry.path);
     await writeBlob(dir, name, blob);
   }
+  postMessage({type:'engine-progress',done:files.length,total:files.length});
   for (const sub of ["logs", "savedgames", "screenshots"])
     await ensureDir(game, ["_appdata_", sub]);
 }

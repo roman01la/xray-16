@@ -1,29 +1,61 @@
-# Fly.io network test deployment
+# Fly.io public game deployment
 
-This is one authoritative Rust server with a persistent SQLite volume. The browser
-engine and licensed assets stay local. HTTPS signaling is forwarded by the local
-preview gateway; browser WebRTC data channels connect directly to Fly's UDP port.
-The development access token stays in the gateway process, outside browser code.
+Public URL: **https://roman-stalker-wan.fly.dev/**. One authoritative Rust server
+runs in Frankfurt (`fra`), with a Node 24 HTTP gateway serving the browser build
+and the on-demand game pack, with verified bulk chunks served from Tigris.
+The volume stages uploads; verified bulk chunks are removed after CDN cutover. The user explicitly approved
+public access and confirmed permission to distribute the game assets.
 
-Current test app: `roman-stalker-wan`, Frankfurt (`fra`), dedicated IPv4
-`77.83.143.60`, UDP port `50000`, HTTPS
-`https://roman-stalker-wan.fly.dev`. `/health` is public; signaling, identity and
-metrics require the development token. This URL serves the backend, not a game
-launcher. Two shared CPUs / 1 GiB is connectivity-test sizing, not a 200-player
-capacity guarantee. The dedicated IPv4 costs $2/month, plus Machine and volume
-usage. The app stays running; there is no automatic stop/start.
+## Topology and access
 
-## Deploy
+- App `roman-stalker-wan`, Machine `813e27c9723e48`, dedicated IPv4 `77.83.143.60`.
+- Fly HTTPS terminates at gateway port 8080. Rust HTTP listens only on
+  `127.0.0.1:8082`; WebRTC UDP uses `fly-global-services:50000` and advertises
+  `77.83.143.60:50000`. The ICE receive path reverses the ingress destination
+  translation for that single logical public endpoint.
+- Public routes include the released files and player identity/signaling APIs.
+  The gateway injects the internal token server-side; it is never shipped to
+  browsers. Per-browser player credentials remain required by the Rust APIs.
+  Foreign Origin/cross-site API requests are rejected; registration/signaling
+  and general API calls have bounded per-IP rate limits and body limits.
+- `/metrics` and `/_deploy/*` require the private `ZONE_DEV_TOKEN` bearer token.
+  No database, collision directory, filesystem browsing, or test pages are served.
+- Every asset response has COOP/COEP/CORP headers for the threaded WASM engine.
+  Content-versioned URLs have immutable caching and SHA-256 ETags. Root redirects
+  to the active release, with no-store caching.
+- This build uses browser-held portable save keys. Copy save key and Open save
+  allow another browser to resume the same identity. Keep a copy before clearing
+  browser storage; there is intentionally no email/password recovery. The existing combat/NPC behavior is a development fixture.
 
-Authenticate with `flyctl auth login`. For a new app, change the app/origin/address
-in `fly.toml`, create a dedicated IPv4 and a `zone_data` volume in the same region.
-Set `ZONE_DEV_TOKEN` through `flyctl secrets import` using private stdin, never
-through checked-in files or browser JavaScript. Keep a matching local token file
-with mode 0600 for the preview gateway.
+## Persistent data
 
-Always stage a physically isolated source context. The main checkout contains
-large private game files and build products; do not upload it as the build context.
-From the repository root:
+Volume `vol_40o7jmp7odd7pmm4` (`zone_data`) is 10 GB and encrypted. The entrypoint
+initializes owned directories then drops to uid/gid 10001. The gateway supervises
+Rust and forwards SIGTERM; Fly allows 25 seconds for shutdown.
+
+- `/data/zone/zone.sqlite`: durable player records and ownership (plus SQLite WAL).
+- `/data/collision`: private Zaton manifest and hash-named cform/gamemtl files.
+- `/data/web/blobs`: immutable decoded file bytes keyed by SHA-256.
+- `/data/web/manifests`: release history; `/data/web/active.json` is atomically
+  replaced only after every referenced blob has been verified as present.
+
+The initial game payload is approximately 4.44 GiB, including the engine and
+all pack chunks. Browsers request 16-MiB chunks on demand; they do not download
+the whole pack before starting. Validated chunks are cached by content hash
+across releases. Engine overrides also retain their existing per-file checks.
+Old release URL mappings remain available to running clients. Blob garbage
+collection is deliberately not automatic; check capacity before many updates.
+
+The Machine currently has two shared CPUs / 1 GiB and stays running. This is not
+a 200-player capacity guarantee. Dedicated IPv4 is $2/month plus Machine, volume
+and applicable bandwidth charges. Daily volume snapshots retain five days;
+application backup scheduling and target-host restore drills remain plan items.
+
+## Deploy server/gateway code
+
+Keep `ZONE_DEV_TOKEN` in Fly secrets and in a private local mode-0600 file for
+publishing. Never put it in a URL, source file, browser module, or command argument.
+Use the existing authenticated Fly CLI. From the repository root:
 
 ```sh
 build_context=$(python3 server/tools/stage-fly.py)
@@ -31,62 +63,166 @@ flyctl deploy "$build_context" --config "$build_context/fly.toml" \
   --app roman-stalker-wan --remote-only --ha=false --no-public-ips --yes
 ```
 
-Only one Machine may own this world/database. The entrypoint initializes the
-volume directory then drops to uid/gid 10001. Database files live under
-`/data/zone`. The server resolves `fly-global-services:50000` to the special Fly
-IPv4 interface; using a wildcard bind for UDP is not equivalent on Fly. Received
-datagrams are presented to ICE with the advertised public destination, reversing
-the ingress destination translation for this single-endpoint socket.
+The staging script constructs a small source-only context. Never send the main
+checkout as a remote Docker context: it contains private data and large builds.
+Only one Machine may own this world/database. Do not enable HA cloning casually.
 
-The current app uses Zaton static collision, uploaded with explicit user approval.
-`ZONE_COLLISION_MANIFEST=/data/collision/zaton.json` selects the manifest and its
-hash-named cform/gamemtl files. For a new private deployment, upload exactly those
-three files over Fly SSH/SFTP and verify their SHA-256 hashes. Do not recursively
-upload the export directory: it can also contain unrelated test reports. A gzip
-tar archive streamed into `flyctl ssh console` is faster than per-block SFTP here.
-Keep the files readable by uid 10001; startup has a 60-second health grace period
-for constructing the collision acceleration structure. These files must not enter
-the image, git, or a public asset route. Omit the manifest setting for a synthetic
-world when collision files are unavailable.
+Before deploying the survival configuration, take and verify an online SQLite
+backup. Install the stock-derived item catalog, authored stash export and
+approved loose-loot export under the private `/data/zone/game` directory, with
+the filenames in `fly.toml`. Make the files readable by uid 10001 and verify
+their hashes after transfer. The export commands and classification rules are
+in [MECHANICS.md](../MECHANICS.md). These inputs stay off the public CDN and
+outside the source-only build context.
 
-## Local browser against remote server
+## Publish frontend/assets
 
-Stage the browser build as usual, then run:
+Stage the optimized multiplayer engine using `misc/web/multiplayer/stage.mjs`.
+Keep the existing single-player dist separate. Then:
 
 ```sh
-ZONE_PREVIEW_PORT=8090 \
-ZONE_SERVER_URL=https://roman-stalker-wan.fly.dev \
-ZONE_SERVER_TOKEN_FILE=/absolute/path/to/private-token \
-node misc/web/multiplayer/serve-preview.mjs ../multiplayer-preview
+python3 server/tools/publish-web.py \
+  --frontend ../multiplayer-preview/engine-preview \
+  --pack ../streaming-preview/pack-v2 \
+  --output ../public-web-release \
+  --url https://roman-stalker-wan.fly.dev \
+  --token-file /absolute/path/to/private-token --publish
 ```
 
-Use a fresh local origin/port for a new server database; saved browser identities
-from another database cannot authenticate here. The gateway enforces local
-Host/Origin and preserves identity pagination query parameters.
+This hashes files, generates versioned release/pack paths, skips already uploaded
+blobs, and uploads eight files at a time. Gzip level 3 is used when it saves at least
+3%; otherwise original bytes are sent. The gateway decompresses in a bounded
+stream, verifies the original SHA-256 and atomically installs each blob. Both
+compressed and decoded sizes are bounded to 64 MiB per file. Temporary upload
+files are removed on handled failure. Interrupted uploads can safely be retried.
 
-Open `http://localhost:8090/engine-preview/load-test.html?players=2&seconds=30`
-for a real-network smoke test without rendered clients. To include one engine,
-open `http://localhost:8090/engine-preview/?stream=/pack/pack.json&map=zaton&slot=wan-a`,
-then use `load-test.html?players=24&existing=1&seconds=60`. Tests report topology separately:
-multiple peers in one local browser are not independent client networks, and
-synthetic-world results are not rendered Zaton acceptance.
+Without `--publish`, files upload without switching the homepage. Publishing is
+an authenticated manifest operation that refuses missing blobs or mutations to
+existing immutable URLs. Local `sources.json` contains workstation paths and
+must not be published. Assets stay outside git and Docker images. A rollback can
+republish a retained manifest via the same protected endpoint, preserving newer
+URL mappings for active clients; it must not roll back the database.
 
-Inspect `flyctl status --app roman-stalker-wan`, `flyctl checks list --app
-roman-stalker-wan`, and server metrics. Preserve the volume when updating or
-stopping the Machine. Use the existing persistence backup/recovery runbook before
-any destructive database or volume operation.
+## Copy published volume assets to Tigris
+
+Bucket `roman-stalker-assets` is public, with origin
+`https://roman-stalker-assets.t3.tigrisfiles.io`. Upload to the Fly volume first;
+do not upload the game again from the workstation. Once publication succeeds,
+run the migration on the Machine:
+
+```sh
+flyctl ssh console --app roman-stalker-wan \
+  -C 'python3 /app/tools/migrate-cdn.py'
+```
+
+The script reads private mode-0600 credentials from `/data/private/tigris.json`.
+It verifies each source chunk's SHA-256, uploads the original decoded bytes with
+Content-MD5, and checks the stored size and hash metadata. Existing verified
+objects are skipped, making reruns safe. CORS allows GET/HEAD from the game origin.
+The bucket receives only game chunks, never player databases or credentials.
+
+Only after every object succeeds does the script atomically write
+`/data/web/cdn-ready.json`. With `ZONE_ASSET_ORIGIN` configured, the gateway checks
+this registry every five seconds and redirects verified chunks to Tigris.
+Uncopied chunks continue to use the volume, including during subsequent releases.
+HTML, JavaScript, WebAssembly and pack descriptors remain on the game origin.
+Objects keep their original Content-Length and SHA-256, so the browser's existing
+integrity checks and persistent chunk cache work unchanged.
+
+`/data/web/cdn-migration.json` records the completed copy. After verifying live CDN
+routing, run `python3 /app/tools/migrate-cdn.py --prune-volume` on the Machine.
+It rechecks CDN objects, then removes volume blobs referenced exclusively by
+bulk chunk URLs. Frontend files, manifests, collision data and player state stay
+on the volume. The deployment HEAD/publish endpoints recognize verified offloaded
+chunks, so later releases reuse them without uploading again. Once pruned, bulk
+assets depend on Tigris; disabling CDN routing requires restoring those blobs. The first deployment's migration completed through a server-side watcher; its
+log is `/data/private/cdn-migration.log`. All 319 bulk chunks were verified and
+pruned from the volume. Future publishes should rerun migration after activation
+and prune only after checking CDN delivery. Avoid restarting during an upload or
+active migration.
+
+## Database restore drill
+
+`server/tools/restore-drill.py DATABASE PRIVATE_DIRECTORY` uses the existing
+online backup API and restores into a new file. It compares full SQL contents,
+checks integrity and foreign keys, retains the backup, and removes the disposable
+restore. It never replaces the live database. Both this script and `admin.py`
+must be in the same private directory on the host.
+
+The first Fly drill passed with 28 identities and no owned/scene entities; see
+`../acceptance/fly-backup-restore.json`. This does not close the populated-world
+server boot/recovery gate or configure scheduled backups.
+
+## Verification and operations
+
+```sh
+node --test server/web/gateway.test.mjs
+flyctl status --app roman-stalker-wan
+flyctl checks list --app roman-stalker-wan
+curl -f https://roman-stalker-wan.fly.dev/health
+```
+
+Unauthenticated metrics and deployment requests must return 403. Test the public
+root in a fresh browser origin, verify WebGPU rendering and active prediction,
+and check persistence across reload. Refer to `../PLAN.md` and `../acceptance/`
+for measured capacity/latency and explicit limitations. The original local
+single-player files and saves are independent of this deployment.
 
 References: [Fly UDP requirements](https://docs.fly.io/networking/udp-and-tcp),
-[Fly configuration](https://docs.fly.io/reference/configuration).
+[volume management](https://docs.fly.io/volumes/volume-manage),
+[proxy request headers](https://docs.fly.io/networking/request-headers),
+[Tigris object storage](https://docs.fly.io/tigris).
 
-## Verified deployment (2026-11-07)
 
-Release image: `registry.fly.io/roman-stalker-wan:deployment-01M6VD0E7YRT3CCCWDVZFHKW86`.
-Machine: `813e27c9723e48`; volume: `vol_40o7jmp7odd7pmm4`.
-Initial synthetic 2/25-peer runs and graceful restart recovery passed. The real
-Zaton engine passed actor lifecycle and the integration combat/recovery cycle.
-See `../PLAN.md` and `../acceptance/fly-*` for measured results and their limits.
+## Unified browser game
 
-Keep the development token private. Access policy is still development-only;
-production player accounts are not implemented. No browser frontend or licensed
-visual assets are published by this deployment. The local gateway is required.
+The root website `/` opens the original game menu and the unified engine release.
+The retired `/singleplayer/` and `/multiplayer/` routes return 404. New Game and Load Game use single player;
+the network-game menu item connects to the Rust/WebRTC server. Switching modes
+restarts the same engine with different runtime flags; cached game assets remain
+shared. Multiplayer's controls menu offers Main menu to return.
+
+Stage the unified artifact without overwriting the old local SP distribution:
+
+```sh
+node misc/web/multiplayer/stage-game.mjs \
+  build/web-multiplayer-release/artifacts ../unified-preview \
+  ../streaming-preview/pack-v2
+```
+
+Publish the unified frontend to the root entry:
+
+```sh
+python3 server/tools/publish-web.py --unified --mode multiplayer \
+  --frontend ../unified-preview/engine-preview \
+  --pack ../streaming-preview/pack-v2 --output ../public-unified-release \
+  --url https://roman-stalker-wan.fly.dev \
+  --token-file /absolute/path/to/private-token --publish
+```
+
+Single-player saves stay in the existing `stream-cop/_appdata_/savedgames`.
+Multiplayer keeps its isolated app-data directory and existing portable save key.
+Fresh SP profiles use `_preset default` (medium); existing settings survive.
+Loading feedback reports files prepared, bytes downloaded/read from cache, and
+current-transfer progress, then yields to the rendered game.
+
+## Custom domain cutover — 2026-11-08
+
+Requested domain: `stalker-online.xyz`, managed through Cloudflare DNS after a
+Namecheap nameserver change. Fly has an issued, verified RSA/ECDSA certificate.
+Required records: apex A `77.83.143.60`, and `_fly-ownership` TXT `app-3q6ogwz`.
+
+`ZONE_ORIGIN=https://stalker-online.xyz` is set in the Fly config and running
+Machine. The Machine update retained the existing deployed image; mechanics work
+was not deployed. After the DNS update, the local resolver returned Cloudflare
+proxy addresses over IPv4 and IPv6. HTTPS through Cloudflare followed the root
+redirect to the unified release with HTTP 200 and COOP/COEP headers. Direct Fly
+was also verified during cutover.
+Health is green; the new origin reaches identity validation (400 for an invalid
+credential), while the old Fly origin is rejected (403).
+Retired mode URLs must continue returning 404. Browser-local saves and cached
+assets belong to their original origin; changing domains does not migrate them.
+
+Tigris CORS is prepared for both `https://stalker-online.xyz` and the existing
+Fly origin. Actual chunk HEAD responses were verified to return the requested
+`Access-Control-Allow-Origin` for each. Keep both during the cutover.

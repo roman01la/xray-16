@@ -1,0 +1,27 @@
+{
+  "starterKit": [
+    {"section":"wpn_knife","count":1,"placement":{"kind":"slot","slot":1}},
+    {"section":"bolt","count":1,"placement":{"kind":"slot","slot":6}},
+    {"section":"device_pda","count":1,"placement":{"kind":"slot","slot":8}},
+    {"section":"device_torch","count":1,"placement":{"kind":"slot","slot":10}},
+    {"section":"bandage","count":1,"placement":{"kind":"rucksack"}},
+    {"section":"bread","count":1,"placement":{"kind":"rucksack"}}
+  ],
+  "respawnDelaySeconds": 10,
+  "corpseLifetimeSeconds": 1800,
+  "droppedItemLifetimeSeconds": 900,
+  "lootRespawnSeconds": 900,
+  "lootPlayerExclusionMeters": 100,
+  "lootMaxItemsPerSpawn": 8,
+  "privateStorage": {
+    "world": "zaton-static-v1",
+    "position": [117.9561996459961, -3.934825897216797, 175.50558471679688],
+    "rotation": [0, 0, 0],
+    "maxItems": 128
+  },
+  "thirstDrainPerSecond": 0.0002,
+  "dehydrationDamagePerSecond": 0.001,
+  "hydrationSources": {"energy_drink": 0.35},
+  "logoutVulnerabilitySeconds": 60,
+  "safeZoneCombatLockSeconds": 60
+}

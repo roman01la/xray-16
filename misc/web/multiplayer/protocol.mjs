@@ -1,20 +1,25 @@
-// Protocol v2: little endian; keep in sync with server/src/protocol.rs.
+// Protocol v3: little endian; keep in sync with server/src/protocol.rs.
 export const newer = (a, b) => ((a - b) | 0) > 0;
-export function encodeInput(sequence, {x = 0, z = 0, yaw = 0, sprint = false, jump = false, crouch = false} = {}) {
-  if (![x,z,yaw].every(Number.isFinite)) throw new TypeError('Non-finite input');
-  const b = new ArrayBuffer(20), v = new DataView(b);
-  v.setUint16(0, 0x5a58, true); v.setUint8(2,2); v.setUint8(3,1);
+export function encodeInput(sequence, {x = 0, z = 0, yaw = 0, sprint = false, jump = false, crouch = false} = {}, trigger = null) {
+  const heading=trigger?.yaw??yaw;
+  if (![x,z,heading].every(Number.isFinite)) throw new TypeError('Non-finite input');
+  const b = new ArrayBuffer(trigger ? 32 : 20), v = new DataView(b);
+  v.setUint16(0, 0x5a58, true); v.setUint8(2,3); v.setUint8(3,1);
   v.setUint32(4,sequence,true);
   v.setInt16(8,Math.round(Math.max(-1,Math.min(1,x))*32767),true);
   v.setInt16(10,Math.round(Math.max(-1,Math.min(1,z))*32767),true);
-  v.setFloat32(12,yaw % (Math.PI*2),true); v.setUint16(16,(sprint?1:0)|(jump?2:0)|(crouch?4:0),true);
+  v.setFloat32(12,heading % (Math.PI*2),true); v.setUint16(16,(sprint?1:0)|(jump?2:0)|(crouch?4:0),true);
+  if(trigger){
+    if(![trigger.sequence,trigger.tick].every(n=>Number.isInteger(n)&&n>=0&&n<=0xffffffff)||!Number.isFinite(trigger.pitch)||Math.abs(trigger.pitch)>1.55)throw Error('Invalid held trigger sample');
+    v.setUint32(20,trigger.sequence,true);v.setUint32(24,trigger.tick,true);v.setFloat32(28,trigger.pitch,true);
+  }
   return b;
 }
 export function decodeSnapshot(buffer) {
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 24 || buffer.byteLength > 1100) return null;
   const v = new DataView(buffer);
   if(v.getUint8(3)===3)return decodeDelta(buffer);
-  if (v.getUint16(0,true)!==0x5a58 || v.getUint8(2)!==2 || v.getUint8(3)!==2 || v.getUint16(22,true)!==0) return null;
+  if (v.getUint16(0,true)!==0x5a58 || v.getUint8(2)!==3 || v.getUint8(3)!==2 || v.getUint16(22,true)!==0) return null;
   const tick=v.getUint32(4,true), playerId=v.getUint32(8,true), ack=v.getUint32(12,true);
   const part=v.getUint16(16,true), parts=v.getUint16(18,true), count=v.getUint16(20,true);
   if (!parts || parts>256 || part>=parts || count>29 || buffer.byteLength!==24+count*36) return null;
@@ -26,10 +31,10 @@ export function decodeSnapshot(buffer) {
   }
   return {tick,playerId,ack,part,parts,entities};
 }
-export function encodeSnapshotFeedback(tick,resync=false){const b=new ArrayBuffer(8),v=new DataView(b);v.setUint16(0,0x5a58,true);v.setUint8(2,2);v.setUint8(3,resync?5:4);v.setUint32(4,resync?0:tick,true);return b;}
+export function encodeSnapshotFeedback(tick,resync=false){const b=new ArrayBuffer(8),v=new DataView(b);v.setUint16(0,0x5a58,true);v.setUint8(2,3);v.setUint8(3,resync?5:4);v.setUint32(4,resync?0:tick,true);return b;}
 function decodeDelta(buffer){
  if(buffer.byteLength<28)return null;const v=new DataView(buffer);
- if(v.getUint16(0,true)!==0x5a58||v.getUint8(2)!==2)return null;
+ if(v.getUint16(0,true)!==0x5a58||v.getUint8(2)!==3)return null;
  const tick=v.getUint32(4,true),playerId=v.getUint32(8,true),ack=v.getUint32(12,true),part=v.getUint16(16,true),parts=v.getUint16(18,true),count=v.getUint16(20,true),flags=v.getUint16(22,true),baseline=v.getUint32(24,true);
  if(!parts||parts>256||part>=parts||count>214||flags>1)return null;
  const entities=[];let at=28;

@@ -1,0 +1,21 @@
+{
+  "entry": "https://roman-stalker-wan.fly.dev/releases/98687ddb768f79cb25942b8dde5217488179930dae8850ebbfc6f06263276d87/index.html?stream=%2Fpacks%2F886c171d4e2a83d79e61e5e6993e34fb7c1c36a4e0c88e645f17b89ee18e1ea2%2Fpack.json",
+  "wasmSha256": "5de7f518b34c3b75589c36a44a922e000a7596093b0f76e913bd7615d392b337",
+  "verified": [
+    "same WASM loads playable single-player Zaton",
+    "original Multiplayer menu selects WebRTC mode",
+    "hosted multiplayer content verified and prediction active",
+    "Main menu returns to same release without multiplayer flags",
+    "root, singleplayer and multiplayer routes redirect to identical entry"
+  ],
+  "multiplayer": {
+    "log": "s, 2047 Kb\n* [Loading IB] 1048575 indices, 2047 Kb\n* [Loading IB] 1048575 indices, 2047 Kb\n* [Loading IB] 1048575 indices, 2047 Kb\n* [Loading IB] 1048575 indices, 2047 Kb\n* [Loading IB] 1048572 indices, 2047 Kb\n* [Loading IB] 1048572 indices, 2047 Kb\n* [Loading IB] 1048575 indices, 2047 Kb\n* [Loading IB] 760575 indices, 1485 Kb\n* phase time: 269 ms\n* phase cmem: 2097152 K\n* phase time: 13 ms\n* phase cmem: 2097152 K\n* [DETAILS] VertexConsts(256), Batch(61)\n* [DETAILS] 10126 v(20), 5368 p\n* [DETAILS] Batch(61), VB(0K), IB(197K)\n* phase time: 167 ms\n* phase cmem: 2097152 K\n* Portals cache for '\\opfs\\zone-engine-preview-public\\_multiplayer_\\v1\\cdb_cache\\zaton\\portals.bin' was not loaded. Building the model from scratch..\n* Loading HOM: \\opfs\\zone-engine-preview-public\\gamedata\\levels\\zaton\\level.hom\n* HOM cache for '\\opfs\\zone-engine-preview-public\\_multiplayer_\\v1\\cdb_cache\\zaton\\hom.bin' was not loaded. Building the model from scratch..\n* phase time: 12 ms\n* phase cmem: 2097152 K\n* Zone map preview: Zaton loaded, anchor [87.599976,-7.055702,115.000000], no local gameplay\n* phase time: 2045 ms\n* phase cmem: 2097152 K\n* [ Emscripten ]: free[0 K], reserved[0 K], committed[2097152 K]\n* [ render ]: textures[246213 K]\n* [ x-ray  ]: process heap[2097152 K]\n* [ x-ray  ]: shared strings: memory[8816 K], count[41129]\n* [ x-ray  ]: shared memory[-4647714815446350532 K]\n* Zone content verified: authoritative world coordinates enabled\nPASS · real engine application pthread validated a Rust server snapshot\n* Zone proxy spawned: 1\n* Zone proxy spawned: 2\nOwned-state generation 0: 0 records\n",
+    "overlayHidden": true,
+    "status": "C++ tick 330732 · 2 entities · 2 metadata · prediction active · replay 1 · standing · grounded"
+  },
+  "returnToMenu": {
+    "gpu": "WebGPU: 55.4 FPS, 1415 frames, 22640 draws, 0 validation errors",
+    "overlayHidden": true,
+    "status": "engine running"
+  }
+}

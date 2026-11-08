@@ -180,6 +180,22 @@ void CWeaponMagazinedWGrenade::PerformSwitchGL()
     m_BriefInfo_CalcFrame = 0;
 }
 
+#ifdef XRAY_WEB_MULTIPLAYER
+void CWeaponMagazinedWGrenade::SetPresentationLauncherMode(bool active)
+{
+    if (!IsGrenadeLauncherAttached())
+        return;
+
+    // The single-player spawn path does not fill the secondary magazine
+    // from this presentation entity's count. Rebuild it without a local rocket.
+    if (iAmmoElapsed2 && m_magazine2.empty())
+        m_magazine2.push_back(m_DefaultCartridge2);
+    if (active)
+        PerformSwitchGL();
+    UpdateGrenadeVisibility(active && iAmmoElapsed != 0);
+}
+#endif
+
 bool CWeaponMagazinedWGrenade::Action(u16 cmd, u32 flags)
 {
     if (m_bGrenadeMode && cmd == kWPN_FIRE)

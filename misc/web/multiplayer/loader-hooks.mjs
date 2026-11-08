@@ -5,9 +5,9 @@ export function attachMultiplayerLoader(source) {
     if(source.split(needle).length!==2)throw new Error('Multiplayer loader hook missing or ambiguous: '+needle);
     source=source.replace(needle,value);
   };
-  replace('await installWebGPUBackend(msgData.shaderCompilerPort);createWasm();',
-    'await installWebGPUBackend(msgData.shaderCompilerPort);if(msgData.zonePort)installDormantEngineBridge(globalThis,msgData.zonePort,{epoch:msgData.zoneEpoch,contract:msgData.zoneContract,content:msgData.zoneContent,getHeap:()=>HEAPU8});createWasm();');
-  replace('worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort},[shaderCompilerPort])',
-    'const zonePort=Module["zoneBridge"].createPort();worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort,zonePort,zoneEpoch:Module["zoneEpoch"],zoneContract:Module["zoneContract"],zoneContent:Module["zoneContent"]},[shaderCompilerPort,zonePort])');
+  replace('await installWebGPUBackend(msgData.shaderCompilerPort,msgData.gpuDiagnosticsChannel);createWasm();',
+    'await installWebGPUBackend(msgData.shaderCompilerPort,msgData.gpuDiagnosticsChannel);if(msgData.zonePort)installDormantEngineBridge(globalThis,msgData.zonePort,{epoch:msgData.zoneEpoch,contract:msgData.zoneContract,content:msgData.zoneContent,getHeap:()=>HEAPU8});createWasm();');
+  replace('worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort,gpuDiagnosticsChannel:globalThis.__xrayGPUDiagnosticsChannel},[shaderCompilerPort])',
+    'const zonePort=Module["zoneBridge"]?.createPort();worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort,gpuDiagnosticsChannel:globalThis.__xrayGPUDiagnosticsChannel,zonePort,zoneEpoch:Module["zoneEpoch"],zoneContract:Module["zoneContract"],zoneContent:Module["zoneContent"]},[shaderCompilerPort,...(zonePort?[zonePort]:[])])');
   return "import {installDormantEngineBridge} from './pthread-bridge.mjs';\n"+source;
 }

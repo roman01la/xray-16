@@ -14,3 +14,9 @@ test('loss/backlog, sequence wrap and invalid input cannot create unbounded repl
  assert.throws(()=>r.inputsReceived([input(2),input(1)]),/history/);assert.throws(()=>r.inputsReceived([input(1,NaN)]),/history/);
  const dead=snap(0);dead.entities[0].health=0;r.snapshotReceived(dead);assert.equal(r.position(),null);assert.equal(r.replays,0);
 });
+test('replay applies authoritative walking restrictions and limp speed to raw intent',()=>{
+ const r=new Reconciler(mock(),()=>0),vitals=[0,900,1000,800,0,0,4,61000,50000,60000,1000];
+ r.inputsReceived([input(2)]);
+ r.snapshotReceived(snap(1,10),vitals);assert.equal(r.position().x,10);
+ r.snapshotReceived(snap(1,10),[...vitals.slice(0,6),2,49000,50000,60000,500]);assert.equal(r.position().x,10.5);
+});

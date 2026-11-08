@@ -12,17 +12,16 @@ import {prepareStreaming} from "./streaming.js";
 const streamURL = new URLSearchParams(location.search).get("stream");
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
-const fitGameAspect = () => document.documentElement.style.setProperty(
-  "--game-aspect", String(canvas.width / Math.max(1, canvas.height)));
-new MutationObserver(fitGameAspect).observe(canvas, {
-  attributes: true, attributeFilter: ["width", "height"],
-});
-fitGameAspect();
 const logEl = $("log");
 
 const pending = [];
 let flushScheduled = false;
 function print(line) {
+  if(line.startsWith('XRAY_STREAM_PROGRESS ')){
+    try{window.dispatchEvent(new CustomEvent('xray-stream-progress',{detail:JSON.parse(line.slice(21))}));}catch{}
+    return;
+  }
+  window.dispatchEvent(new CustomEvent('xray-engine-log',{detail:line}));
   pending.push(line);
   if (flushScheduled) return;
   flushScheduled = true;
@@ -51,6 +50,9 @@ const requests = new Map();
 let nextRequestId = 0;
 
 worker.addEventListener("message", (e) => {
+  if(e.data.type==='engine-progress'){
+    window.dispatchEvent(new CustomEvent('xray-engine-progress',{detail:e.data}));return;
+  }
   if (e.data.type === "progress") {
     $("progress").hidden = false;
     $("progress").value = e.data.done / e.data.total;

@@ -1,0 +1,25 @@
+{
+  "scope": "Native Chrome engine and optimized Rust server on original Zaton, with an isolated copy of the multiplayer test database and a seeded wounded character.",
+  "engineWasmSha256": "ac44ed5bbd266169b82ec3f09124c04b95e64a291b557f43fc307998492fdf8a",
+  "serverSha256": "6e582d8243df226d88cf6e0d916337b0fec70937ef8da55734ae6b2df2bdf667",
+  "schema": 12,
+  "initialCondition": {"health": 0.45, "bleeding": 0.35, "satiety": 0.2, "thirst": 0.4, "power": 0.55},
+  "initialCarriedItems": 17,
+  "nativeTreatments": [
+    {"input": "F2 and journal recovery on reconnect", "section": "bandage", "conditionRevision": 1, "remainingPortions": 0, "bleedingAfter": 0.24397123},
+    {"input": "F1", "section": "medkit", "conditionRevision": 2, "remainingPortions": 0, "healthAtCommit": 0.45755023, "healthAfter": 0.5600199},
+    {"input": "Inventory double-click", "section": "energy_drink", "conditionRevision": 3, "remainingPortions": 0, "thirstAtCommit": 0.72238255, "staminaEffectSeconds": 60},
+    {"input": "Inventory clicks", "section": "bread", "conditionRevisions": [4, 5], "consumedDistinctInstances": 2, "satietyAfterFirst": 0.79764986, "satietyAfterSecond": 1.0}
+  ],
+  "afterCleanRestart": {
+    "conditionRevision": 5,
+    "sameLife": true,
+    "staminaEffectSecondsSavedAtShutdown": 20.867264,
+    "staminaEffectFinishedAfterReconnect": true,
+    "carriedItems": 12,
+    "spentItemsStayedConsumed": true
+  },
+  "nativeSprint": {"holdSeconds": 8, "staminaPercentBefore": 100, "staminaPercentAfter": 84, "staminaPercentAfterRecoveryStarted": 88},
+  "singlePlayer": {"sameWasm": true, "existingCampaignSaveLoaded": true, "originalInventoryOpened": true},
+  "screenshots": ["native-survival-vitals.jpg", "native-survival-singleplayer.jpg"]
+}

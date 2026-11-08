@@ -1,9 +1,11 @@
 //! Shared fixed-tick server and browser-prediction character motor.
 //! Inputs are directions, never positions or elapsed time. No X-Ray local physics.
-use crate::{collision::CollisionMap, world::TICK_HZ};
+use crate::collision::CollisionMap;
+pub const TICK_HZ: u32 = 30;
 use anyhow::{Result, ensure};
 use parry3d::math::Vector;
 const DT: f32 = 1.0 / TICK_HZ as f32;
+pub(crate) const SPRINT_SPEED: f32 = 6.0;
 const WALKABLE_Y: f32 = 0.70710677; // 45 degrees
 #[derive(Clone, Copy, Debug)]
 pub struct Character {
@@ -24,7 +26,7 @@ impl Character {
         }
     }
     pub fn step(&mut self, map: &CollisionMap, x: f32, z: f32, sprint: bool) -> Result<()> {
-        self.step_command(map, x, z, sprint, false, false)
+        self.step_command(map, x, z, sprint, false, false).map(|_| ())
     }
     pub fn step_command(
         &mut self,
@@ -34,7 +36,7 @@ impl Character {
         sprint: bool,
         jump: bool,
         crouch: bool,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         ensure!(
             map.actor_ready(),
             "movement requires material-aware geometry"
@@ -57,7 +59,8 @@ impl Character {
         {
             next.crouched = false;
         }
-        if jump && !next.jump_held && next.grounded && !next.crouched {
+        let jumped = jump && !next.jump_held && next.grounded && !next.crouched;
+        if jumped {
             next.vertical_speed = 5.0;
             next.grounded = false;
         }
@@ -66,7 +69,7 @@ impl Character {
         let speed = if next.crouched {
             2.0
         } else if sprint {
-            6.0
+            SPRINT_SPEED
         } else {
             4.0
         };
@@ -156,7 +159,7 @@ impl Character {
         }
         ensure!(next.feet.is_finite(), "non-finite movement result");
         *self = next;
-        Ok(())
+        Ok(jumped)
     }
 }
 

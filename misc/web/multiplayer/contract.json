@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "wire": 2,
+  "wire": 3,
   "mode": "survival",
   "authority": "server",
   "world": "synthetic-flat-v1",

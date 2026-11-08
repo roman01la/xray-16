@@ -1,0 +1,7 @@
+{
+  "scope": "Disposable SQLite fixture. The production persistence worker committed both blast cases with synchronous FULL and the test subprocess exited before consuming either reply or writing a health checkpoint.",
+  "survivor": {"health": 0.75, "bleeding": 0.25, "outfitCondition": 0.94, "conditionRevision": 1, "combatLockSaved": true},
+  "lethal": {"health": 0, "alive": false, "outfitCondition": 0.8, "outfitRevision": 2, "sameOutfitInCorpse": true, "conditionRevision": 1},
+  "regressions": ["Helmet-write rollback", "Corpse-transfer rollback", "Stale life", "Replayed condition revision", "Older checkpoint rejected"],
+  "test": "blast_commit_survives_exit_before_the_simulation_receives_it"
+}

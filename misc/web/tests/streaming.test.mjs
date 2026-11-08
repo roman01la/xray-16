@@ -107,3 +107,17 @@ test('corrupt shared update cache is repaired only for the requested chunk',asyn
  assert.deepEqual(new Uint8Array(await cacheStorage.items.get(key).arrayBuffer()),bytes);
  await assert.rejects(reader.chunk('https://test/packs/v3/resources/configs.db',digest,2),/size conflict/);
 });
+
+test('download progress reports streamed bytes, completion and failures without changing data',async()=>{
+ const bytes=new Uint8Array([1,2,3,4]),events=[];
+ const reader=new ChunkReader({cacheStorage:null,onProgress:p=>events.push(p),digest:async b=>hash(b),fetcher:async()=>new Response(new ReadableStream({async start(controller){
+  controller.enqueue(bytes.slice(0,2));await new Promise(resolve=>setTimeout(resolve,170));controller.enqueue(bytes.slice(2));controller.close();
+ }}))});
+ assert.deepEqual(await reader.chunk(url,hash(bytes),4),bytes);
+ assert.ok(events.some(p=>p.active===1&&p.received===4&&p.total===4));
+ assert.equal(events.at(-1).active,0);assert.equal(events.at(-1).downloadedBytes,4);
+ const broken=[];
+ const bad=new ChunkReader({cacheStorage:null,onProgress:p=>broken.push(p),fetcher:async()=>new Response(new Uint8Array(5))});
+ await assert.rejects(bad.chunk(url,hash(bytes),4),/length mismatch/);
+ assert.ok(broken.some(p=>p.error));assert.equal(broken.at(-1).active,0);assert.equal(broken.at(-1).downloadedBytes,0);
+});

@@ -1,0 +1,21 @@
+{
+  "scope": "Local optimized Rust server with stock Zaton assets and four native WebRTC clients. The production browser codec decoded the live effect packets. JavaScript tests exercised the application-pthread bridge, and the optimized unified browser engine compiled and staged.",
+  "projectile": "wpn_fake_missile2",
+  "position": [35, 0.309884, 79.630081],
+  "stockAssets": {
+    "particleGroup": "explosions\\explosion_01",
+    "authoredParticleTimeLimitSeconds": 10,
+    "sound": "sounds/weapons/f1_explode.ogg"
+  },
+  "eventPayloadBytes": 57,
+  "detonationsReceived": {"shooter": 1, "target": 1, "nearObserver": 1, "farObserver": 0},
+  "nearObserverMetres": 11.1714,
+  "farObserverMetres": 173.7535,
+  "duplicateTriggerEffect": false,
+  "restartReplayedEffect": false,
+  "tests": {"rust": 103, "javascript": 178},
+  "serverSha256": "55c059db989089989d0b708acd896510c875b21915b99b76f554172f055bedd6",
+  "engineWasmSha256": "6e144cdf5f3c190ab5d48a380d97536311d7084671455892c58157519e2b9481",
+  "unifiedRelease": "fd0acabe75d662dacf1c97722c41dfbd0231f27495bbdecfe7c362d12fd7f51d",
+  "open": ["In-browser particle and audio playback", "Flight visuals", "Detonation light and decals"]
+}

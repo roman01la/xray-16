@@ -1,6 +1,6 @@
 //! Transport-independent, server-owned simulation. No client-supplied positions,
 //! damage amounts, elapsed time, or safe-zone flags enter this API.
-use crate::{collision::CollisionMap, movement::Character};
+use crate::{collision::CollisionMap, movement::Character, survival::{Activity, Loadout}};
 use parry3d::math::Vector;
 use serde::Serialize;
 use std::{
@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-pub const TICK_HZ: u32 = 30;
+pub use crate::movement::TICK_HZ;
 pub const SNAPSHOT_EVERY: u32 = 2;
 pub const INPUT_TIMEOUT_TICKS: u32 = 8;
 pub const INTEREST_RADIUS: f32 = 100.0;
@@ -54,13 +54,48 @@ pub struct Entity {
     pub velocity: Vec3,
     pub yaw: f32,
     pub health: u16,
+    pub condition: Option<crate::survival::State>,
+    pub loadout: Loadout,
+    pub character_key: Option<CharacterKey>,
+    pub armour_revision: u32,
+    pub(crate) incarnation: u32,
     input: Option<Input>,
     input_tick: u32,
     last_attack: Option<u32>,
+    last_pvp_hit: Option<u32>,
+}
+#[derive(Clone, Debug)]
+pub struct CharacterKey {
+    pub principal: String,
+    pub life: u32,
 }
 impl Entity {
+    pub fn set_condition(&mut self, condition: crate::survival::State) {
+        self.health = condition.health_points();
+        self.condition = Some(condition);
+    }
+    pub fn damage(&mut self, points: u16, fire_wound: bool) {
+        self.apply_hit(f32::from(points) / 100.0, fire_wound);
+    }
+    pub(crate) fn apply_hit(&mut self, power: f32, fire_wound: bool) {
+        if let Some(condition) = &mut self.condition {
+            condition.apply_hit(power, fire_wound);
+            self.health = condition.health_points();
+        } else {
+            self.health = self.health.saturating_sub((power * 100.0).round() as u16);
+        }
+    }
     pub fn last_input(&self) -> u32 {
         self.input.map_or(0, |i| i.sequence)
+    }
+    pub(crate) fn combat_locked(&self, tick: u32, duration: u32) -> bool {
+        self.combat_ticks_left(tick, duration) != 0
+    }
+    pub fn combat_ticks_left(&self, tick: u32, duration: u32) -> u32 {
+        self.last_pvp_hit.map_or(0, |hit| duration.saturating_sub(tick.wrapping_sub(hit)))
+    }
+    fn protected(&self, zones: &[SafeZone], tick: u32, duration: u32) -> bool {
+        !self.combat_locked(tick, duration) && zones.iter().any(|zone| zone.contains(self.position))
     }
 }
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -104,6 +139,8 @@ pub struct World {
     collision: Option<Arc<CollisionMap>>,
     characters: HashMap<u32, Character>,
     pub movement_errors: u64,
+    pub survival_tuning: Option<crate::survival::Tuning>,
+    pub combat_lock_ticks: u32,
 }
 impl World {
     pub fn new() -> Self {
@@ -153,9 +190,15 @@ impl World {
                 velocity: Vec3::default(),
                 yaw: 0.0,
                 health: 100,
+                condition: None,
+                loadout: Loadout::default(),
+                character_key: None,
+                armour_revision: 0,
+                incarnation: 0,
                 input: None,
                 input_tick: self.tick,
                 last_attack: None,
+                last_pvp_hit: None,
             },
         );
         if kind == Kind::Player && self.collision.is_some() {
@@ -172,6 +215,26 @@ impl World {
         self.entities.remove(&id);
         self.characters.remove(&id);
     }
+    pub fn restore_player(&mut self, position: Vec3, yaw: f32, crouched: bool, combat_ticks: u32) -> u32 {
+        let id = self.spawn(Kind::Player, position);
+        let actor = self.entities.get_mut(&id).unwrap();
+        actor.yaw = yaw;
+        let remaining = combat_ticks.min(self.combat_lock_ticks);
+        actor.last_pvp_hit = (remaining != 0)
+            .then(|| self.tick.wrapping_sub(self.combat_lock_ticks - remaining));
+        if let Some(character) = self.characters.get_mut(&id) {
+            character.crouched = crouched;
+        }
+        id
+    }
+    pub fn clear_player_input(&mut self, id: u32) {
+        if let Some(actor) = self.entities.get_mut(&id) {
+            actor.input = None;
+        }
+        if let Some(character) = self.characters.get_mut(&id) {
+            character.jump_held = false;
+        }
+    }
     /// Server-selected respawn. Keep session identity and the input sequence
     /// watermark; a dead presentation body gets a new, never-reused entity ID.
     pub fn respawn(&mut self, id: u32, spawn: Vec3) -> anyhow::Result<u32> {
@@ -184,16 +247,10 @@ impl World {
             dead.kind == Kind::Player && dead.health == 0,
             "player is alive"
         );
-        let position = if let Some(map) = &self.collision {
-            let p = map.spawn_feet(spawn.x, spawn.z)?;
-            Vec3 {
-                x: p.x,
-                y: p.y,
-                z: p.z,
-            }
-        } else {
-            spawn
-        };
+        // The session validates this spawn against the static map at startup.
+        // Reuse its resolved floor for respawn as well as first join.
+        anyhow::ensure!(spawn.x.is_finite() && spawn.y.is_finite() && spawn.z.is_finite(), "invalid respawn position");
+        let position = spawn;
         let corpse = self.spawn(Kind::Player, dead.position);
         self.characters.remove(&corpse);
         let body = self.entities.get_mut(&corpse).unwrap();
@@ -204,6 +261,10 @@ impl World {
         player.velocity = Vec3::default();
         player.yaw = 0.;
         player.health = 100;
+        if player.condition.is_some() {
+            player.set_condition(crate::survival::State::default());
+        }
+        player.incarnation = player.incarnation.wrapping_add(1);
         player.input = dead.input.map(|old| Input {
             sequence: old.sequence,
             x: 0.,
@@ -215,6 +276,7 @@ impl World {
         });
         player.input_tick = self.tick;
         player.last_attack = None;
+        player.last_pvp_hit = None;
         if self.collision.is_some() {
             self.characters.insert(
                 id,
@@ -250,52 +312,70 @@ impl World {
         self.grid.clear();
         for e in self.entities.values_mut() {
             e.velocity = Vec3::default();
-            if let (Some(map), Some(character)) = (&self.collision, self.characters.get_mut(&e.id))
-            {
-                let input = e.input.filter(|_| {
-                    e.health > 0 && self.tick.wrapping_sub(e.input_tick) <= INPUT_TIMEOUT_TICKS
+            let motion = e.condition.as_ref().zip(self.survival_tuning.as_ref())
+                .map(|(state, tuning)| state.motion(tuning, e.loadout));
+            let combat_locked = e.combat_locked(self.tick, self.combat_lock_ticks);
+            let character = self.characters.get_mut(&e.id);
+            let old_crouch = character.as_ref().is_some_and(|motor| motor.crouched);
+            let input = e.input.filter(|_| {
+                e.health > 0 && self.tick.wrapping_sub(e.input_tick) <= INPUT_TIMEOUT_TICKS
+            });
+            let (mut x, mut z, mut sprint, mut jump, crouch) =
+                input.map_or((0., 0., false, false, old_crouch), |i| {
+                    e.yaw = i.yaw;
+                    (i.x, i.z, i.sprint, i.jump, i.crouch)
                 });
-                let (x, z, sprint, jump, crouch) =
-                    input.map_or((0., 0., false, false, false), |i| {
-                        e.yaw = i.yaw;
-                        (i.x, i.z, i.sprint, i.jump, i.crouch)
-                    });
-                if character
-                    .step_command(map, x, z, sprint, jump, crouch)
-                    .is_ok()
-                {
-                    let p = character.feet;
-                    e.velocity = Vec3 {
-                        x: (p.x - e.position.x) * TICK_HZ as f32,
-                        y: character.vertical_speed,
-                        z: (p.z - e.position.z) * TICK_HZ as f32,
-                    };
-                    e.position = Vec3 {
-                        x: p.x,
-                        y: p.y,
-                        z: p.z,
-                    };
+            let mut limping = false;
+            if let Some(motion) = motion {
+                sprint &= motion.sprint;
+                limping = motion.limp_scale < 1.0;
+                if !motion.walk && (x != 0.0 || z != 0.0) {
+                    x = 0.0;
+                    z = 0.0;
+                    jump = false;
                 } else {
-                    self.movement_errors += 1;
+                    x *= motion.limp_scale;
+                    z *= motion.limp_scale;
                 }
-                self.grid.entry(cell(e.position)).or_default().push(e.id);
-                continue;
             }
-            if e.health > 0
-                && self.tick.wrapping_sub(e.input_tick) <= INPUT_TIMEOUT_TICKS
-                && let Some(i) = e.input
-            {
-                let speed = if i.sprint { 6.0 } else { 4.0 };
-                e.velocity = Vec3 {
-                    x: i.x * speed,
-                    y: 0.0,
-                    z: i.z * speed,
-                };
-                e.yaw = i.yaw;
+            let mut jumped = false;
+            let mut crouched = crouch;
+            if let (Some(map), Some(character)) = (&self.collision, character) {
+                match character.step_command(map, x, z, sprint, jump, crouch) {
+                    Ok(started_jump) => {
+                        jumped = started_jump;
+                        crouched = character.crouched;
+                        let p = character.feet;
+                        e.velocity = Vec3 {
+                            x: (p.x - e.position.x) * TICK_HZ as f32,
+                            y: character.vertical_speed,
+                            z: (p.z - e.position.z) * TICK_HZ as f32,
+                        };
+                        e.position = Vec3 { x: p.x, y: p.y, z: p.z };
+                    }
+                    Err(_) => self.movement_errors += 1,
+                }
+            } else if input.is_some() {
+                let speed = if sprint { 6.0 } else { 4.0 };
+                e.velocity = Vec3 { x: x * speed, y: 0.0, z: z * speed };
                 e.position.x = (e.position.x + e.velocity.x / TICK_HZ as f32)
                     .clamp(-WORLD_EXTENT, WORLD_EXTENT);
                 e.position.z = (e.position.z + e.velocity.z / TICK_HZ as f32)
                     .clamp(-WORLD_EXTENT, WORLD_EXTENT);
+            }
+            if let (Some(condition), Some(tuning)) = (&mut e.condition, &self.survival_tuning) {
+                let activity = if e.velocity.x.hypot(e.velocity.z) <= 0.01 {
+                    Activity::Standing
+                } else if limping {
+                    Activity::Walking
+                } else if sprint && !crouched {
+                    Activity::Sprinting
+                } else {
+                    Activity::Running
+                };
+                let protected = !combat_locked && self.safe_zones.iter().any(|zone| zone.contains(e.position));
+                condition.step(tuning, e.loadout, 1.0 / TICK_HZ as f32, activity, jumped, protected);
+                e.health = condition.health_points();
             }
             self.grid.entry(cell(e.position)).or_default().push(e.id);
         }
@@ -317,8 +397,36 @@ impl World {
             .as_ref()
             .map_or(Ok(None), |map| map.ray(origin, direction, distance))
     }
+    pub(crate) fn blast_transmission(&self, origin: Vector, direction: Vector, distance: f32) -> f32 {
+        self.collision.as_ref().map_or(1.0, |map| {
+            map.blast_transmission(origin, direction, distance).unwrap_or(0.0)
+        })
+    }
+    pub(crate) fn entities_near(&self, center: Vector, radius: f32) -> impl Iterator<Item = &Entity> {
+        let min = cell(Vec3 { x: center.x - radius, y: center.y, z: center.z - radius });
+        let max = cell(Vec3 { x: center.x + radius, y: center.y, z: center.z + radius });
+        (min.0..=max.0)
+            .flat_map(move |x| (min.1..=max.1).map(move |z| (x, z)))
+            .filter_map(|cell| self.grid.get(&cell))
+            .flatten()
+            .filter_map(|id| self.entities.get(id))
+    }
     pub fn is_safe(&self, p: Vec3) -> bool {
         self.safe_zones.iter().any(|z| z.contains(p))
+    }
+    pub fn is_protected(&self, actor: &Entity) -> bool {
+        actor.protected(&self.safe_zones, self.tick, self.combat_lock_ticks)
+    }
+    pub(crate) fn tag_pvp_hit(&mut self, shooter: u32, shooter_life: u32, victim: u32) {
+        if self.combat_lock_ticks == 0 || self.entities[&victim].kind != Kind::Player {
+            return;
+        }
+        self.entities.get_mut(&victim).unwrap().last_pvp_hit = Some(self.tick);
+        if let Some(actor) = self.entities.get_mut(&shooter)
+            && actor.incarnation == shooter_life && actor.health > 0
+        {
+            actor.last_pvp_hit = Some(self.tick);
+        }
     }
     /// Test-world melee action. Real STALKER hitboxes, weapons, line-of-sight,
     /// lag compensation and NPC AI are deliberately separate integration work.
@@ -348,7 +456,7 @@ impl World {
         }
         self.entities.get_mut(&attacker).unwrap().last_attack = Some(self.tick);
         let victim = self.entities.get_mut(&target).unwrap();
-        victim.health = victim.health.saturating_sub(25);
+        victim.damage(25, false);
         DamageResult::Applied {
             health: victim.health,
         }
@@ -379,7 +487,7 @@ impl World {
                             yaw: e.yaw,
                             health: e.health,
                             kind: e.kind as u8,
-                            flags: u8::from(self.is_safe(e.position))
+                            flags: u8::from(self.is_protected(e))
                                 | self.characters.get(&e.id).map_or(0, |c| {
                                     u8::from(c.grounded) * 2
                                         + u8::from(c.crouched) * 4
@@ -412,4 +520,57 @@ fn cell(p: Vec3) -> (i32, i32) {
         (p.x / CELL_SIZE).floor() as i32,
         (p.z / CELL_SIZE).floor() as i32,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn world_applies_collision_and_stops_stale_input() {
+        let map = Arc::new(crate::collision::tests::step_fixture(0.8, false));
+        let mut world = World::with_collision(map).unwrap();
+        let id = world.spawn_on_map(Kind::Player, 0., 0.).unwrap();
+        for sequence in 1..31 {
+            assert!(world.input(
+                id,
+                Input {
+                    sequence,
+                    x: 1.,
+                    z: 0.,
+                    yaw: 0.,
+                    sprint: true,
+                    jump: false,
+                    crouch: false
+                }
+            ));
+            world.step();
+        }
+        assert!(world.entities[&id].position.x < 0.66);
+        assert_eq!(world.movement_errors, 0);
+        assert!(world.input(
+            id,
+            Input {
+                sequence: 31,
+                x: -1.,
+                z: 0.,
+                yaw: 0.,
+                sprint: false,
+                jump: false,
+                crouch: false
+            }
+        ));
+        for _ in 0..INPUT_TIMEOUT_TICKS + 2 {
+            world.step();
+        }
+        let x = world.entities[&id].position.x;
+        for _ in 0..10 {
+            world.step();
+        }
+        assert!((world.entities[&id].position.x - x).abs() < 0.001);
+        assert!(world.visible_to(id)[0].position.y > 0.);
+        world.remove(id);
+        assert!(world.entities.is_empty());
+        world.step();
+    }
 }

@@ -840,6 +840,24 @@ bool CWeaponMagazined::Action(u16 cmd, u32 flags)
     return false;
 }
 
+#ifdef __EMSCRIPTEN__
+void CWeaponMagazined::SetPresentationScope(pcstr section)
+{
+    if (!IsScopeAttached() || m_eScopeStatus != ALife::eAddonAttachable)
+        return;
+    for (size_t index = 0; index < m_scopes.size(); ++index)
+    {
+        if (xr_strcmp(pSettings->r_string(m_scopes[index], "scope_name"), section) == 0)
+        {
+            m_cur_scope = static_cast<u8>(index);
+            UpdateAddonsVisibility();
+            InitAddons();
+            return;
+        }
+    }
+}
+#endif
+
 bool CWeaponMagazined::CanAttach(PIItem pIItem)
 {
     CScope* pScope = smart_cast<CScope*>(pIItem);

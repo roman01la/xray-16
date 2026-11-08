@@ -14,12 +14,25 @@ export function validateProgram(program, key) {
 }
 
 export function createShaderStore({cacheStorage = globalThis.caches, fetchProgram = globalThis.fetch,
-  compile, baseURL = import.meta.url, report = () => {}}) {
+  fetchManifest, compile, baseURL = import.meta.url, report = () => {}}) {
   const memory = new Map(), pending = new Map();
-  let cachePromise,legacyIndex;
+  let cachePromise,legacyIndex,manifestPromise;
   const cache = () => cachePromise ||= cacheStorage.open(SHADER_CACHE_VERSION).catch(error => {
     report({cacheWarning:String(error)}); return null;
   });
+  const packagedKeys = () => manifestPromise ||= (async () => {
+    if (!fetchManifest) return null;
+    try {
+      const response = await fetchManifest(new URL('./shader-manifest.json', baseURL));
+      if (!response.ok) return null;
+      const manifest = await response.json();
+      if (manifest.version === 3 && Array.isArray(manifest.keys) &&
+          manifest.keys.length === manifest.shaderCount &&
+          manifest.keys.every(key => typeof key === 'string' && /^[a-f0-9]{64}$/.test(key)))
+        return new Set(manifest.keys);
+    } catch (error) { report({packageWarning:String(error)}); }
+    return null;
+  })();
   async function load(request) {
     const key = shaderKey(request);
     if (memory.has(key)) return memory.get(key);
@@ -52,11 +65,16 @@ export function createShaderStore({cacheStorage = globalThis.caches, fetchProgra
       }
       if(hit){memory.set(key,hit);report({source:'cache',key});return hit;}
       let value, source;
-      try {
-        const response = await fetchProgram(url);
-        if (response.ok) { value = validateProgram(await response.json(), key); source = 'package'; }
-        else if (response.status !== 404) report({packageWarning:'HTTP ' + response.status, key});
-      } catch (error) { report({packageWarning:String(error), key}); }
+      const keys = await packagedKeys();
+      // Unpackaged variants compile locally. A missing indexed file is a
+      // deployment error, but the runtime compiler can still recover.
+      if (!keys || keys.has(key)) {
+        try {
+          const response = await fetchProgram(url);
+          if (response.ok) { value = validateProgram(await response.json(), key); source = 'package'; }
+          else if (keys || response.status !== 404) report({packageWarning:'HTTP ' + response.status, key});
+        } catch (error) { report({packageWarning:String(error), key}); }
+      }
       if (!value) { value = validateProgram(await compile(request), key); source = 'compiled'; }
       // Identical content identity and persistence for offline/runtime producers.
       try { await storage?.put(cacheKey, new Response(JSON.stringify(value), {headers:{'Content-Type':'application/json'}})); }

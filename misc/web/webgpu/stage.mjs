@@ -71,11 +71,15 @@ loader =
     )
     .replace(
       hook,
-      "wasmModule=msgData.wasmModule;await installWebGPUBackend(msgData.shaderCompilerPort);createWasm();",
+      "wasmModule=msgData.wasmModule;await installWebGPUBackend(msgData.shaderCompilerPort,msgData.gpuDiagnosticsChannel);createWasm();",
     );
 const workerLoad = 'worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule})';
 if (!loader.includes(workerLoad)) throw Error('Emscripten worker transfer hook changed');
-loader = loader.replace(workerLoad, 'const shaderCompilerPort=createShaderCompilerPort();worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort},[shaderCompilerPort])');
+loader = loader.replace(workerLoad, 'const shaderCompilerPort=createShaderCompilerPort();worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort,gpuDiagnosticsChannel:globalThis.__xrayGPUDiagnosticsChannel},[shaderCompilerPort])');
+// This hook is JS-only: no WASM rebuild is needed for loader telemetry.
+const progressHook='new module.ChunkReader';
+if(!loader.includes(progressHook))throw Error('Streaming reader hook changed');
+loader=loader.replace(progressHook, 'new module.ChunkReader({onProgress:p=>err("XRAY_STREAM_PROGRESS "+JSON.stringify(p))})');
 await writeFile(join(output, "xr_3da.js"), loader);
 let main =
   "import {startShaderCompiler} from './shader-compiler-client.mjs';\nawait startShaderCompiler();\nglobalThis.XRAY_WEBGPU = true;\n" +
@@ -101,17 +105,17 @@ console.log("Staged native WebGPU build:", output);
 // Offline artifacts and runtime results share the browser shader cache.
 const shaderSource = join(source, "shaders");
 await mkdir(join(output, "shaders"), { recursive: true });
-let shaderCount = 0;
-for (const name of await readdir(shaderSource)) {
+const shaderKeys = [];
+for (const name of (await readdir(shaderSource)).sort()) {
   if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
   await copyFile(join(shaderSource, name), join(output, "shaders", name));
-  shaderCount++;
+  shaderKeys.push(name.slice(0, -5));
 }
 await writeFile(
   join(output, "shader-manifest.json"),
-  JSON.stringify({ version: 3, shaderCount }),
+  JSON.stringify({ version: 3, shaderCount: shaderKeys.length, keys: shaderKeys }),
 );
-console.log("Packaged shader programs:", shaderCount);
+console.log("Packaged shader programs:", shaderKeys.length);
 if (capture) {
   const page = join(output, "index.html");
   await writeFile(page, (await readFile(page, "utf8")).replace("WebGPU · GPU-only", "WebGPU · Developer capture"));

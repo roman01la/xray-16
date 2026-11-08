@@ -14,6 +14,9 @@
 #include "ai_space.h"
 #include "xrScriptEngine/script_engine.hpp"
 #include "Include/xrRender/UIShader.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/InventoryPresentation.h"
+#endif
 
 #define BUY_MENU_TEXTURE "ui" DELIMITER "ui_mp_buy_menu"
 #define EQUIPMENT_ICONS  "ui" DELIMITER "ui_icon_equipment"
@@ -369,13 +372,21 @@ LPCSTR InventoryUtilities::GetTimePeriodAsString(pstr _buff, u32 buff_sz, ALife:
     return _buff;
 }
 
+static std::pair<float, float> inventoryWeights(CInventoryOwner* owner)
+{
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (const auto* vitals = zone::inventoryVitals(owner))
+        return {vitals->carriedWeight, vitals->carryLimit};
+#endif
+    return {owner->inventory().CalcTotalWeight(), owner->MaxCarryWeight()};
+}
+
 void InventoryUtilities::UpdateWeight(CUIStatic& wnd, CInventoryOwner* pInvOwner, bool withPrefix /*= false*/)
 {
     R_ASSERT(pInvOwner);
     string128 buf;
 
-    float total = pInvOwner->inventory().CalcTotalWeight();
-    float max = pInvOwner->MaxCarryWeight();
+    const auto [total, max] = inventoryWeights(pInvOwner);
 
     string16 cl;
 
@@ -402,8 +413,7 @@ void InventoryUtilities::UpdateWeightStr(CUIStatic& wnd, CUIStatic& wnd_max, CIn
     R_ASSERT(pInvOwner);
     string128 buf;
 
-    float total = pInvOwner->inventory().CalcTotalWeight();
-    float max = pInvOwner->MaxCarryWeight();
+    const auto [total, max] = inventoryWeights(pInvOwner);
 
     LPCSTR kg_str = StringTable().translate("st_kg").c_str();
     xr_sprintf(buf, "%.1f %s", total, kg_str);

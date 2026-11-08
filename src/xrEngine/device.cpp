@@ -403,9 +403,6 @@ void CRenderDevice::ProcessFrame()
     TaskScheduler->Wait(processSeqParallel);
 #ifdef XR_PLATFORM_WEB
     const double cpuWaitEnd = emscripten_get_now();
-    EM_ASM({
-        globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2);
-    }, cpuSimulationEnd - cpuFrameStart, cpuRenderEnd - cpuSimulationEnd, cpuWaitEnd - cpuRenderEnd);
 #endif
 
     const u64 frameEndTime = TimerGlobal.GetElapsed_ms();
@@ -431,6 +428,10 @@ void CRenderDevice::ProcessFrame()
         emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
     g_webFramePacer.SetVsyncPaced(vsync);
     g_webFramePacer.SetFrameLimit(1000.0 / updateDelta);
+    EM_ASM({
+        globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4);
+    }, cpuSimulationEnd - cpuFrameStart, cpuRenderEnd - cpuSimulationEnd,
+        cpuWaitEnd - cpuRenderEnd, static_cast<int>(vsync), updateDelta);
 #else
     if (frameTime < updateDelta)
         Sleep(updateDelta - frameTime);
@@ -500,6 +501,7 @@ void CRenderDevice::ProcessEvent(const SDL_Event& event)
             {
                 UpdateWindowRects();
 
+#ifndef XR_PLATFORM_WEB
                 if (static_cast<int>(psDeviceMode.Width) == event.window.data1 &&
                     static_cast<int>(psDeviceMode.Height) == event.window.data2)
                     break; // we don't need to reset device if resolution wasn't really changed
@@ -508,6 +510,7 @@ void CRenderDevice::ProcessEvent(const SDL_Event& event)
                 psDeviceMode.Height = event.window.data2;
 
                 Reset();
+#endif
             }
             if (viewport)
                 viewport->PlatformRequestResize = true;

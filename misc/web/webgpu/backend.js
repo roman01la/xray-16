@@ -24,6 +24,7 @@ let phaseProfileEnabled = false;
 let profileEnabled = false,
   benchmark = null;
 const profile = { calls: 0, cpu: 0, mirror: 0, submits: 0 };
+let telemetryChannel, telemetryAdapter;
 const diagnostics = { streamSnapshots: 0, streamBufferAllocations: 0, renderPasses: 0, drawBatches: 0, nativeOnly: false, frames: 0, draws: 0, directDraws: 0, nativeTextureAllocations: 0, nativeTextureUploads: 0, nativeBufferUploads: 0, nativeQueries: 0, nativeTextureCopies: 0, nativeProgramSelections: 0, nativeVertexSelections: 0, nativePassRecords: 0, nativeClears: 0, nativePresents: 0, bindingBatches: 0, bindingRecords: 0, stateBatches: 0, stateRecords: 0, uniformBatches: 0, uniformRecords: 0, uniformBytesCopied: 0, uniformReuses: 0, preparedHits: 0, preparedMisses: 0, materialHits: 0, validationErrors: 0, lastError: "" };
 const channel =
   typeof WorkerGlobalScope !== "undefined" &&
@@ -49,7 +50,7 @@ channel?.addEventListener("message", ({ data }) => {
     };
   }
 });
-export async function installWebGPUBackend(shaderCompilerPort) {
+export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsChannel) {
   if (
     installed ||
     typeof WorkerGlobalScope === "undefined" ||
@@ -104,6 +105,14 @@ export async function installWebGPUBackend(shaderCompilerPort) {
   };
   globalThis.__initializeNativeWebGPU = canvas => {
     if (globalThis.__xrayWebGPU) return globalThis.__xrayWebGPU;
+    if (gpuDiagnosticsChannel) {
+      telemetryChannel = new BroadcastChannel(gpuDiagnosticsChannel);
+      const info = adapter.info;
+      telemetryAdapter = {
+        vendor: info?.vendor, architecture: info?.architecture, device: info?.device,
+        fallback: info?.isFallbackAdapter ?? adapter.isFallbackAdapter,
+      };
+    }
     const renderer = new GPUFrontend(canvas, device, canvas.getContext("webgpu"));
     renderer.nativeOnly = diagnostics.nativeOnly = true;
     renderer.handles = globalThis.__xrayWebGPUHandles = createNativeHandles();
@@ -199,10 +208,11 @@ export class GPUFrontend {
   recordSubsystemTimings(objectsMs, aiThinkMs, aiVisionMs, luaGCms, activeObjects, totalObjects) {
     this.subsystemStats = { objectsMs, aiThinkMs, aiVisionMs, luaGCms, activeObjects, totalObjects };
   }
-  recordEngineTimings(simulation, render, wait) {
-    if (!phaseProfileEnabled) return;
+  recordEngineTimings(simulation, render, wait, vsync, limitMs) {
+    if (!phaseProfileEnabled && !telemetryChannel) return;
     const e = (this.engineProfile ??= { count: 0, simulation: 0, render: 0, wait: 0 });
     e.count++; e.simulation += simulation; e.render += render; e.wait += wait;
+    if (telemetryChannel) this.framePacing = {vsync: !!vsync, limitMs};
   }
   id(o) {
     if (!o) return 0;
@@ -816,7 +826,8 @@ export class GPUFrontend {
           stencilClearValue: s.clearStencil,
         });
     }
-    if (profileEnabled && this.timer && !this.timer.busy && !this.timer.active) {
+    const sampleGPU = telemetryChannel && diagnostics.frames % 16 === 0;
+    if ((profileEnabled || sampleGPU) && this.timer && !this.timer.busy && !this.timer.active) {
       this.timer.active = true;
       desc.timestampWrites = { querySet: this.timer.set, beginningOfPassWriteIndex: 0 };
     }
@@ -1850,6 +1861,13 @@ export class GPUFrontend {
       diagnostics.preparedEnabled = this.preparedEnabled;
       diagnostics.directDrawsEnabled = true;
       channel?.postMessage(diagnostics);
+      telemetryChannel?.postMessage({
+        adapter: telemetryAdapter, fps: diagnostics.fps, frames: diagnostics.frames,
+        width: this.canvas.width, height: this.canvas.height, pacing: this.framePacing,
+        simulationMs: diagnostics.profile.engineSimulationMs, renderMs: diagnostics.profile.engineRenderMs,
+        waitMs: diagnostics.profile.engineWaitMs, gpuMs: this.timer?.ms || null,
+        validationErrors: diagnostics.validationErrors,
+      });
       lastReport = now;
       lastReportFrames = diagnostics.frames;
     }

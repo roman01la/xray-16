@@ -1,0 +1,63 @@
+{
+  "scope": "Local optimized Rust server with original Zaton collision and stock Call of Pripyat catalog. A native WebRTC probe sent packets made by the browser codec and decoded the replies with the same browser codec. The unified WebAssembly release and its attachment intent ABI compiled.",
+  "world": "zaton-static-v1",
+  "serverSha256": "9895dcd10c693c5872bc13679870caed6f7000b8287753d5124b81342d0b6e6b",
+  "engineWasmSha256": "cc120cbcc3b4c7c1f989fa0767e5128d0ba9350cd8fd8b04917d815b230967d8",
+  "weapon": "wpn_lr300",
+  "mounted": {
+    "sections": [
+      "wpn_addon_scope_susat_x1.6",
+      "wpn_addon_silencer",
+      "wpn_addon_grenade_launcher_m203"
+    ],
+    "weaponRevision": 3,
+    "ordinaryRounds": 4,
+    "replayReturnedOriginalOutcome": true,
+    "wrongScopeRejected": "incompatible_addon",
+    "occupiedScopeSlotRejected": "addon_slot_occupied",
+    "reconnectedWithSameState": true
+  },
+  "detached": [
+    {
+      "section": "wpn_addon_scope_susat_x1.6",
+      "condition": 0.625,
+      "revision": 2,
+      "sameItemId": true
+    },
+    {
+      "section": "wpn_addon_silencer",
+      "condition": 0.75,
+      "revision": 2,
+      "sameItemId": true
+    },
+    {
+      "section": "wpn_addon_grenade_launcher_m203",
+      "condition": 0.875,
+      "revision": 2,
+      "sameItemId": true
+    }
+  ],
+  "weaponAfterDetach": {
+    "condition": 0.9700000286102295,
+    "revision": 6,
+    "ordinaryRounds": 4
+  },
+  "loadedLauncherDetach": {
+    "ordinaryRounds": 4,
+    "launcherRounds": 0,
+    "launcherMode": false,
+    "returnedM209Rounds": 1
+  },
+  "tests": {
+    "rust": 98,
+    "browser": 109,
+    "clippy": true,
+    "stockCatalogItems": 238,
+    "stockCatalogInvalidInitialStates": 0,
+    "optimizedWasm64Abi": true
+  },
+  "pending": [
+    "Native inventory context menu, drag and alternate-scope presentation",
+    "Unified single-player campaign smoke"
+  ]
+}

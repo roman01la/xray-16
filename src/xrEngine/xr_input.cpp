@@ -124,6 +124,14 @@ CInput::CInput(const bool exclusive)
         const index = $0 / 4;
         const fixedPoint = $1;
         const canvas = Module['canvas'];
+        // Keep custom bindings usable when the browser lets the page handle
+        // these keys. The default quick-slot keys work without interception.
+        window.addEventListener('keydown', event => {
+            if (document.activeElement !== canvas && document.pointerLockElement !== canvas) return;
+            if ((event.code === 'F1' || event.code === 'F3') &&
+                !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey)
+                event.preventDefault();
+        }, {capture: true});
         const accumulate = (event) => {
             const scaleX = canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : 1;
             const scaleY = canvas.clientHeight > 0 ? canvas.height / canvas.clientHeight : 1;
@@ -608,6 +616,14 @@ bool OtherDevicesKeyToButtonName(const int btn, xr_string& /*result*/)
 
 bool CInput::GetKeyName(const int dik, pstr dest_str, int dest_sz)
 {
+#ifdef XR_PLATFORM_WEB
+    // The browser can consume Escape to leave fullscreen or pointer lock.
+    if (dik == SDL_SCANCODE_ESCAPE)
+    {
+        xr_strcpy(dest_str, dest_sz, "Right Shift / Esc");
+        return true;
+    }
+#endif
     xr_string keyname;
     bool result;
 

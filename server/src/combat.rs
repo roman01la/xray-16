@@ -2,17 +2,23 @@
 //! X-Ray's native bullet manager traces trajectory segments against static and
 //! dynamic geometry. This initial weapon is deliberately hitscan/no penetration;
 //! raw static geometry blocks it conservatively until material ballistics exist.
-use crate::world::{Kind, Vec3, World};
+use crate::{projectile::{LaunchPose, Projectiles}, world::{CharacterKey, Kind, Vec3, World}};
+pub use crate::projectile::{BlastContact, Detonation, LaunchSpec};
 use parry3d::{
     math::Vector,
     query::{Ray, RayCast},
     shape::Capsule,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+};
 const REWIND_TICKS: u32 = 6;
 const FIRE_INTERVAL: u32 = 6;
 const RANGE: f32 = 150.;
+/// Upper bound for validated weapon/ammunition range in the catalog.
+pub const MAX_OWNED_RANGE: f32 = 4096.;
 const RELOAD_TICKS: u32 = 90;
 #[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +34,7 @@ pub enum ShotResult {
     Miss { ammo: u16 },
     Blocked { ammo: u16 },
     Protected { ammo: u16 },
+    Launched { ammo: u16 },
     Hit { target: u32, health: u16, ammo: u16 },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -54,11 +61,137 @@ struct Pose {
     id: u32,
     feet: Vec3,
     height: f32,
+    yaw: f32,
     alive: bool,
+    incarnation: u32,
+    combat_locked: bool,
 }
 struct Frame {
     tick: u32,
-    poses: Vec<Pose>,
+    poses: Arc<[Pose]>,
+}
+/// Owns the rewind frame while SQLite commits the shot's ammunition debit.
+pub struct PreparedShot {
+    shooter: u32,
+    shooter_life: u32,
+    origin: Vector,
+    direction: Vector,
+    wall: Option<f32>,
+    poses: Arc<[Pose]>,
+    launch_slot: Option<Arc<()>>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ChargedShot {
+    pub ammo: u16,
+    pub range: f32,
+    pub damage: u16,
+    pub interval: u32,
+    pub mass_spent: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<QueueRound>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub armour: Option<ArmourImpact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<LaunchSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct QueueRound {
+    pub limit: Option<u8>,
+    pub ticks: f64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum ArmourImpact {
+    Stale,
+    Hit {
+        power: f32,
+        wound: bool,
+        gear_changed: bool,
+    },
+}
+
+/// The simulation selects the target and region from its rewind frame. A
+/// client command cannot provide these fields or an armour inventory ID.
+#[derive(Clone)]
+pub struct ShotTarget {
+    pub character: CharacterKey,
+    pub bone: &'static str,
+    pub distance: f32,
+}
+
+enum Impact {
+    Miss,
+    Blocked,
+    Protected,
+    Hit {
+        target: u32,
+        incarnation: u32,
+        bone: &'static str,
+    },
+}
+
+pub struct TracedShot {
+    shooter: u32,
+    shooter_life: u32,
+    distance: f32,
+    impact: Impact,
+    launch: Option<LaunchPose>,
+}
+
+impl TracedShot {
+    pub fn armour_target(&self, world: &World) -> Option<ShotTarget> {
+        let Impact::Hit { target, bone, .. } = self.impact else {
+            return None;
+        };
+        Some(ShotTarget {
+            character: world.entities.get(&target)?.character_key.clone()?,
+            bone,
+            distance: self.distance,
+        })
+    }
+}
+
+// The rewind motor currently exposes a capsule, not the animated bone mesh.
+// Map its contact into the corresponding CoP protection-table region. Posture
+// comes from the rewound height and left/right from the rewound facing.
+fn hit_bone(pose: &Pose, contact: Vector) -> &'static str {
+    let height = (contact.y - pose.feet.y) / pose.height;
+    let lateral =
+        (contact.x - pose.feet.x) * pose.yaw.cos() - (contact.z - pose.feet.z) * pose.yaw.sin();
+    if height >= 0.83 {
+        return "bip01_head";
+    }
+    if height >= 0.76 {
+        return "bip01_neck";
+    }
+    if height >= 0.50 && lateral.abs() >= 0.23 {
+        return if lateral < 0.0 {
+            "bip01_l_upperarm"
+        } else {
+            "bip01_r_upperarm"
+        };
+    }
+    if height >= 0.68 {
+        return "bip01_spine2";
+    }
+    if height >= 0.59 {
+        return "bip01_spine1";
+    }
+    if height >= 0.50 {
+        return "bip01_spine";
+    }
+    if height >= 0.42 {
+        return "bip01_pelvis";
+    }
+    match (height, lateral < 0.0) {
+        (h, true) if h >= 0.24 => "bip01_l_thigh",
+        (h, false) if h >= 0.24 => "bip01_r_thigh",
+        (h, true) if h >= 0.09 => "bip01_l_calf",
+        (h, false) if h >= 0.09 => "bip01_r_calf",
+        (_, true) => "bip01_l_foot",
+        (_, false) => "bip01_r_foot",
+    }
 }
 #[derive(Default)]
 pub struct Combat {
@@ -66,6 +199,7 @@ pub struct Combat {
     weapons: BTreeMap<u32, Weapon>,
     deaths: BTreeMap<u32, u32>,
     corpses: BTreeMap<u32, u32>,
+    projectiles: Projectiles,
 }
 struct Weapon {
     ammo: u16,
@@ -106,7 +240,10 @@ impl Combat {
                     id: e.id,
                     feet: e.position,
                     height: world.capsule_height(e.id),
+                    yaw: e.yaw,
                     alive: e.health > 0,
+                    incarnation: e.incarnation,
+                    combat_locked: e.combat_locked(world.tick, world.combat_lock_ticks),
                 })
                 .collect(),
         });
@@ -191,6 +328,16 @@ impl Combat {
                 reason: "respawn_delay",
             };
         }
+        self.respawn_authorized(world, player, spawn)
+    }
+    /// Survival mode calls this only after durable death/delay/kit grant commits.
+    /// It also works after restart, when the fixture's in-memory death timer is gone.
+    pub fn respawn_authorized(
+        &mut self,
+        world: &mut World,
+        player: u32,
+        spawn: Vec3,
+    ) -> RespawnResult {
         let corpse = match world.respawn(player, spawn) {
             Ok(id) => id,
             Err(_) => {
@@ -202,35 +349,14 @@ impl Combat {
         self.corpses.insert(corpse, world.tick);
         self.deaths.remove(&player);
         self.weapons.remove(&player);
-        // The old life must not be hittable through rewind after revival.
-        for frame in &mut self.history {
-            frame.poses.retain(|p| p.id != player);
-        }
         RespawnResult::Respawned { corpse }
     }
     pub fn fire(&mut self, world: &mut World, shooter: u32, aim: Aim) -> ShotResult {
         let reject = |reason| ShotResult::Rejected { reason };
-        if !aim.yaw.is_finite() || !aim.pitch.is_finite() || aim.pitch.abs() > 1.55 {
-            return reject("invalid_aim");
-        }
-        if world.tick.wrapping_sub(aim.tick) > REWIND_TICKS {
-            return reject("invalid_tick");
-        }
-        let Some(current) = world.entities.get(&shooter) else {
-            return reject("invalid_shooter");
+        let shot = match self.prepare_shot(world, shooter, aim, RANGE) {
+            Ok(shot) => shot,
+            Err(reason) => return reject(reason),
         };
-        if current.kind != Kind::Player || current.health == 0 {
-            return reject("dead");
-        }
-        let Some(frame) = self.history.iter().find(|f| f.tick == aim.tick) else {
-            return reject("missing_history");
-        };
-        let Some(origin_pose) = frame.poses.iter().find(|p| p.id == shooter && p.alive) else {
-            return reject("missing_history");
-        };
-        if world.is_safe(current.position) || world.is_safe(origin_pose.feet) {
-            return reject("safe_zone");
-        }
         let weapon = self.weapons.entry(shooter).or_default();
         if weapon.reload_started.is_some() {
             return reject("reloading");
@@ -244,6 +370,44 @@ impl Combat {
         if weapon.ammo == 0 {
             return reject("empty");
         }
+        weapon.ammo -= 1;
+        weapon.last_shot = Some(world.tick);
+        let ammo = weapon.ammo;
+        self.resolve_shot(world, shot, RANGE, 35, ammo)
+    }
+
+    pub fn prepare_shot(
+        &self,
+        world: &World,
+        shooter: u32,
+        aim: Aim,
+        range: f32,
+    ) -> Result<PreparedShot, &'static str> {
+        if !aim.yaw.is_finite() || !aim.pitch.is_finite() || aim.pitch.abs() > 1.55 {
+            return Err("invalid_aim");
+        }
+        if world.tick.wrapping_sub(aim.tick) > REWIND_TICKS {
+            return Err("invalid_tick");
+        }
+        let Some(current) = world.entities.get(&shooter) else {
+            return Err("invalid_shooter");
+        };
+        if current.kind != Kind::Player || current.health == 0 {
+            return Err("dead");
+        }
+        let Some(frame) = self.history.iter().find(|f| f.tick == aim.tick) else {
+            return Err("missing_history");
+        };
+        let Some(origin_pose) = frame
+            .poses
+            .iter()
+            .find(|p| p.id == shooter && p.alive && p.incarnation == current.incarnation)
+        else {
+            return Err("missing_history");
+        };
+        if world.is_safe(current.position) || world.is_safe(origin_pose.feet) {
+            return Err("safe_zone");
+        }
         let yaw = aim.yaw.rem_euclid(std::f32::consts::TAU);
         let direction = Vector::new(
             yaw.sin() * aim.pitch.cos(),
@@ -255,48 +419,164 @@ impl Combat {
             origin_pose.feet.y + origin_pose.height - 0.25,
             origin_pose.feet.z,
         );
-        // Fail closed on geometry errors before consuming a shot.
-        let wall = match world.static_ray(origin, direction, RANGE) {
-            Ok(v) => v,
-            Err(_) => return reject("collision_error"),
+        let wall = world
+            .static_ray(origin, direction, range)
+            .map_err(|_| "collision_error")?;
+        Ok(PreparedShot {
+            shooter,
+            shooter_life: origin_pose.incarnation,
+            origin,
+            direction,
+            wall,
+            poses: frame.poses.clone(),
+            launch_slot: None,
+        })
+    }
+
+    pub fn prepare_owned_shot(&self, world: &World, shooter: u32, aim: Aim) -> Result<PreparedShot, &'static str> {
+        let mut shot = self.prepare_shot(world, shooter, aim, MAX_OWNED_RANGE)?;
+        shot.launch_slot = Some(self.projectiles.reserve()?);
+        Ok(shot)
+    }
+
+    pub fn step_projectiles(&mut self, world: &mut World) -> Vec<Detonation> {
+        self.projectiles.step(world)
+    }
+
+    pub fn trace_shot(&self, world: &World, shot: PreparedShot, range: f32) -> TracedShot {
+        let trace = |distance, impact| TracedShot {
+            shooter: shot.shooter,
+            shooter_life: shot.shooter_life,
+            distance,
+            impact,
+            launch: shot.launch_slot.map(|slot| LaunchPose {
+                slot, origin: shot.origin, direction: shot.direction,
+            }),
         };
-        weapon.ammo -= 1;
-        weapon.last_shot = Some(world.tick);
-        let ammo = weapon.ammo;
         let mut hit: Option<(f32, &Pose)> = None;
-        for pose in &frame.poses {
+        for pose in shot.poses.iter() {
             if world.persistent_ids.contains_key(&pose.id)
-                || pose.id == shooter
+                || pose.id == shot.shooter
                 || !pose.alive
-                || world.entities.get(&pose.id).is_none_or(|e| e.health == 0)
+                || world
+                    .entities
+                    .get(&pose.id)
+                    .is_none_or(|e| e.health == 0 || e.incarnation != pose.incarnation)
             {
                 continue;
             }
             let center = Vector::new(pose.feet.x, pose.feet.y + pose.height / 2., pose.feet.z);
             let capsule = Capsule::new_y(pose.height / 2. - 0.35, 0.35);
             if let Some(distance) =
-                capsule.cast_local_ray(&Ray::new(origin - center, direction), RANGE, true)
+                capsule.cast_local_ray(&Ray::new(shot.origin - center, shot.direction), range, true)
                 && hit.as_ref().is_none_or(|(old, _)| distance < *old)
             {
                 hit = Some((distance, pose));
             }
         }
-        if wall.is_some_and(|distance| hit.as_ref().is_none_or(|(body, _)| distance <= *body)) {
-            return ShotResult::Blocked { ammo };
+        if let Some(distance) = shot.wall.filter(|&distance| {
+            distance <= range && hit.as_ref().is_none_or(|(body, _)| distance <= *body)
+        }) {
+            return trace(distance, Impact::Blocked);
         }
-        let Some((_, target)) = hit else {
-            return ShotResult::Miss { ammo };
+        let Some((distance, target)) = hit else {
+            return trace(f32::INFINITY, Impact::Miss);
         };
-        if world.is_safe(target.feet) || world.is_safe(world.entities[&target.id].position) {
-            return ShotResult::Protected { ammo };
+        if (world.is_safe(target.feet) && !target.combat_locked)
+            || world.is_protected(&world.entities[&target.id])
+        {
+            return trace(distance, Impact::Protected);
         }
-        let entity = world.entities.get_mut(&target.id).unwrap();
-        entity.health = entity.health.saturating_sub(35);
+        let bone = hit_bone(target, shot.origin + shot.direction * distance);
+        trace(
+            distance,
+            Impact::Hit {
+                target: target.id,
+                incarnation: target.incarnation,
+                bone,
+            },
+        )
+    }
+
+    pub fn resolve_shot(
+        &mut self,
+        world: &mut World,
+        shot: PreparedShot,
+        range: f32,
+        damage: u16,
+        ammo: u16,
+    ) -> ShotResult {
+        let trace = self.trace_shot(world, shot, range);
+        self.resolve_owned_shot(
+            world,
+            trace,
+            ChargedShot {
+                range,
+                damage,
+                ammo,
+                interval: 0,
+                mass_spent: 0.0,
+                queue: None,
+                armour: None,
+                launcher: None,
+            },
+        )
+    }
+
+    pub fn resolve_owned_shot(
+        &mut self,
+        world: &mut World,
+        shot: TracedShot,
+        charge: ChargedShot,
+    ) -> ShotResult {
+        let ammo = charge.ammo;
+        if let Some(spec) = charge.launcher {
+            let launch = shot.launch.expect("owned launch reserves a projectile slot before debit");
+            self.projectiles.launch(shot.shooter, shot.shooter_life, launch, spec);
+            return ShotResult::Launched { ammo };
+        }
+        if shot.distance > charge.range {
+            return ShotResult::Miss { ammo };
+        }
+        let (target, incarnation) = match shot.impact {
+            Impact::Miss => return ShotResult::Miss { ammo },
+            Impact::Blocked => return ShotResult::Blocked { ammo },
+            Impact::Protected => return ShotResult::Protected { ammo },
+            Impact::Hit {
+                target,
+                incarnation,
+                ..
+            } => (target, incarnation),
+        };
+        if world
+            .entities
+            .get(&target)
+            .is_none_or(|entity| entity.health == 0 || entity.incarnation != incarnation)
+        {
+            return ShotResult::Miss { ammo };
+        }
+        let (power, wound, gear_changed) = match charge.armour {
+            Some(ArmourImpact::Stale) => return ShotResult::Miss { ammo },
+            Some(ArmourImpact::Hit {
+                power,
+                wound,
+                gear_changed,
+            }) => (power, wound, gear_changed),
+            None => (f32::from(charge.damage) / 100.0, true, false),
+        };
+        if power > 0.0 {
+            world.tag_pvp_hit(shot.shooter, shot.shooter_life, target);
+        }
+        let entity = world.entities.get_mut(&target).unwrap();
+        if gear_changed {
+            entity.armour_revision = entity.armour_revision.wrapping_add(1);
+        }
+        entity.apply_hit(power, wound);
         if entity.health == 0 {
-            self.deaths.insert(target.id, world.tick);
+            self.deaths.insert(target, world.tick);
         }
         ShotResult::Hit {
-            target: target.id,
+            target,
             health: entity.health,
             ammo,
         }
@@ -430,6 +710,61 @@ mod tests {
             }
         );
         assert_eq!(w.entities[&far].health, 100);
+    }
+    #[test]
+    fn crossing_safe_zone_boundary_keeps_combatants_vulnerable_until_lock_expires() {
+        let (mut world, mut combat, shooter, target) = setup();
+        world.combat_lock_ticks = 12;
+        let shelter = Vec3 {
+            z: 12.0,
+            ..Vec3::default()
+        };
+        world.safe_zones.push(crate::world::SafeZone {
+            center: shelter,
+            radius: 1.0,
+        });
+        assert!(matches!(
+            combat.fire(&mut world, shooter, aim(0)),
+            ShotResult::Hit { health: 65, .. }
+        ));
+        assert!(world.entities[&shooter].combat_locked(0, world.combat_lock_ticks));
+        world.entities.get_mut(&target).unwrap().position = shelter;
+        for _ in 0..FIRE_INTERVAL {
+            world.step();
+            combat.capture(&world);
+        }
+        assert!(!world.is_protected(&world.entities[&target]));
+        assert_eq!(
+            world
+                .visible_to(target)
+                .iter()
+                .find(|e| e.id == target)
+                .unwrap()
+                .flags
+                & 1,
+            0
+        );
+        assert_eq!(
+            combat
+                .prepare_shot(&world, target, aim(world.tick), RANGE)
+                .err(),
+            Some("safe_zone")
+        );
+        let tick = world.tick;
+        assert!(matches!(
+            combat.fire(&mut world, shooter, aim(tick)),
+            ShotResult::Hit { health: 30, .. }
+        ));
+        for _ in 0..world.combat_lock_ticks {
+            world.step();
+            combat.capture(&world);
+        }
+        assert!(world.is_protected(&world.entities[&target]));
+        let tick = world.tick;
+        assert_eq!(
+            combat.fire(&mut world, shooter, aim(tick - 1)),
+            ShotResult::Protected { ammo: 27 }
+        );
     }
     #[test]
     fn thin_static_wall_blocks_shot_and_safe_shooter_cannot_fire() {
@@ -592,6 +927,40 @@ mod tests {
         w.step();
         c.expire_corpses(&mut w);
         assert!(!w.entities.contains_key(&corpse));
+    }
+    #[test]
+    fn committed_shot_cannot_damage_a_target_reborn_while_persistence_was_pending() {
+        let (mut world, mut combat, shooter, target) = setup();
+        let shot = combat
+            .prepare_shot(&world, shooter, aim(0), MAX_OWNED_RANGE)
+            .unwrap();
+        let shot = combat.trace_shot(&world, shot, MAX_OWNED_RANGE);
+        let position = world.entities[&target].position;
+        world.entities.get_mut(&target).unwrap().health = 0;
+        combat.respawn_authorized(&mut world, target, position);
+        assert_eq!(
+            combat.resolve_owned_shot(
+                &mut world,
+                shot,
+                ChargedShot {
+                    range: 200.0,
+                    damage: 100,
+                    ammo: 9,
+                    interval: 6,
+                    mass_spent: 0.01,
+                    queue: None,
+                    armour: Some(ArmourImpact::Hit {
+                        power: 1.0,
+                        wound: true,
+                        gear_changed: true
+                    }),
+                    launcher: None,
+                }
+            ),
+            ShotResult::Miss { ammo: 9 }
+        );
+        assert_eq!(world.entities[&target].health, 100);
+        assert_eq!(world.entities[&target].armour_revision, 0);
     }
     #[test]
     fn missed_shots_consume_finite_ammunition_and_tick_wrap_is_bounded() {

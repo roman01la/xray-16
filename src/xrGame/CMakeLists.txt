@@ -2536,6 +2536,6 @@ endif()
 
 # The production single-player target has neither adapter code nor frame hooks.
 if (XRAY_WEB_MULTIPLAYER)
-    target_sources(xrGame PRIVATE multiplayer/EngineAdapter.cpp multiplayer/MapPreview.cpp)
+    target_sources(xrGame PRIVATE multiplayer/EngineAdapter.cpp multiplayer/MapPreview.cpp multiplayer/InventoryPresentation.cpp)
     target_compile_definitions(xrGame PRIVATE XRAY_WEB_MULTIPLAYER=1)
 endif()

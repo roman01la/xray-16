@@ -1,0 +1,13 @@
+-- Browser modes share one engine; the page restarts it with isolated mode state.
+-- log1 uses the unconditional engine output hook; printf/log are disabled in Release.
+function main_menu:OnButton_network_game_clicked()
+    log1("XRAY_BROWSER_MULTIPLAYER")
+end
+function main_menu:OnButton_multiplayer_clicked()
+    log1("XRAY_BROWSER_MULTIPLAYER")
+end
+if string.find(command_line(), "-zone_map_preview", 1, true) then
+    function main_menu:OnMessageQuitGame() log1("XRAY_BROWSER_MAIN_MENU") end
+    function main_menu:OnButton_load_clicked() log1("XRAY_BROWSER_MAIN_MENU") end
+    function main_menu:StartGame() log1("XRAY_BROWSER_MAIN_MENU") end
+end

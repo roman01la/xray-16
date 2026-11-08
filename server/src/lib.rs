@@ -25,3 +25,15 @@ pub mod policy;
 pub mod scene;
 
 pub mod network;
+
+pub mod control;
+
+pub mod inventory;
+pub mod catalog;
+mod armour;
+pub mod equipment;
+pub mod survival_rules;
+pub mod survival;
+pub mod loot;
+mod weapon_inventory;
+mod projectile;

@@ -1,0 +1,37 @@
+{
+  "scope": "Two Chrome WebRTC gameplay clients on original Zaton collision, with native game verification of the persisted death and respawn. Both servers used optimized builds and separate copies of the local test database.",
+  "world": "zaton-static-v1",
+  "schema": 13,
+  "liveLogout": {
+    "serverSha256": "70ece34cf5da763974d04b57bd8d61cf6652177ed640798f374aa5f676a9993a",
+    "logoutSeconds": 8,
+    "combatLockSeconds": 60,
+    "sameActorOnReconnect": true,
+    "positionOnReconnect": [-313.685791, 17.669968, 564.080688],
+    "movementAcceptedAfterReconnect": true,
+    "healthAfterOutsideHit": 20,
+    "positionInsideSafeZone": [-299.118530, 17.744230, 563.973572],
+    "protectionFlagInsideWhileLocked": false,
+    "firingFromInsideRejected": "safe_zone",
+    "healthAfterShotWhileOffline": 0,
+    "corpseCarriedItems": 6,
+    "livingBodyExpiredOnTimer": true,
+    "restartedShooterPositionRestored": true,
+    "restartedShooterStillUnprotectedInsideZone": true
+  },
+  "restartDuringLogout": {
+    "serverSha256": "29aaab8d68f18fe7d4d3bcd00c1ff8c5fbc28fe4ce3a69a89bd8dd7a159534e0",
+    "logoutSeconds": 60,
+    "combatLockSeconds": 60,
+    "restoredOfflineBodyPosition": [-299.115662, 17.742594, 563.973450],
+    "restoredBodyHealthAtShot": 13,
+    "restoredBodyProtectionFlag": false,
+    "shotKilledOfflineBody": true,
+    "corpse": "9aa74c9f9c821e5230ef9f8cfa986fc9",
+    "corpseCarriedItems": 6,
+    "nativeReconnect": {"life": 0, "alive": false, "items": 0},
+    "nativeEnterRespawn": {"life": 1, "alive": true, "items": 6}
+  },
+  "nativeWasmSha256": "ac44ed5bbd266169b82ec3f09124c04b95e64a291b557f43fc307998492fdf8a",
+  "screenshots": ["native-logout-dead.jpg", "native-logout-respawn.jpg"]
+}

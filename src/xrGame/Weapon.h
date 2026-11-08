@@ -122,6 +122,9 @@ public:
 
     BOOL IsMisfire() const;
     BOOL CheckForMisfire();
+#ifdef __EMSCRIPTEN__
+    void SetPresentationMisfire(bool jammed) { bMisfire = jammed; }
+#endif
 
     BOOL AutoSpawnAmmo() const { return m_bAutoSpawnAmmo; };
     bool IsTriStateReload() const { return m_bTriStateReload; }

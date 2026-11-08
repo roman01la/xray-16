@@ -6,8 +6,6 @@ pub mod collision;
 pub mod materials;
 #[path = "../../src/movement.rs"]
 pub mod movement;
-#[path = "../../src/world.rs"]
-pub mod world;
 use parry3d::math::Vector;
 use std::cell::RefCell;
 thread_local! { static STATE:RefCell<Option<(collision::CollisionMap,movement::Character)>>=const{RefCell::new(None)}; }

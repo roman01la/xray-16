@@ -1,0 +1,39 @@
+{
+  "scope": "Optimized Rust server with original Zaton collision and stock CoP catalog. A native WebRTC probe sent browser-encoded commands and checked results using the browser decoder. The unified optimized wasm64 engine built and staged with both game modes.",
+  "checks": {
+    "rejectsLauncherModeBeforeMount": true,
+    "sameRequestReplaysOriginalResult": true,
+    "selectorAndBothMagazinesSurviveRestart": true,
+    "unloadAndDetachConserveBothGrenades": true,
+    "detachResetsLauncherMode": true
+  },
+  "afterRestart": [
+    {
+      "weapon": "wpn_lr300",
+      "launcher": "wpn_addon_grenade_launcher_m203",
+      "revision": 4,
+      "launcherMode": false,
+      "grenade": "ammo_m209",
+      "rifleRounds": 4,
+      "fireMode": 2
+    },
+    {
+      "weapon": "wpn_groza",
+      "launcher": "built-in",
+      "revision": 2,
+      "launcherMode": true,
+      "grenade": "ammo_vog-25",
+      "rifleRounds": 5,
+      "fireMode": 1
+    }
+  ],
+  "returnedLooseRounds": {"ammo_m209": 1, "ammo_vog-25": 1},
+  "tests": {"rust": 98, "javascript": 175, "optimizedWasm64IntentAbi": true},
+  "serverSha256": "4ff92acd1f9e803a3c01a8778431e95899437dc85a4963b7529689e24eb5037a",
+  "engineWasmSha256": "01f5b1e409141447f6d88d9948c618a0f94f0143e6895ed2f8afc954cc9a29bb",
+  "unifiedRelease": "96793ea384023a9353e251485409ce0b1343cf1bc935315f7ebc6f9b126d61ce",
+  "open": [
+    "Play the binding and verify the original HUD in a browser",
+    "Simulate launcher projectiles and blast damage on the server"
+  ]
+}

@@ -6,15 +6,52 @@ server, including crowded encounters. Rust owns gameplay simulation; browsers
 connect using unordered WebRTC state channels with zero retransmits and a
 separate reliable control channel.
 
-The current delivery target is a working multiplayer foundation, independently
-of the concrete survival mechanics the user will specify later. The existing
-weapon, safe zone, death/respawn and stationary NPC are integration fixtures.
-They demonstrate authority and presentation; they do not define final game rules.
+The multiplayer foundation is implemented with remaining acceptance gates below.
+The next delivery target is the agreed survival mechanics in
+[MECHANICS.md](MECHANICS.md): original Call of Pripyat inventory and weapons,
+existing loot locations, full loss of carried items on death, storage and survival.
+Existing weapon, safe-zone, death/respawn and NPC fixtures remain integration
+fixtures until replaced and verified against those rules.
+
+Mechanics step 1 is under active implementation: original configuration import,
+catalog-backed equipment, binary inventory requests, durable item/death/respawn
+transactions and per-life starter grants are implemented locally (schema v7).
+Two real browser WebRTC clients passed inventory contention, equipment transfers,
+full-loss death, reconnect, respawn and server-restart recovery on the optimized
+server. Original engine UI and the remaining mechanics gates are still open;
+see the [mechanics checkpoint](MECHANICS.md#implementation-checkpoint--2026-11-08).
+These changes have not been deployed. The custom-domain cutover used the existing
+production image and is independent of this work.
+
+Evidence for the two-client mechanics transport test is recorded in
+[`inventory-transport.png`](acceptance/inventory-transport.png),
+[`inventory-restart.png`](acceptance/inventory-restart.png), and
+[`inventory-transport-metrics.json`](acceptance/inventory-transport-metrics.json).
+The observed persistence queue peaked at one request; no invalid messages,
+queue rejections or UDP drops were recorded. This does not establish capacity
+at the target population, and the transport harness does not establish native
+inventory UI or original weapon behavior.
+
+The native inventory state bridge is now verified in the optimized unified
+engine: the application pthread received the six-item server starter inventory
+while Zaton rendered. The same build then loaded a new single-player game;
+movement and the original inventory screen worked. See
+[`native-inventory-bridge.json`](acceptance/native-inventory-bridge.json) for the
+artifact hash, test scope and screenshots. The native multiplayer actor/item
+object binding now opens the original inventory and routes single-item Drop,
+rifle equip, drag between weapon slots and return to the rucksack. Reconnecting
+retained the drop. See [`native-inventory-menu.json`](acceptance/native-inventory-menu.json)
+for build hashes, exact item revisions and scope. These checks still use the
+synthetic server world rendered with Zaton assets; two-engine pickup/corpse,
+belt/batch interactions and real-map looting remain open. The same latest
+optimized build passed a single-player new-game, movement, original inventory
+and story-script regression check, with saves in the single-player namespace.
 
 ## Constraints
 
 - Preserve the existing single-player browser port, renderer, local AI, launch
-  behavior and saves. Multiplayer must be explicit and separately staged.
+  behavior and saves. One unified build serves both modes; multiplayer must be
+  selected explicitly from the original main menu and use separate runtime state.
 - Multiplayer state must never write to single-player save storage. Share only
   immutable asset data. Runtime settings and saves require separate namespaces.
 - Use community implementations as concrete references, with exact revisions
@@ -32,12 +69,12 @@ They demonstrate authority and presentation; they do not define final game rules
 | Milestone | Work | Acceptance gate | Status |
 |---|---|---|---|
 | 1. Ownership and integration contract | Define authority, identity, versioning, coordinates, mode separation, engine interface and community hook mapping | Contract documented; incompatible sessions fail closed; mode/bridge tests pass | Complete |
-| 2. Two players in a CoP level | Separate entry/build; main-thread WebRTC to engine-worker bridge; remote actor lifecycle, transforms, stance/animation and interpolation | Two browsers join Zaton, see each other move, and remove disconnected actors without affecting single player | Rendering, stance and lifecycle gates passed |
+| 2. Two players in a CoP level | Explicit multiplayer runtime in the unified entry/build; main-thread WebRTC to engine-worker bridge; remote actor lifecycle, transforms, stance/animation and interpolation | Two browsers join Zaton, see each other move, and remove disconnected actors without affecting single player | Rendering, stance and lifecycle gates passed |
 | 3. Authoritative movement | Collision export; server character movement; shared movement rules; prediction and reconciliation; terrain/stairs/crouch/jump | Movement behaves correctly under latency/loss and the server rejects impossible movement | Live map motor, shared WASM prediction and stance implemented; application delay/loss combat route passed; rendered Zaton WAN smoke passed; broad traversal/impairment gates open |
-| 4. Replication performance | Acknowledged deltas; reliable lifecycle metadata; distance tiers; quantization; byte budgets and metrics | Sustained 100–200-client tests in spread/crowded scenes meet documented CPU, bandwidth and freshness budgets | Deltas, tiers, budgets and metadata implemented; persistent 200-peer spread and ten-minute crowded transfer runs passed; synthetic WAN connectivity passed; large-population WAN gate open |
+| 4. Replication performance | Acknowledged deltas; reliable lifecycle metadata; distance tiers; quantization; byte budgets and metrics | Sustained 100–200-client tests in spread/crowded scenes meet documented CPU, bandwidth and freshness budgets | Deltas, tiers, budgets and metadata implemented; persistent 200-peer spread and ten-minute crowded transfer runs passed; 25-player Zaton WAN run passed; 100–200-player WAN gate open |
 | 5. PvP slice | Weapon/equipment state; server shot validation and lag compensation; damage, death, corpses, respawn and verified safe-zone geometry | Consistent combat outcomes across clients, including adversarial inputs and safe-zone boundaries | Integration fixture passed, including application delay/loss; concrete PvP/equipment mechanics deferred |
 | 6. Persistence foundation; survival mechanics later | Stable identity, durable ownership, atomic mutations, replay protection and crash recovery; concrete inventory/loot/survival rules deferred | Authorized test state survives reconnect/restart; concurrent/replayed mutations cannot duplicate ownership | Stable identity, durable records and generic entity ownership/transfers implemented; bounded browser recovery, live invalidation and consistent owned-state reconciliation implemented; trusted scene materialization, live policy and rendered transfer/restart/AOI gates passed |
-| 7. Operations foundation; PvE later | Access control, deployment, monitoring, backups and recovery; concrete NPC behavior deferred | Reproducible deployment, backup/restore and prolonged load/recovery gates pass | Backup/restore, graceful shutdown, credential lifecycle, Linux container recovery and local soak passed; Fly deployment and synthetic WAN connectivity passed; larger/longer WAN gates open; PvE deferred |
+| 7. Operations foundation; PvE later | Access control, deployment, monitoring, backups and recovery; concrete NPC behavior deferred | Reproducible deployment, backup/restore and prolonged load/recovery gates pass | Backup/restore, graceful shutdown, credential lifecycle, Linux container recovery and local soak passed; Fly deployment, restart recovery and rendered Zaton WAN tests passed; larger/longer WAN gates open; PvE deferred |
 
 Performance and single-player regression checks run throughout, not only in
 milestone 4. If integration exposes a necessary prerequisite, record it here and
@@ -55,8 +92,8 @@ Ownership remains separate from visibility. Client-owned JSON never creates acto
 | Mode separation | Separate entry/build/storage; production SP JS/WASM checksum unchanged | Continue regression checks as mechanics are added |
 | Persistent scene integration | Both engines rendered one shared persistent fixture; transfer retained visibility; AOI exit/re-entry, unpublish/republish and process restart recovered without duplicates | New presentation classes await mechanics |
 | Generic action policy | Transactional ownership/revision checks plus expiring simulation-issued principal/session/world context; retry after missing context and replay after expiry tested | Distance, safe-zone and game-specific policies await specifications |
-| Identity/access lifecycle | Admin revoke/rotate; durable auth epoch disconnects persistent sessions; queued admissions cannot cross observed revocation | Production accounts and remote deployment policy |
-| Durable recovery | Online backup/restore, ownership/replay recovery, browser outbox and coherent owned views | Backup schedule/retention on actual host |
+| Identity/access lifecycle | Admin revoke/rotate; durable auth epoch disconnects persistent sessions; queued admissions cannot cross observed revocation | Portable save-key recovery and remote deployment policy |
+| Durable recovery | Online backup/restore, ownership/replay recovery, browser outbox and coherent owned views | Fly-host database-only restore drill passed; backup schedule/retention and full restored-server boot remain |
 | Operations | Bounded worker metrics, health, single-server database lock, graceful SIGTERM and configuration/runbook | Fly test server deployed; rendered Zaton WAN smoke passed; production operations remain |
 | Capacity and movement | 200-peer persistent crowded soak and spread/transfer test passed; 25-route native/WASM terrain parity passed | Larger WAN populations, longer endurance and special traversal coverage |
 
@@ -66,16 +103,46 @@ fixtures. Dynamic doors/props, moving platforms, player collision and water
 behavior are not implemented by the static capsule controller; these cannot be
 claimed as covered by terrain or synthetic stair tests.
 
-Fly.io now hosts a private development server in Frankfurt; local browser peers
-connect over the real WAN. Synthetic connectivity evidence is recorded below.
-Loopback and application impairment results remain separately labeled. Rendered Zaton WAN smoke is also verified below. Multiple independent client
-networks and production-duration acceptance are
-still open; the development deployment is not a production service.
+Fly.io hosts the authoritative server in Frankfurt. Public frontend deployment
+and transfer of game chunks from the volume to Tigris are in progress. A real Zaton engine
+passed remote actor lifecycle, movement and the integration combat cycle. A
+60-second run with 24 moving peers plus one rendered engine maintained 29.998 Hz
+with no stale clients or snapshot skips. A separate 90-second ICE/STUN measurement
+recorded median RTT 41 ms, p95 44 ms; this was a single-client measurement, not
+latency under load or input-to-screen latency. Server restart preserved identities
+and durable records. The hosted frontend awaits completion of the asset upload and CDN cutover;
+public browser gameplay has not yet been verified.
 
-The previous 200-peer result predates persistence and remains only a baseline.
-Current tests use the optimized server and existing separately optimized engine.
-No disabled-feature control benchmark is required. The source checkpoint includes the implementation, tests, runbooks and acceptance
-records, excluding private assets and databases.
+The latest 200-peer local test includes persistence: a ten-minute crowded run
+completed 9,600 writes and 9,600 ownership transfers at 29.998 Hz. It is separate
+from the earlier pre-persistence baseline and is not WAN capacity evidence.
+Current tests use optimized builds. No disabled-feature control rerun is needed.
+Private assets, credentials and databases remain outside version control.
+
+### Remaining foundation acceptance, in priority order
+
+1. **Target population over WAN:** 100 then 200 clients on Zaton, spread and
+   crowded, with durable writes/transfers. Record CPU, bandwidth, fresh snapshots,
+   RTT and input acknowledgement timing under load. Distinguish shared-CPU host
+   limits from application limits; do not infer capacity from the 25-player run.
+2. **Network and endurance:** longer runs, multiple independent client networks,
+   loss/jitter/disconnection and reconnect recovery. Confirm stale actors and
+   pending durable operations recover without duplication. Existing local and
+   application-impairment results remain useful but do not close these gates.
+3. **Movement coverage:** broaden real-map traversal around slopes, stairs,
+   obstacles and stance transitions under network impairment. Dynamic doors,
+   platforms, player collision and water are unimplemented capabilities whose
+   required scope must be decided with mechanics; they are not covered by static
+   collision tests.
+4. **Deployment operations:** configure backup schedule/retention and verify a
+   restore on the actual host; establish monitoring and failure recovery. Public
+   frontend delivery is in progress. Portable save-key recovery replaces a broader
+   account system by user decision; public browser recovery verification remains.
+
+The foundation is ready for concrete mechanic specifications, while these
+acceptance gates continue. PvE behavior, final PvP rules, inventory/equipment,
+loot, survival and safe-zone rules remain intentionally deferred to those
+specifications. Existing fixtures must not be presented as finished mechanics.
 
 ## Existing foundation
 
@@ -622,3 +689,89 @@ not the current implementation.
   does not establish latency under 200-player load. Raw evidence is
   `acceptance/fly-zaton-network-latency.json`; repeat using the local preview
   `engine-preview/latency-test.html`. Probe disconnected after completion.
+
+
+### Public deployment and host restore checkpoint — 2026-11-07
+
+- Public game upload is ongoing. Compressed blobs are decoded and hash-verified
+  on the Fly volume, followed by server-side Tigris copy and verified CDN cutover.
+  Per user direction, verified bulk chunk copies will then be deleted from the
+  volume. Frontend files, release manifests, private collision and player state
+  remain. Gateway tests cover republishing and upload skipping after offload.
+- Fly-host online SQLite backup and isolated restore passed full dump comparison,
+  integrity and foreign-key checks, schema v4. The snapshot contained 28 identities,
+  zero owned entities and zero scene descriptors. The live database was not
+  replaced or restarted. Evidence: `acceptance/fly-backup-restore.json`.
+- This closes only the database restore check on the actual host. Scheduled
+  backups/retention, restored-server boot with populated state, monitoring and
+  independent disaster recovery remain open. The upload was not interrupted.
+- Core multiplayer implementation is ready for mechanic development; target-scale
+  WAN, endurance/recovery and broader traversal acceptance are still outstanding.
+
+
+### Portable save identity — 2026-11-07
+
+- User selected simple portable save keys instead of accounts/passwords/email.
+  Existing 256-bit random browser credentials already map to stable server
+  principals; the database stores credential hashes, not the raw save key.
+- Added Copy save key and Open save controls. Import calls resume only, validates
+  the server identity before changing local storage, shares the enrollment lock,
+  disconnects the current session and reloads into the recovered save. Invalid
+  keys and network failure leave the previous identity untouched. Switching does
+  not delete either server-side save; keep the old key to return to it.
+- Eight identity tests pass, including fresh-browser storage recovery, invalid /
+  interrupted imports and serialization with enrollment. Public release is queued
+  after the initial upload/CDN cutover; rendered cross-browser recovery remains
+  to be verified. A lost key without any surviving browser copy has no recovery
+  path in this intentionally simple model. Account portals are not a plan gate.
+
+
+### Binary-only WebRTC control — 2026-11-07
+
+- Wire v3 replaces JSON control messages in both directions, without legacy
+  negotiation or dual-format support. Reload/respawn/leave are eight bytes,
+  attack 12 and fire 20; welcome, lifecycle, weapon, ownership invalidation and
+  action results use bounded binary event encoding. HTTPS APIs remain JSON.
+- Rust/JS cross-codec tests cover all command/event types, invalid direction,
+  versions, lengths, authority fields, nonfinite aim and truncation. All 58 Rust
+  tests and 68 multiplayer JavaScript tests pass; Clippy and optimized build pass.
+- Two real browser WebRTC clients passed the complete Zaton combat/reload/death/
+  respawn/corpse-expiry/disconnect scenario. Two initial runs failed the final
+  safe-zone assertion with `invalid_tick`; no timing data was captured then.
+  Added timing diagnostics and reran: snapshot age 24.095 ms, reply 2.525 ms,
+  complete scenario passed. The intermittent stale-aim cause is not established;
+  the six-tick rewind limit was not widened and the assertion was not relaxed.
+  Evidence: `acceptance/binary-control-v3.txt`. This was transport-only, not a
+  rendered-engine or WAN test. Existing single-player code is unchanged.
+- Matching server image and separate frontend are being prepared for the queued
+  public deployment after upload/CDN cutover. No running upload was restarted.
+
+
+### Public asset delivery completed
+
+- Initial upload completed: 1,446 unique blobs verified and release published.
+  Server-side Tigris copy verified 319 chunks / 4,733,401,387 bytes. After CDN
+  routing verification, all 319 bulk volume copies were removed as requested.
+- Matching binary-v3 server image is deployed. The frontend publish initially
+  failed because the separately staged engine symlink lacked its parent target;
+  repaired that target and published successfully. The update reused 1,438 blobs
+  and uploaded nine changed blobs, 13,474 compressed bytes.
+- Public root serves the latest frontend with portable save-key controls; health
+  is healthy, frontend contract is wire v3, CDN chunk length and CORS match.
+  Fresh-browser hosted gameplay verification remains pending.
+- Agreed mechanics and implementation sequence are saved in MECHANICS.md.
+
+
+### Single-player website
+
+- Added independent `/singleplayer/` publication on the existing Fly host, sharing
+  verified Tigris game chunks. Root and `/multiplayer/` retain their own release.
+- Site opens the original single-player menu automatically, with full-viewport
+  canvas and no launcher. Startup feedback remains until rendered frames arrive.
+  Browser-local `stream-cop` saves are separate from multiplayer identity/state.
+- Gateway tests verify independent publication and preservation of both entries.
+  Existing local production JS/WASM checksums remain unchanged. The public build
+  uses the separately staged streaming-capable single-player engine.
+- Public cold launch rendered the original menu at approximately 60 FPS with zero
+  WebGPU validation errors. This verifies hosted startup and asset delivery; a
+  complete new-game playthrough was not repeated for the website wrapper.

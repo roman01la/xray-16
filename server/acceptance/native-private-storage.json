@@ -1,0 +1,119 @@
+{
+  "scope": "Native Chrome engine, optimized Rust server, original Zaton Skadovsk interior. Two real identities used the same location in sequence. The server restarted between deposit and withdrawal.",
+  "engineWasmSha256": "2212e8b5238fb32442827801bd28f696bfa60599817b47e56cf55c2d98128cbc",
+  "serverSha256": "69e2ca74cc449705d1ce4ea38b4955e86bca5a0d996f8a0e0d8a89e8c34f1308",
+  "sourceSpawnSha256": "899e69538ec75684ce2422b8c89943d44878448bab05ce7f4a08b076735e128d",
+  "station": {
+    "spawnId": 51,
+    "name": "zat_a2_actor_treasure",
+    "section": "inventory_box",
+    "world": "zaton-static-v1",
+    "position": [
+      117.9561996459961,
+      -3.934825897216797,
+      175.50558471679688
+    ],
+    "rotation": [
+      0,
+      0,
+      0
+    ],
+    "maxItems": 128
+  },
+  "testSpawnAnchor": [
+    117.4562,
+    -3.384826,
+    176.50558
+  ],
+  "schema": 11,
+  "nativeUseOpened": true,
+  "nativeUseStayedClosedAfterWalkingAway": true,
+  "nativeUseReopenedOnReturn": true,
+  "ownerDeposit": [
+    {
+      "section": "wpn_svd",
+      "revision": 9,
+      "place": "rucksack",
+      "state": {
+        "condition": 0.98349994,
+        "upgrades": [],
+        "payload": {
+          "kind": "weapon",
+          "cartridges": [
+            "ammo_7.62x54_7h1",
+            "ammo_7.62x54_7h1",
+            "ammo_7.62x54_7h1",
+            "ammo_7.62x54_7h1",
+            "ammo_7.62x54_7h1",
+            "ammo_7.62x54_7h1",
+            "ammo_7.62x54_7h1"
+          ],
+          "launcher_cartridges": [],
+          "selected_ammunition": "ammo_7.62x54_7h1",
+          "attachments": [],
+          "fire_mode": 0,
+          "launcher_mode": false
+        }
+      },
+      "kind": "storage",
+      "container": "ceeb587722b6f7b5b4bdea733b95ffb7",
+      "id": "2c7546106554d728bcbff45c4e6b3ba4"
+    },
+    {
+      "section": "ammo_9x39_ap",
+      "revision": 2,
+      "place": "rucksack",
+      "state": {
+        "condition": 1.0,
+        "upgrades": [],
+        "payload": {
+          "kind": "ammunition",
+          "rounds": 30
+        }
+      },
+      "kind": "storage",
+      "container": "ceeb587722b6f7b5b4bdea733b95ffb7",
+      "id": "f8d9bab81e132eea166283b184629e53"
+    }
+  ],
+  "secondPlayerAfterRestart": {
+    "container": "267513ca6ea2540302ec3dbc23f78eef",
+    "items": 0,
+    "differentOwner": true,
+    "originalItemsPersistedAfterRestart": true
+  },
+  "ownerNativeViewAfterRestart": {
+    "generation": 2,
+    "sameItemIdsAndState": true
+  },
+  "nativeTakeAll": {
+    "items": [
+      {
+        "id": "2c7546106554d728bcbff45c4e6b3ba4",
+        "revision": 10,
+        "place": "rucksack",
+        "statePreserved": true
+      },
+      {
+        "id": "f8d9bab81e132eea166283b184629e53",
+        "revision": 3,
+        "place": "rucksack",
+        "statePreserved": true
+      }
+    ],
+    "remainingInLocker": 0
+  },
+  "deathIsolationEvidence": "Rust integration test private_storage_checks_owner_reach_revision_and_life_then_survives_death",
+  "screenshots": [
+    "native-private-storage-deposit.png",
+    "native-private-storage-other-player.png",
+    "native-private-storage-owner-restart.png",
+    "native-private-storage-withdraw.png"
+  ],
+  "singlePlayerSmoke": {
+    "sameWasm": true,
+    "existingCampaignSaveLoaded": true,
+    "originalInventoryOpened": true,
+    "screenshot": "native-private-storage-singleplayer.png"
+  }
+}

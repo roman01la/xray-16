@@ -9,7 +9,7 @@ def connection(path):
     path=Path(path).resolve(strict=True)
     db=sqlite3.connect(str(path),timeout=5)
     db.execute('PRAGMA foreign_keys=ON');db.execute('PRAGMA synchronous=FULL')
-    if db.execute('PRAGMA user_version').fetchone()[0]!=4: raise ValueError('Start current server to migrate database before administration')
+    if db.execute('PRAGMA user_version').fetchone()[0] not in (4,5,6): raise ValueError('Start current server to migrate database before administration')
     return db
 
 def backup(source,destination):
@@ -48,7 +48,7 @@ def main():
     try:
         if args.command in ['backup','restore']: print(json.dumps(backup(db,args.destination)));return
         if args.command=='status':
-            print(json.dumps({'schema':4,'integrity':db.execute('PRAGMA quick_check').fetchone()[0],'principals':db.execute('SELECT count(*) FROM principals').fetchone()[0],'entities':db.execute('SELECT count(*) FROM owned_entities').fetchone()[0],'scenes':db.execute('SELECT count(*) FROM scene_entities').fetchone()[0],'authEpoch':db.execute('SELECT auth_epoch FROM runtime_meta').fetchone()[0]}));return
+            print(json.dumps({'schema':db.execute('PRAGMA user_version').fetchone()[0],'integrity':db.execute('PRAGMA quick_check').fetchone()[0],'principals':db.execute('SELECT count(*) FROM principals').fetchone()[0],'entities':db.execute('SELECT count(*) FROM owned_entities').fetchone()[0],'scenes':db.execute('SELECT count(*) FROM scene_entities').fetchone()[0],'authEpoch':db.execute('SELECT auth_epoch FROM runtime_meta').fetchone()[0]}));return
         db.execute('BEGIN IMMEDIATE')
         if args.command=='provision':
             value=json.dumps(json.loads(args.value),separators=(',',':'),allow_nan=False)

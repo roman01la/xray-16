@@ -2,6 +2,7 @@ FROM rust:1.93.1-bookworm AS build
 WORKDIR /src
 COPY server/Cargo.toml server/Cargo.lock ./server/
 COPY server/src ./server/src
+COPY server/config ./server/config
 COPY misc/web/multiplayer ./misc/web/multiplayer
 RUN cargo build --release --locked --manifest-path server/Cargo.toml --bin zone-server
 FROM debian:bookworm-slim

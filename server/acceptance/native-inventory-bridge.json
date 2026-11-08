@@ -1,0 +1,38 @@
+{
+  "recordedAt": "2026-11-07T23:31:13.400087+00:00",
+  "build": {
+    "configuration": "Release",
+    "optimization": "-O3 -DNDEBUG",
+    "wasmSha256": "fa78de689e9c36f1b0401b91964007070db3489e7e3802e2d137ee8028bc06e7"
+  },
+  "multiplayer": {
+    "url": "http://localhost:8098/engine-preview/?stream=/pack/pack.json&play=multiplayer&map=zaton&slot=native-inventory",
+    "nativeInventoryReports": [
+      {
+        "generation": 10,
+        "life": 0,
+        "items": 6,
+        "alive": true
+      }
+    ],
+    "mapRendered": "Zaton",
+    "movementWorld": "synthetic-flat-v1",
+    "screenshot": "native-inventory-bridge.png",
+    "originalActorMenu": false
+  },
+  "singleplayer": {
+    "sameEngineBuild": true,
+    "newGameLoaded": true,
+    "movementVerified": true,
+    "originalInventoryOpened": true,
+    "multiplayerInventoryReports": false,
+    "screenshot": "native-inventory-singleplayer.png"
+  },
+  "validation": {
+    "focusedNodeTestsPassed": 24,
+    "nativeParser": "AddressSanitizer + UndefinedBehaviorSanitizer; full item state, all truncations, invalid floats, stale generation and death",
+    "wasm64": "Production parser compiled at -O3; coherent state/death/stale-view rejection",
+    "actualRustSerializedItemsAccepted": 25
+  },
+  "remaining": "Native multiplayer actor/item object reconciliation and original UI event routing; all remaining MECHANICS.md gates. No production deployment."
+}

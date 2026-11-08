@@ -15,6 +15,10 @@
 #include "Inventory.h"
 #include "inventory_item.h"
 #include "InventoryBox.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/EngineAdapter.h"
+#include "multiplayer/InventoryPresentation.h"
+#endif
 #include "ai/monsters/basemonster/base_monster.h"
 
 void move_item_from_to(u16 from_id, u16 to_id, u16 what_id)
@@ -66,6 +70,15 @@ void CUIActorMenu::InitDeadBodySearchMode()
         m_pLists[eSearchLootActorBagList] != m_pLists[eInventoryBagList]);
 
     TIItemContainer items_list;
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled())
+    {
+        std::vector<CInventoryItem*> items;
+        zone::inventoryCorpseItems(items);
+        items_list.insert(items_list.end(), items.begin(), items.end());
+    }
+    else
+#endif
     if (m_pPartnerInvOwner)
     {
         m_pPartnerInvOwner->inventory().AddAvailableItems(items_list, false, m_pPartnerInvOwner->is_alive());
@@ -130,6 +143,9 @@ void CUIActorMenu::DeInitDeadBodySearchMode() const
 
 bool CUIActorMenu::ToDeadBodyBag(CUICellItem* itm, bool b_use_cursor_pos)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled()) return zone::inventoryStoreItem(static_cast<PIItem>(itm->m_pData));
+#endif
     if (m_pPartnerInvOwner)
     {
         if (!m_pPartnerInvOwner->deadbody_can_take_status())
@@ -189,6 +205,13 @@ void CUIActorMenu::UpdateDeadBodyBag()
 
 void CUIActorMenu::TakeAllFromPartner(CUIWindow* w, void* d)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled() && m_currMenuMode == mmDeadBodySearch)
+    {
+        zone::inventoryTakeCorpseItem(nullptr);
+        return;
+    }
+#endif
     VERIFY(m_pActorInvOwner);
     if (!m_pPartnerInvOwner)
     {
@@ -216,6 +239,13 @@ void CUIActorMenu::TakeAllFromPartner(CUIWindow* w, void* d)
 
 void CUIActorMenu::StoreAllToPartner(CUIWindow* w, void* d)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (zone::mapPreviewEnabled())
+    {
+        zone::inventoryStoreItem(nullptr);
+        return;
+    }
+#endif
     VERIFY(m_pActorInvOwner);
     if (!m_pPartnerInvOwner)
     {

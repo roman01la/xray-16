@@ -1,5 +1,5 @@
 // Browser-owned credential, separate from single-player storage. This is a local
-// development identity, not an account recovery/login product. Never log it.
+// save identity. The secret is also its portable recovery key. Never log it.
 export function newCredential(){return Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');}
 export async function loadIdentity(slot,{storage=localStorage,request=fetch,token='',locks=globalThis.navigator?.locks}={}){
  if(!/^[a-z0-9_-]{1,24}$/.test(slot))throw Error('Invalid identity slot');
@@ -20,6 +20,24 @@ async function loadIdentityUnlocked(slot,{storage,request,token}){
  if(!/^[a-f0-9]{32}$/.test(result.principalId))throw Error('Invalid principal identity');
  if(record.principalId&&record.principalId!==result.principalId)throw Error('Persistent identity changed');
  record.registered=true;record.principalId=result.principalId;storage.setItem(key,JSON.stringify(record));return record;
+}
+// Import only existing saves: a typo must never create a new identity or overwrite
+// the current credential. Share the enrollment lock with first-use startup.
+export async function importIdentity(slot,key,{storage=localStorage,request=fetch,token='',locks=globalThis.navigator?.locks}={}){
+ if(!/^[a-z0-9_-]{1,24}$/.test(slot))throw Error('Invalid identity slot');
+ const secret=String(key).trim().toLowerCase();
+ if(!/^[a-f0-9]{64}$/.test(secret))throw Error('Enter the complete 64-character save key.');
+ const acquire=async()=>{
+  const response=await request('/identity/resume',{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify({secret}),signal:AbortSignal.timeout(10000)});
+  const result=await response.json();
+  if(!response.ok)throw Error('Save key was not accepted. Your current save is unchanged.');
+  if(!/^[a-f0-9]{32}$/.test(result.principalId))throw Error('Invalid principal identity');
+  const record={secret,registered:true,principalId:result.principalId};
+  storage.setItem('zone-multiplayer-identity-v1:'+slot,JSON.stringify(record));return record;
+ };
+ if(locks)return locks.request('zone-multiplayer-identity-v1:'+slot,{mode:'exclusive',signal:AbortSignal.timeout(15000)},acquire);
+ if(typeof window!=='undefined')throw Error('Browser identity requires Web Locks');
+ return acquire();
 }
 export async function readRecord(identity,{request=fetch,token=''}={}){
  const response=await request('/identity/state',{headers:{'X-Zone-Identity':identity.secret,...(token?{Authorization:`Bearer ${token}`}:{})},cache:'no-store',signal:AbortSignal.timeout(10000)});

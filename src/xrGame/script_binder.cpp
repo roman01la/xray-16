@@ -15,6 +15,9 @@
 #include "script_game_object.h"
 #include "GameObject.h"
 #include "Level.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/EngineAdapter.h"
+#endif
 
 // comment next string when commiting
 //#define DBG_DISABLE_SCRIPTS
@@ -57,6 +60,11 @@ void CScriptBinder::reinit()
 
 void CScriptBinder::reload(LPCSTR section)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    // Rust-owned multiplayer objects use native item/UI presentation only.
+    // Never attach the single-player actor/quest/ALife binders to them.
+    if (zone::mapPreviewEnabled()) return;
+#endif
 #ifndef DBG_DISABLE_SCRIPTS
     VERIFY(!m_object);
     if (!pSettings->line_exist(section, "script_binding"))

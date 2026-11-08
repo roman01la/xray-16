@@ -45,8 +45,10 @@ void CRenderDevice::Initialize()
     TimerMM.Start();
 
     {
-        Uint32 flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN |
-            SDL_WINDOW_RESIZABLE;
+        Uint32 flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN;
+#ifndef XR_PLATFORM_WEB
+        flags |= SDL_WINDOW_RESIZABLE;
+#endif
 
         GEnv.Render->ObtainRequiredWindowFlags(flags);
 

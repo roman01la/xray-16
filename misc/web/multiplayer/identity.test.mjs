@@ -35,3 +35,25 @@ test('ownership requests preserve command IDs and explicit rejection outcomes',a
  assert.equal(result.reason,'not_owned');assert.equal(calls,1);
  await listEntities(identity,'a'.repeat(32),{generation:7,request:async(url)=>{assert.equal(url,'/identity/entities?after='+'a'.repeat(32)+'&generation=7');return {ok:true,json:async()=>({entities:[],nextCursor:null})};}});
 });
+
+test('portable save key resumes the same principal on another browser without enrollment',async()=>{
+ const {importIdentity}=await import('./identity.mjs'),first=storage(),second=storage();
+ const original=await loadIdentity('public',{storage:first,request:async()=>ok});
+ const request=async(url,opts)=>{assert.equal(url,'/identity/resume');assert.equal(JSON.parse(opts.body).secret,original.secret);return ok;};
+ const recovered=await importIdentity('public','  '+original.secret.toUpperCase()+'\n',{storage:second,request});
+ assert.deepEqual(recovered,original);
+ assert.deepEqual(await loadIdentity('public',{storage:second,request}),original);
+});
+test('invalid, unknown and interrupted save imports preserve the current save',async()=>{
+ const {importIdentity}=await import('./identity.mjs'),s=storage();
+ await loadIdentity('public',{storage:s,request:async()=>ok});const before=s.getItem('zone-multiplayer-identity-v1:public');
+ await assert.rejects(importIdentity('public','typo',{storage:s,request:()=>{throw Error('must not request');}}),/64-character/);
+ await assert.rejects(importIdentity('public','b'.repeat(64),{storage:s,request:async()=>({ok:false,json:async()=>({})})}),/not accepted/);
+ await assert.rejects(importIdentity('public','b'.repeat(64),{storage:s,request:async()=>{throw Error('offline');}}),/offline/);
+ assert.equal(s.getItem('zone-multiplayer-identity-v1:public'),before);
+});
+test('save import uses the same exclusive slot lock as enrollment',async()=>{
+ const {importIdentity}=await import('./identity.mjs'),s=storage();let entered=false;
+ const locks={request:async(key,opts,fn)=>{assert.equal(key,'zone-multiplayer-identity-v1:public');assert.equal(opts.mode,'exclusive');entered=true;return fn();}};
+ await importIdentity('public','c'.repeat(64),{storage:s,locks,request:async()=>{assert.equal(entered,true);return ok;}});
+});

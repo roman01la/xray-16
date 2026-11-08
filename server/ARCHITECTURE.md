@@ -233,7 +233,7 @@ proxy, with at most eight replay steps and authoritative fallback after 350 ms.
 Input history is capped at 32 commands. Crouch/jump flags and vertical motor speed
 are included in snapshots so reconciliation reconstructs the motor state.
 
-Wire v2 delta frames identify a baseline tick; only an ACK of a retained sent
+Wire v3 delta frames identify a baseline tick; only an ACK of a retained sent
 frame can establish that baseline. Frames contain compact remote records,
 full-precision local records, or removals. Every packet is at most 1100 bytes.
 The client applies a frame atomically after receiving all chunks. Unknown
@@ -339,3 +339,20 @@ clearing history, owned views and the engine bridge even when ICE failure is slo
 Brief gaps still use bounded prediction/authority fallback. Reliable metadata
 alone cannot keep a stale scene authoritative. Linux container and local browser
 acceptance results belong in PLAN.md; they do not establish real-network behavior.
+
+### Unified browser entry
+
+The browser distribution uses the multiplayer-capable WASM engine for both modes.
+The original main menu handles single-player New Game/Load Game; its network-game
+callback requests the Rust/WebRTC mode through a browser-only Lua override.
+It uses the unconditional engine output hook (`log1`); debug Lua logging is
+disabled in optimized builds. The
+page restarts the same immutable engine URL with `play=multiplayer`, then creates
+the network bridge. Without that mode the bridge is absent and the engine runs
+normal single-player simulation. Returning to the menu tears down the connection
+and restarts that same build without the multiplayer launch flags.
+
+This reset deliberately avoids carrying engine globals or workers across modes.
+Game chunks remain shared by hash. Single-player storage stays in `stream-cop`;
+multiplayer retains `zone-engine-preview-public/_multiplayer_/v1` and its existing
+portable identity. The original native/local distribution is not rewritten.

@@ -39,7 +39,11 @@ export async function runCombatScenario(a,b,{until,log,phase=()=>{}}){
  const result=await b.respawn();expect(result,r=>r.status==='respawned','Server-selected respawn');
  await until(()=>self(b).health===100&&(self(b).flags&1)&&a.snapshot.entities.some(e=>e.id===result.corpse&&e.health===0));
  expect(await b.respawn(),r=>r.reason==='alive','Living player cannot duplicate a corpse');
- expect(await b.fire(aimAt(b,a)),r=>r.reason==='safe_zone','Respawned player is protected');
+ const protectedAim=aimAt(b,a),sentAt=performance.now();
+ log('Post-respawn aim timing: '+JSON.stringify({tick:protectedAim.tick,snapshotAgeMs:sentAt-b.snapshot.receivedAt}));
+ const protectedResult=await b.fire(protectedAim);
+ log('Post-respawn reply timing: '+JSON.stringify({elapsedMs:performance.now()-sentAt,currentSnapshot:b.snapshot.tick}));
+ expect(protectedResult,r=>r.reason==='safe_zone','Respawned player is protected');
  phase('Respawn complete · dead body retained until server expiry');
  log('PASS · corpse has its own ID and player returned to validated safe spawn');
  await until(()=>!a.snapshot.entities.some(e=>e.id===result.corpse),45000);

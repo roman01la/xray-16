@@ -1,0 +1,105 @@
+{
+  "scope": "Native Chrome engine and optimized Rust server on real Zaton, followed by a read-only database check after restarting the server.",
+  "serverSha256DuringActions": "395891f96d88c34a33fd614c4fc6c7d38d57723e0ee82eee4d50d3d236f55cfc",
+  "serverSha256AfterRestart": "143123129cf51e21d0d0fcbb3c010d6d7aabed8b47702b70f7f47876527fcf63",
+  "engineWasmSha256": "e565140339f5695b01ac914ebef7aa29c7e4d704be14b01927c26834f7cb249f",
+  "schema": 11,
+  "beforePickupReloadRejection": "no_compatible_ammunition",
+  "authoredSource": {
+    "spawnId": 714,
+    "id": "0d877b32f0a76c257debd490e13c4da1",
+    "section": "ammo_7.62x54_7h1",
+    "rounds": 10
+  },
+  "nativeReload": {
+    "rifle": "2c7546106554d728bcbff45c4e6b3ba4",
+    "revision": 3,
+    "place": "slot:3",
+    "state": {
+      "condition": 1.0,
+      "upgrades": [],
+      "payload": {
+        "kind": "weapon",
+        "cartridges": [
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1",
+          "ammo_7.62x54_7h1"
+        ],
+        "launcher_cartridges": [],
+        "selected_ammunition": "ammo_7.62x54_7h1",
+        "attachments": [],
+        "fire_mode": 0,
+        "launcher_mode": false
+      }
+    },
+    "consumedBox": "0d877b32f0a76c257debd490e13c4da1"
+  },
+  "nativeUnload": {
+    "rifle": "2c7546106554d728bcbff45c4e6b3ba4",
+    "revision": 4,
+    "state": {
+      "condition": 1.0,
+      "upgrades": [],
+      "payload": {
+        "kind": "weapon",
+        "cartridges": [],
+        "launcher_cartridges": [],
+        "selected_ammunition": "ammo_7.62x54_7h1",
+        "attachments": [],
+        "fire_mode": 0,
+        "launcher_mode": false
+      }
+    },
+    "returnedBox": "b241f20924b0ff321f3e8bc81947cc8b",
+    "returnedRounds": 10,
+    "unrelatedRounds": 30
+  },
+  "afterRestart": {
+    "rifle": {
+      "id": "2c7546106554d728bcbff45c4e6b3ba4",
+      "revision": 4,
+      "place": "slot:3",
+      "state": {
+        "condition": 1.0,
+        "upgrades": [],
+        "payload": {
+          "kind": "weapon",
+          "cartridges": [],
+          "launcher_cartridges": [],
+          "selected_ammunition": "ammo_7.62x54_7h1",
+          "attachments": [],
+          "fire_mode": 0,
+          "launcher_mode": false
+        }
+      }
+    },
+    "returnedBox": {
+      "id": "b241f20924b0ff321f3e8bc81947cc8b",
+      "section": "ammo_7.62x54_7h1",
+      "rounds": 10
+    },
+    "unrelatedBox": {
+      "id": "f8d9bab81e132eea166283b184629e53",
+      "section": "ammo_9x39_ap",
+      "rounds": 30
+    },
+    "originalBoxAbsent": true
+  },
+  "singlePlayerSmoke": {
+    "sameWasm": true,
+    "existingCampaignSaveLoaded": true,
+    "movementVerified": true,
+    "screenshot": "native-magazine-singleplayer.png"
+  },
+  "screenshots": [
+    "native-svd-loaded.png",
+    "native-svd-unloaded.png"
+  ]
+}

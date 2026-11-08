@@ -71,3 +71,32 @@ test('legacy shader URL cache migrates across releases; changed shader fetches i
  assert.deepEqual(await store.load(changed),changedProgram);assert.equal(fetches,1);
  assert.ok(cacheStorage.items.has(shaderCacheKey('https://game.test/',program.key)));
 });
+
+test('the release index eliminates HTTP requests for unpackaged shader variants', async () => {
+  const changed = {...request, sources:{...request.sources, vert:'other vertex'}};
+  const runtimeProgram = {...program, key:shaderKey(changed)};
+  const baseURL = 'https://game.test/releases/v3/shader-cache.mjs';
+  const requests = [], reports = [];
+  const store = createShaderStore({
+    cacheStorage:storage(), baseURL, report:event=>reports.push(event),
+    async fetchManifest(url) {
+      requests.push(String(url));
+      return Response.json({version:3, shaderCount:1, keys:[program.key]});
+    },
+    async fetchProgram(url) {
+      requests.push(url);
+      return Response.json(program);
+    },
+    async compile(value) {
+      assert.deepEqual(value, changed);
+      return runtimeProgram;
+    },
+  });
+  assert.deepEqual(await store.load(changed), runtimeProgram);
+  assert.deepEqual(await store.load(request), program);
+  assert.deepEqual(requests, [
+    'https://game.test/releases/v3/shader-manifest.json',
+    'https://game.test/releases/v3/shaders/'+program.key+'.json',
+  ]);
+  assert.deepEqual(reports.map(event=>event.source), ['compiled', 'package']);
+});

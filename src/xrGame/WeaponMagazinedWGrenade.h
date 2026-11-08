@@ -51,6 +51,9 @@ public:
     virtual bool SwitchMode();
     bool CanSwitchToGL();
     void PerformSwitchGL();
+#ifdef XRAY_WEB_MULTIPLAYER
+    void SetPresentationLauncherMode(bool active);
+#endif
     void OnAnimationEnd(u32 state);
     virtual void OnMagazineEmpty();
     virtual bool GetBriefInfo(II_BriefInfo& info);

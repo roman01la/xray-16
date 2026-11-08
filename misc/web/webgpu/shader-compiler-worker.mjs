@@ -12,7 +12,7 @@ function report(event) {
 // Catch startup failure immediately so every connecting client receives it.
 const ready = createWasmToolchain().then(toolchain => {
   stats.ready = true;
-  return {store:createShaderStore({compile:request => compileProgram(request, toolchain), report})};
+  return {store:createShaderStore({fetchManifest:fetch, compile:request => compileProgram(request, toolchain), report})};
 }).catch(error => ({error:String(error.stack || error)}));
 let jobs = Promise.resolve();
 ready.then(({error}) => self.postMessage({type:error ? 'error' : 'ready',error,...stats}));

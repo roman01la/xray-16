@@ -143,6 +143,20 @@ public:
     void OnNextFireMode();
     void OnPrevFireMode();
     bool HasFireModes() { return m_bHasDifferentFireModes; }
+#ifdef __EMSCRIPTEN__
+    void SetPresentationScope(pcstr section);
+    void SetPresentationFireMode(u8 selector)
+    {
+        if (!HasFireModes() || m_aFireModes.empty())
+            return;
+        const size_t index = selector ? selector - 1 : m_aFireModes.size() - 1;
+        if (index < m_aFireModes.size())
+        {
+            m_iCurFireMode = static_cast<int>(index);
+            SetQueueSize(GetCurrentFireMode());
+        }
+    }
+#endif
 
     int GetCurrentFireMode() override
     {

@@ -1,4 +1,7 @@
 #include "StdAfx.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/InventoryPresentation.h"
+#endif
 #include "UIMainIngameWnd.h"
 #include "UIMessagesWindow.h"
 #include "UIZoneMap.h"
@@ -405,6 +408,10 @@ void CUIMainIngameWnd::RenderQuickInfos()
 
     static CGameObject* pObject = NULL;
     LPCSTR actor_action = pActor->GetDefaultActionForObject();
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (const char* container = zone::inventoryContainerUseTip())
+        actor_action = container;
+#endif
     UIStaticQuickHelp->Show(NULL != actor_action);
 
     if (NULL != actor_action)
@@ -648,10 +655,17 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     flags |= LA_CYCLIC;
     flags |= LA_ONLYALPHA;
     flags |= LA_TEXTURECOLOR;
+#ifdef XRAY_WEB_MULTIPLAYER
+    const auto* multiplayerVitals = zone::inventoryVitals();
+#endif
     // Bleeding icon
     if (m_ind_bleeding)
     {
-        const float bleeding = pActor->conditions().BleedingSpeed();
+        const float bleeding =
+#ifdef XRAY_WEB_MULTIPLAYER
+            multiplayerVitals ? multiplayerVitals->bleeding :
+#endif
+            pActor->conditions().BleedingSpeed();
         if (fis_zero(bleeding, EPS))
         {
             m_ind_bleeding->Show(false);
@@ -681,7 +695,11 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     // Radiation icon
     if (m_ind_radiation)
     {
-        const float radiation = pActor->conditions().GetRadiation();
+        const float radiation =
+#ifdef XRAY_WEB_MULTIPLAYER
+            multiplayerVitals ? multiplayerVitals->radiation :
+#endif
+            pActor->conditions().GetRadiation();
         if (fis_zero(radiation, EPS))
         {
             m_ind_radiation->Show(false);
@@ -711,7 +729,11 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     // Satiety icon
     if (m_ind_starvation)
     {
-        const float satiety = pActor->conditions().GetSatiety();
+        const float satiety =
+#ifdef XRAY_WEB_MULTIPLAYER
+            multiplayerVitals ? multiplayerVitals->satiety :
+#endif
+            pActor->conditions().GetSatiety();
         const float satiety_critical = pActor->conditions().SatietyCritical();
         const float satiety_koef =
             (satiety - satiety_critical) / (satiety >= satiety_critical ? 1 - satiety_critical : satiety_critical);
@@ -800,10 +822,23 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     // Overweight icon
     if (m_ind_overweight)
     {
-        const float cur_weight = pActor->inventory().TotalWeight();
-        const float max_weight = pActor->MaxWalkWeight();
+        const float cur_weight =
+#ifdef XRAY_WEB_MULTIPLAYER
+            multiplayerVitals ? multiplayerVitals->carriedWeight :
+#endif
+            pActor->inventory().TotalWeight();
+        const float max_weight =
+#ifdef XRAY_WEB_MULTIPLAYER
+            multiplayerVitals ? multiplayerVitals->walkLimit :
+#endif
+            pActor->MaxWalkWeight();
+        const bool show_weight =
+#ifdef XRAY_WEB_MULTIPLAYER
+            multiplayerVitals ||
+#endif
+            IsGameTypeSingle();
         m_ind_overweight->Show(false);
-        if (cur_weight >= max_weight - 10.0f && IsGameTypeSingle())
+        if (cur_weight >= max_weight - 10.0f && show_weight)
         {
             m_ind_overweight->Show(true);
             if (cur_weight > max_weight)

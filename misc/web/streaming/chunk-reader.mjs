@@ -16,15 +16,22 @@ export function validateDescriptor(d) {
   return d;
 }
 export class ChunkReader {
-  constructor({fetcher=(...args)=>fetch(...args), cacheStorage=globalThis.caches, budget=64*1024*1024, digest=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('')}={}) {
+  constructor({onProgress=()=>{},fetcher=(...args)=>fetch(...args), cacheStorage=globalThis.caches, budget=64*1024*1024, digest=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('')}={}) {
     this.fetcher=fetcher;this.cacheStorage=cacheStorage;this.budget=budget;this.digest=digest;
     this.descriptors=new Map();this.hot=new Map();this.pending=new Map();this.bytes=0;
-    this.stats={downloadedBytes:0,networkChunks:0,cachedChunks:0};
+    this.stats={downloadedBytes:0,networkChunks:0,cachedChunks:0,cachedBytes:0};
+    this.onProgress=onProgress;this.transfers=new Map();this.lastReport=0;
+  }
+  report(force=false,error=null) {
+    const now=Date.now();if(!force&&now-this.lastReport<150)return;
+    this.lastReport=now;
+    let received=0,total=0;for(const transfer of this.transfers.values()){received+=transfer.received;total+=transfer.total;}
+    try{this.onProgress({...this.stats,active:this.transfers.size,received,total,error});}catch{}
   }
   async descriptor(url) {
     if(!this.descriptors.has(url)) this.descriptors.set(url,(async()=>{
       const response=await this.fetcher(url+'.json');
-      if(!response.ok)throw Error('Archive metadata unavailable: '+response.status);
+      if(!response.ok)throw Error('Archive metadata unavailable (HTTP '+response.status+'): '+new URL(url+'.json').pathname);
       return validateDescriptor(await response.json());
     })().catch(e=>{this.descriptors.delete(url);throw e;}));
     return this.descriptors.get(url);
@@ -70,15 +77,25 @@ export class ChunkReader {
             await cache.put(key,new Response(bytes)).catch(()=>{});break;
           }
         }
-        if(bytes)this.stats.cachedChunks++;
+        if(bytes){this.stats.cachedChunks++;this.stats.cachedBytes+=bytes.length;this.report();}
       }
       if(!bytes){
-        const response=await this.fetcher(networkURL);
-        if(!response.ok)throw Error('Game chunk unavailable: '+response.status);
-        const length=response.headers.get('Content-Length');if(length!==null && Number(length)!==size)throw Error('Game chunk length mismatch');
-        bytes=new Uint8Array(await response.arrayBuffer());
-        if(bytes.length!==size || await this.digest(bytes)!==hash)throw Error('Game chunk integrity mismatch');
-        this.stats.networkChunks++;this.stats.downloadedBytes+=bytes.length;
+        const transfer={received:0,total:size};this.transfers.set(key,transfer);this.report(true);
+        try {
+          const response=await this.fetcher(networkURL);
+          if(!response.ok)throw Error('Game chunk unavailable (HTTP '+response.status+'): '+new URL(response.url||networkURL).pathname);
+          const length=response.headers.get('Content-Length');if(length!==null && Number(length)!==size)throw Error('Game chunk length mismatch');
+          if(response.body?.getReader){
+            bytes=new Uint8Array(size);const reader=response.body.getReader();
+            try{while(true){const {done,value}=await reader.read();if(done)break;
+              if(transfer.received+value.length>size)throw Error('Game chunk length mismatch');
+              bytes.set(value,transfer.received);transfer.received+=value.length;this.report();
+            }}catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
+          }else{bytes=new Uint8Array(await response.arrayBuffer());transfer.received=bytes.length;}
+          if(transfer.received!==size || await this.digest(bytes)!==hash)throw Error('Game chunk integrity mismatch');
+          this.stats.networkChunks++;this.stats.downloadedBytes+=bytes.length;
+        }catch(error){this.report(true,error.message);throw error;}
+        finally{this.transfers.delete(key);this.report(true);}
         try{await cache?.put(key,new Response(bytes));}catch{}
       }
       if(bytes.length<=this.budget){

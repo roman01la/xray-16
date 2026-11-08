@@ -1,6 +1,9 @@
 #include "StdAfx.h"
 #include "UIPdaWnd.h"
 #include "PDA.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/EngineAdapter.h"
+#endif
 
 #include "xrUICore/XML/xrUIXmlParser.h"
 #include "UIXmlInit.h"
@@ -424,6 +427,12 @@ void CUIPdaWnd::UpdatePda()
 
 void CUIPdaWnd::UpdateRankingWnd()
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    // CoP achievements read the single-player story actor's Lua storage.
+    // The network actor has no story simulator or campaign achievements.
+    if (zone::mapPreviewEnabled())
+        return;
+#endif
     if (pUIRankingWnd)
         pUIRankingWnd->Update();
 }

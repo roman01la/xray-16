@@ -1,0 +1,58 @@
+{
+  "scope": "Optimized real-Zaton server. Cooldown restart fixture, two browser transport peers and one native Chrome engine.",
+  "schema": 10,
+  "spawnId": 654,
+  "cooldownSurvivedRestart": true,
+  "refilledOnlyAfterDeadline": true,
+  "newIdPreservedOnRestart": true,
+  "serverSha256": "16d8185e24240450bf6d412fbbe906b6c8fa204709b4485c48a934c11a3ff815",
+  "transport": {
+    "authoredSpawnId": 713,
+    "stash": "zat_hiding_place_18",
+    "ruleOverrideSeconds": 5,
+    "exclusionMetres": 100,
+    "outcomes": [
+      "committed",
+      "rejected"
+    ],
+    "heldEmptyWithNearbyPlayersAfterDeadline": true,
+    "refilledAfterBothDisconnected": true,
+    "originalRetainedOnReconnect": true,
+    "screenshot": "authored-loot-refill-transport.png"
+  },
+  "native": {
+    "engineWasmSha256": "3e5d842f5f61d80b478b4e53139dcdda99c73afdabbb19ede0678561a3693f0b",
+    "pickedUpReplacementWithUse": true,
+    "equippedInOriginalMenu": true,
+    "after": [
+      {
+        "id": "c4157b8e22154cefeaea78aee632aab6",
+        "section": "wpn_svd",
+        "revision": 1,
+        "place": "rucksack",
+        "containerKind": "carried",
+        "owner": "2421d048dad139df37ed134411197d99",
+        "state": "{\"condition\":1.0,\"upgrades\":[],\"payload\":{\"kind\":\"weapon\",\"cartridges\":[],\"launcher_cartridges\":[],\"selected_ammunition\":\"ammo_7.62x54_7h1\",\"attachments\":[],\"fire_mode\":0,\"launcher_mode\":false}}"
+      },
+      {
+        "id": "2c7546106554d728bcbff45c4e6b3ba4",
+        "section": "wpn_svd",
+        "revision": 2,
+        "place": "slot:3",
+        "containerKind": "carried",
+        "owner": "fbcf3a2c915316a2dfccbc1e8f2ff852",
+        "state": "{\"condition\":1.0,\"upgrades\":[],\"payload\":{\"kind\":\"weapon\",\"cartridges\":[],\"launcher_cartridges\":[],\"selected_ammunition\":\"ammo_7.62x54_7h1\",\"attachments\":[],\"fire_mode\":0,\"launcher_mode\":false}}"
+      }
+    ],
+    "screenshots": [
+      "authored-stash-native-before.png",
+      "authored-stash-native-pickup.png",
+      "authored-stash-native-equip.png"
+    ]
+  },
+  "openGates": [
+    "Competing pickup between two simultaneous native engine sessions",
+    "One-time loose loot import",
+    "Gameplay death and native corpse search on real Zaton"
+  ]
+}

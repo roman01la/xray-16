@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
 #include <emscripten/html5.h>
 #endif
 
@@ -10,6 +11,7 @@
 xr_vector<xr_token> vid_monitor_token;
 xr_map<u32, xr_vector<xr_token>> vid_mode_token;
 
+#ifndef XR_PLATFORM_WEB
 void FillResolutionsForMonitor(const int monitorID)
 {
     const int modeCount = SDL_GetNumDisplayModes(monitorID);
@@ -28,6 +30,7 @@ void FillResolutionsForMonitor(const int monitorID)
 
     vid_mode_token[monitorID].emplace_back(nullptr, -1);
 }
+#endif
 
 void FillImGuiMonitorData(const int monitorID)
 {
@@ -69,7 +72,9 @@ void CRenderDevice::FillVideoModes()
         xr_sprintf(buf, "%d. %s", i, SDL_GetDisplayName(i));
         vid_monitor_token.emplace_back(xr_strdup(buf), i);
 
+#ifndef XR_PLATFORM_WEB
         FillResolutionsForMonitor(i);
+#endif
         FillImGuiMonitorData(i);
     }
     vid_monitor_token.emplace_back(nullptr, -1);
@@ -114,6 +119,14 @@ void CRenderDevice::UpdateWindowProps()
 {
     ZoneScoped;
 
+#ifdef XR_PLATFORM_WEB
+    SelectResolution(true);
+    SDL_SetWindowSize(m_sdlWnd, dwWidth, dwHeight);
+    emscripten_set_canvas_element_size("#canvas", dwWidth, dwHeight);
+    MAIN_THREAD_EM_ASM({
+        document.documentElement.style.setProperty('--game-aspect', String($0 / $1));
+    }, dwWidth, dwHeight);
+#else
     const bool windowed = psDeviceMode.WindowStyle != rsFullscreen;
     SelectResolution(windowed);
 
@@ -138,10 +151,6 @@ void CRenderDevice::UpdateWindowProps()
         SDL_SetWindowSize(m_sdlWnd, current.w, current.h);
     }
 
-#ifdef XR_PLATFORM_WEB
-    emscripten_set_canvas_element_size("#canvas", psDeviceMode.Width, psDeviceMode.Height);
-#endif
-
     if (windowed)
     {
         const bool drawBorders = psDeviceMode.WindowStyle == rsWindowed;
@@ -163,6 +172,7 @@ void CRenderDevice::UpdateWindowProps()
         mode.refresh_rate = psDeviceMode.RefreshRate;
         SDL_SetWindowDisplayMode(m_sdlWnd, &mode);
     }
+#endif
 
     SDL_PumpEvents();
     UpdateWindowRects();
@@ -170,7 +180,7 @@ void CRenderDevice::UpdateWindowProps()
     ImGuiIO& io = ImGui::GetIO();
 
     io.DisplaySize = { static_cast<float>(psDeviceMode.Width), static_cast<float>(psDeviceMode.Height) };
-    io.DisplayFramebufferScale = ImVec2{ float(dwWidth / m_rcWindowClient.w), float(dwHeight / m_rcWindowClient.h) };
+    io.DisplayFramebufferScale = ImVec2{ float(dwWidth) / m_rcWindowClient.w, float(dwHeight) / m_rcWindowClient.h };
 }
 
 void CRenderDevice::UpdateWindowRects()
@@ -182,7 +192,7 @@ void CRenderDevice::UpdateWindowRects()
     SDL_GetWindowPosition(m_sdlWnd, &m_rcWindowBounds.x, &m_rcWindowBounds.y);
     SDL_GetWindowSize(m_sdlWnd, &m_rcWindowBounds.w, &m_rcWindowBounds.h);
 
-    int top, left, bottom, right;
+    int top = 0, left = 0, bottom = 0, right = 0;
     SDL_GetWindowBordersSize(m_sdlWnd, &top, &left, &bottom, &right);
     m_rcWindowBounds.x -= left;
     m_rcWindowBounds.y -= top;
@@ -193,6 +203,9 @@ void CRenderDevice::UpdateWindowRects()
 void CRenderDevice::SelectResolution(const bool windowed)
 {
 #ifdef XR_PLATFORM_WEB
+    psDeviceMode.Monitor = 0;
+    psDeviceMode.WindowStyle = rsWindowedBorderless;
+    psDeviceMode.RefreshRate = 0;
     if (psDeviceMode.Width == 0 || psDeviceMode.Height == 0)
     {
         psDeviceMode.Width = 1280;
