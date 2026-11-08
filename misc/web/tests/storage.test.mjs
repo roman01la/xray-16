@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
+import { migrateStockBindings } from "../page/stock-bindings.mjs";
 import {
   validateBackup,
   encodeBytes,
@@ -63,6 +64,7 @@ test("engine sync replaces same-size stale files and refuses corrupt or failed d
       Blob,
       Uint8Array,
       crypto: webcrypto,
+      migrateStockBindings,
       navigator: { storage: { getDirectory: async () => dir } },
       postMessage: (r) => (response = r),
       fetch: async (path) =>
@@ -87,7 +89,8 @@ test("engine sync replaces same-size stale files and refuses corrupt or failed d
                 mode === "corrupt" ? new Blob(["oops"]) : expected,
             },
     });
-    vm.runInContext(source, context);
+    // Supply the worker's module dependency alongside its browser globals.
+    vm.runInContext(source.replace("import {migrateStockBindings} from './stock-bindings.mjs';", ""), context);
     await context.onmessage({
       data: { id: 1, type: "sync-engine-data", root: "cop" },
     });
