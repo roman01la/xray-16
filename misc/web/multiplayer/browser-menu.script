@@ -6,6 +6,12 @@ end
 function main_menu:OnButton_multiplayer_clicked()
     log1("XRAY_BROWSER_MULTIPLAYER")
 end
+
+-- The staged browser menu has no desktop exit. The stock Q shortcut also
+-- calls this handler, so it must leave the browser game running.
+function main_menu:OnMessageQuitWin()
+end
+
 if string.find(command_line(), "-zone_map_preview", 1, true) then
     function main_menu:OnMessageQuitGame() log1("XRAY_BROWSER_MAIN_MENU") end
     function main_menu:OnButton_load_clicked() log1("XRAY_BROWSER_MAIN_MENU") end
