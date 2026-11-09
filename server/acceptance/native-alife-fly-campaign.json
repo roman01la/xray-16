@@ -1,0 +1,138 @@
+{
+  "date": "2026-11-09",
+  "build": "0f675f6c",
+  "platform": "x86_64 Linux on Fly Frankfurt",
+  "memoryLimitMiB": 11963,
+  "visibleCpus": 8,
+  "isolatedMachine": true,
+  "productionDataAccessed": false,
+  "archiveChunksVerified": true,
+  "gatewaySupervisorTested": true,
+  "initialNativeProbes": {
+    "zaton": {
+      "gameTick": 30129,
+      "online": 0,
+      "offline": 403,
+      "interests": 0
+    },
+    "jupiter": {
+      "gameTick": 30195,
+      "online": 0,
+      "offline": 378,
+      "interests": 0
+    },
+    "pripyat": {
+      "gameTick": 30308,
+      "online": 2,
+      "offline": 393,
+      "interests": 0
+    },
+    "jupiter_underground": {
+      "gameTick": 30837,
+      "online": 0,
+      "offline": 379,
+      "interests": 0
+    },
+    "labx8": {
+      "gameTick": 30964,
+      "online": 0,
+      "offline": 378,
+      "interests": 0
+    }
+  },
+  "previousZatonCheckpoint": 1,
+  "existingZatonLineageRetained": true,
+  "existingSaveIdentityResumed": true,
+  "firstCampaignCheckpoints": {
+    "jupiter-static-v1": 1,
+    "jupiter_underground-static-v1": 1,
+    "labx8-static-v1": 1,
+    "pripyat-static-v1": 1,
+    "zaton-static-v1": 2
+  },
+  "campaignBootSeconds": 31.5,
+  "travel": {
+    "source": "zaton-static-v1",
+    "destination": "jupiter-static-v1",
+    "exactItems": 6,
+    "life": 0,
+    "health": 100,
+    "arrivalErrorMeters": 3.426717925084502e-06,
+    "sourcePlayersBefore": 2,
+    "sourcePlayersAfter": 1,
+    "destinationPlayers": 1,
+    "oldOfferRejected": true,
+    "serverProcessUnchanged": true
+  },
+  "nativePlayerInterestTransitions": [
+    {
+      "zaton": 0,
+      "jupiter": 0,
+      "pripyat": 0,
+      "jupiter_underground": 0,
+      "labx8": 0
+    },
+    {
+      "zaton": 2,
+      "jupiter": 0,
+      "pripyat": 0,
+      "jupiter_underground": 0,
+      "labx8": 0
+    },
+    {
+      "zaton": 1,
+      "jupiter": 0,
+      "pripyat": 0,
+      "jupiter_underground": 0,
+      "labx8": 0
+    },
+    {
+      "zaton": 1,
+      "jupiter": 1,
+      "pripyat": 0,
+      "jupiter_underground": 0,
+      "labx8": 0
+    }
+  ],
+  "jupiterRestart": {
+    "priorCheckpoint": 1,
+    "newCheckpoint": 2,
+    "lineageRetained": true,
+    "otherProcessesKeptTheirPids": true,
+    "secondsToNewCheckpoint": 36.7
+  },
+  "sqliteIntegrity": "ok",
+  "resources": {
+    "sampledRssTotalMiB": 8419.1,
+    "sampledNativeRssMiB": {
+      "zaton": 1616.7,
+      "jupiter": 1889.9,
+      "pripyat": 1505.2,
+      "jupiter_underground": 1094.1,
+      "labx8": 912.7
+    },
+    "minAvailableMiB": 3850
+  },
+  "idleWindow": {
+    "seconds": 30.2,
+    "ticks": 905,
+    "lateTicks": 0,
+    "averageCpuCoresByProcess": {
+      "gateway": 0.0,
+      "rust": 0.008,
+      "zaton": 0.239,
+      "jupiter": 0.285,
+      "pripyat": 0.279,
+      "jupiter_underground": 0.276,
+      "labx8": 0.211
+    },
+    "serverLifetimeMaxTickUs": 271
+  },
+  "imageDigest": "sha256:a69bb6683d205d888202a598b438b8ceed4429e8ecaeaf0b724c3bf3b24b9cf6",
+  "machineConfiguration": {
+    "sharedCpus": 8,
+    "provisionedMemoryMiB": 12288
+  },
+  "scope": "An isolated two-client WebRTC test over loopback covered the approved Zaton-to-Jupiter crossing. The existing save identity and checkpoint were generated in the isolated single-map phase. Other crossings and production player load remain outside this run.",
+  "shutdown": "The planned SIGTERM shutdown wrote X-Ray termination diagnostics. The only unexpected-to-the-supervisor exit during the campaign was the Jupiter SIGKILL injected by the test."
+}
