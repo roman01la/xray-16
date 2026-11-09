@@ -13,6 +13,7 @@ execFileSync(process.execPath,[join(import.meta.dirname,'stage.mjs'),resolve(eng
 if((await lstat(join(output,'engine'))).isSymbolicLink())await rm(join(output,'engine'));await cp(join(repo,'misc/web/dist/engine-assets'),join(output,'engine'),{recursive:true});
 await stageBrowserMenu(web,packArg);
 if(packArg)await stageBrowserSounds(web,resolve(packArg));
+await copyFile(join(repo,'src/xr_3da/stalker_cop.ico'),join(web,'favicon.ico'));
 for(const [source,target] of [['game.html','index.html'],['game-ui.mjs','game-ui.mjs'],['singleplayer-ui.mjs','singleplayer-ui.mjs'],['public-ui.mjs','public-ui.mjs']])await copyFile(join(repo,'server/web',source),join(web,target));
 if(packArg){try{await symlink(resolve(packArg),join(output,'pack'),'dir');}catch(e){if(e.code!=='EEXIST')throw e;}}
 console.log('Unified browser game:',web);

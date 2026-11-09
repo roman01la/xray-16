@@ -1,4 +1,4 @@
-import { validateBackup, encodeBytes, decodeBytes } from "./save-format.js";
+import { validateBackup, decodeBytes, openSaveDirectory, prepareSaveBackup } from "./save-format.js";
 const toolbar = document.getElementById("toolbar");
 const button = document.createElement("button");
 button.textContent = "Saves";
@@ -8,14 +8,7 @@ dialog.innerHTML = `<h2>Saved games</h2><p>Saves stay in this browser. Download 
 document.body.append(dialog);
 const $ = (id) => dialog.querySelector("#" + id);
 const report = (text) => ($("save-message").textContent = text);
-async function saveDirectory(create = false) {
-  const root = document.getElementById("game").value;
-  if (!root) throw Error("Import a game folder first.");
-  let dir = await navigator.storage.getDirectory();
-  for (const name of [root, "_appdata_", "savedgames"])
-    dir = await dir.getDirectoryHandle(name, { create });
-  return dir;
-}
+const saveDirectory = (create = false) => openSaveDirectory(document.getElementById("game").value, create);
 async function storageStatus() {
   const { usage, quota } = await navigator.storage.estimate();
   const persistent = await navigator.storage.persisted();
@@ -42,38 +35,15 @@ $("persist-saves").onclick = async () => {
 };
 $("backup-saves").onclick = async () => {
   try {
-    const dir = await saveDirectory(),
-      files = [];
-    let totalBytes = 0;
-    for await (const [name, handle] of dir.entries()) {
-      if (handle.kind !== "file" || !/\.(scop|dds)$/i.test(name)) continue;
-      const file = await handle.getFile();
-      totalBytes += file.size;
-      if (totalBytes > 96 * 1024 * 1024)
-        throw Error(
-          "Save backup exceeds 96 MB of files. Export a smaller save collection.",
-        );
-      files.push({
-        name,
-        data: encodeBytes(new Uint8Array(await file.arrayBuffer())),
-      });
-    }
-    const backup = validateBackup({
-      format: "openxray-saves-v1",
-      created: new Date().toISOString(),
-      files,
-    });
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(backup)], { type: "application/json" }),
-    );
+    const backup = await prepareSaveBackup(await saveDirectory());
+    const url = URL.createObjectURL(backup.blob);
     const link = $("save-download");
     if (link.href.startsWith("blob:")) URL.revokeObjectURL(link.href);
     link.href = url;
-    link.download =
-      "openxray-saves-" + new Date().toISOString().slice(0, 10) + ".json";
+    link.download = backup.filename;
     link.hidden = false;
     report(
-      `Backup ready: ${files.length} save files. Select Download backup file.`,
+      `Backup ready: ${backup.count} save files. Select Download backup file.`,
     );
   } catch (e) {
     report(e.message);

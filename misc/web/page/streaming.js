@@ -17,7 +17,7 @@ export function streamingConfig(source) {
   return text;
 }
 // Called by the ingest worker. Only progress and the completed mount cross
-// back to the page, so pack verification and CacheStorage stay off the UI thread.
+// back to the page, so pack verification and OPFS writes stay off the UI thread.
 export async function installStreaming(manifestURL, root, onProgress) {
   const report=detail=>onProgress({phase:'install',...detail});
   report({});

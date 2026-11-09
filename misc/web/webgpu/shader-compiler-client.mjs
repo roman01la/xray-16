@@ -3,6 +3,7 @@ const shaderCaptureBuild = false;
 export function startShaderCompiler() {
   return connection ||= new Promise((resolve, reject) => {
     const workerURL = new URL('./shader-compiler-worker.mjs', import.meta.url);
+    if (globalThis.__xrayRetireLegacyStorage) workerURL.searchParams.set('retireLegacyStorage','1');
     if (shaderCaptureBuild) {
       const query = new URLSearchParams(globalThis.location?.search);
       for (const name of ['shaderCapture','shaderMap','shaderPreset','shaderScenario']) {

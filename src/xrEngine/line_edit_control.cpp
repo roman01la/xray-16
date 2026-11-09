@@ -13,6 +13,9 @@
 #include "xrCore/Text/StringConversion.hpp"
 #include "Common/object_broker.h"
 #include "xr_input.h"
+#ifdef XR_PLATFORM_WEB
+#include "StringTable/StringTable.h"
+#endif
 
 #include "edit_actions.h"
 
@@ -372,7 +375,13 @@ void line_edit_control::on_text_input(const char *text)
     compute_positions();
 
     static std::locale locale("");
+#ifdef XR_PLATFORM_WEB
+    const auto str = m_current_mode == im_file_name_mode
+        ? StringTable().ConvertBrowserSaveText(text, false)
+        : StringFromUTF8(text, locale);
+#else
     const auto str = StringFromUTF8(text, locale);
+#endif
 
     for (char c : str)
     {

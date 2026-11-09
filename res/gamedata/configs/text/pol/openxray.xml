@@ -48,6 +48,12 @@
 	<string id="renderer_rgl">
 		<text>Rozsz. pe³ne oœw. dynam. (OpenGL)</text>
 	</string>
+	<string id="ui_mm_saved_game_unnamed">
+		<text>Zapis bez nazwy</text>
+	</string>
+	<string id="ui_mm_saved_game_world_time">
+		<text>Czas w grze</text>
+	</string>
 	<string id="ui_mm_window_mode">
 		<text>Tryb wyœwietlania</text>
 	</string>

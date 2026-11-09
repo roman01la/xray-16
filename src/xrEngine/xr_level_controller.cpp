@@ -664,10 +664,22 @@ game_action* ActionNameToPtr(pcstr name, [[maybe_unused]] bool silent /*= false*
     return nullptr;
 }
 
+#ifdef XR_PLATFORM_WEB
+static bool IsBrowserMenuKey(int dik)
+{
+    return dik == SDL_SCANCODE_U && pInput && !pInput->IsTextInputEnabled() &&
+        !(SDL_GetModState() & (KMOD_CTRL | KMOD_ALT | KMOD_GUI | KMOD_SHIFT));
+}
+#endif
+
 bool IsBinded(EGameActions action_id, int dik, EKeyContext context /*= EKeyContext::Undefined*/)
 {
     if (action_id >= kNOTBINDED)
         return false;
+#ifdef XR_PLATFORM_WEB
+    if (action_id == kQUIT && dik == SDL_SCANCODE_U && !IsBrowserMenuKey(dik))
+        return false;
+#endif
 
     key_binding* binding = &g_key_bindings[action_id];
     for (u8 i = 0; i < bindtypes_count; ++i)
@@ -676,6 +688,10 @@ bool IsBinded(EGameActions action_id, int dik, EKeyContext context /*= EKeyConte
             if (binding->m_action->key_context == context)
                 return true;
     }
+#ifdef XR_PLATFORM_WEB
+    if (IsBrowserMenuKey(dik) && (action_id == kQUIT || action_id == kUI_BACK))
+        return GetBindedAction(dik, context) == action_id;
+#endif
     return false;
 }
 
@@ -790,8 +806,24 @@ EGameActions GetBindedAction(int dik, EKeyContext context /*= EKeyContext::Undef
 
         for (u8 i = 0; i < bindtypes_count && isGroupMatching; ++i)
             if (binding->m_keyboard[i] && binding->m_keyboard[i]->dik == dik)
+            {
+#ifdef XR_PLATFORM_WEB
+                if (binding->m_action->id == kQUIT && dik == SDL_SCANCODE_U && !IsBrowserMenuKey(dik))
+                    continue;
+#endif
                 return binding->m_action->id;
+            }
     }
+#ifdef XR_PLATFORM_WEB
+    // Respect explicit player bindings and let U act as Escape when free.
+    if (IsBrowserMenuKey(dik))
+    {
+        if (context == EKeyContext::Undefined)
+            return kQUIT;
+        if (context == EKeyContext::UI && GetBindedAction(dik) == kQUIT)
+            return kUI_BACK;
+    }
+#endif
     return kNOTBINDED;
 }
 

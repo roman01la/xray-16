@@ -35,3 +35,33 @@ export function encodeBytes(bytes) {
 }
 export const decodeBytes = (data) =>
   Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+
+export async function openSaveDirectory(root, create = false) {
+  if (!root) throw Error("Select a game first.");
+  let directory = await navigator.storage.getDirectory();
+  for (const name of [root, "_appdata_", "savedgames"])
+    directory = await directory.getDirectoryHandle(name, { create });
+  return directory;
+}
+
+export async function prepareSaveBackup(directory) {
+  const files = [];
+  let totalBytes = 0;
+  for await (const [name, handle] of directory.entries()) {
+    if (handle.kind !== "file" || !/\.(scop|dds)$/i.test(name)) continue;
+    const file = await handle.getFile();
+    totalBytes += file.size;
+    if (totalBytes > 96 * 1024 * 1024)
+      throw Error("Save backup exceeds 96 MB of files. Export a smaller save collection.");
+    files.push({ name, data: encodeBytes(new Uint8Array(await file.arrayBuffer())) });
+  }
+  if (!files.length) throw Error("There are no single-player saves to download yet.");
+
+  const created = new Date().toISOString();
+  const backup = validateBackup({ format: "openxray-saves-v1", created, files });
+  return {
+    filename: "openxray-saves-" + created.slice(0, 10) + ".json",
+    blob: new Blob([JSON.stringify(backup)], { type: "application/json" }),
+    count: files.length,
+  };
+}

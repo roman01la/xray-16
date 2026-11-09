@@ -163,3 +163,4 @@ console.log(
 );
 
 await copyFile(join(repo, "misc/web/streaming/chunk-reader.mjs"), join(distDir, "chunk-reader.mjs"));
+await copyFile(join(repo, "server/web/opfs-store.mjs"), join(distDir, "opfs-store.mjs"));

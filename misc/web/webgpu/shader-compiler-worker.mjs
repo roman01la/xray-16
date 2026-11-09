@@ -1,6 +1,7 @@
 import { createWasmToolchain } from './wasm-toolchain.mjs';
 import { compileProgram } from './compiler-core.mjs';
-import { createShaderStore } from './shader-cache.mjs';
+import { createShaderStore, SHADER_CACHE_VERSION, validateProgram } from './shader-cache.mjs';
+import { migrateLegacyCache } from './opfs-store.mjs';
 
 const ports = new Set();
 const stats = {ready:false, compiled:0, package:0, cache:0, errors:0};
@@ -12,7 +13,19 @@ function report(event) {
 // Catch startup failure immediately so every connecting client receives it.
 const captureOptions = new URL(import.meta.url).searchParams;
 const ready = createWasmToolchain().then(async toolchain => {
-  const store=createShaderStore({fetchManifest:fetch, compile:request => compileProgram(request, toolchain), report});
+  const migrate = store => {
+    const run = () => migrateLegacyCache({
+      cacheStorage:globalThis.caches, name:SHADER_CACHE_VERSION, store,
+      retire:captureOptions.has('retireLegacyStorage'),
+      identify:url => url.origin===location.origin ? url.pathname.match(/\/shaders\/([a-f0-9]{64})\.json$/)?.[1] : null,
+      async validate(file,key) {
+        try { return !!validateProgram(JSON.parse(await file.text()),key); }
+        catch { return false; }
+      },
+    });
+    return navigator.locks ? navigator.locks.request('xray-opfs-shader-migration', run) : run();
+  };
+  const store=createShaderStore({fetchManifest:fetch, compile:request => compileProgram(request, toolchain), migrate, report});
   await store.preload();
   const capture = captureOptions.has('shaderCapture')
     ? await (await import('./shader-capture.mjs')).openShaderCapture(captureOptions)

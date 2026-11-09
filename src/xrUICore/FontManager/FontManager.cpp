@@ -45,7 +45,13 @@ LPCSTR CFontManager::GetFontTexName(LPCSTR section)
     int def_idx = 1; // default 1024x768
     int idx = def_idx;
 
-    u32 h = Device.dwHeight;
+#ifdef XR_PLATFORM_WEB
+    // Use the same font metrics at every render resolution. Glyphs scale
+    // in CGameFont instead of switching to an atlas with different metrics.
+    const u32 h = 720;
+#else
+    const u32 h = Device.dwHeight;
+#endif
 
     if (h <= 600)
         idx = 0;

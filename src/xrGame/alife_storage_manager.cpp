@@ -325,8 +325,13 @@ bool CALifeStorageManager::load(LPCSTR save_name_no_check)
     }
 
     string512 temp;
+#ifdef XR_PLATFORM_WEB
+    const auto browserLabel = StringTable().BrowserSaveLabel(save_name);
+    strconcat(temp, StringTable().translate("st_loading_saved_game").c_str(), " \"", browserLabel.c_str(), "\"");
+#else
     strconcat(temp, StringTable().translate("st_loading_saved_game").c_str(),
         " \"", save_name, gameSaveExtension, "\"");
+#endif
 
     g_pGamePersistent->LoadTitle(temp);
 

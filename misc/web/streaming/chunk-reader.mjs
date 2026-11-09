@@ -1,18 +1,19 @@
 // Read-only coarse archive chunks shared by the startup installer and WasmFS.
-// CacheStorage persists verified chunks; installed reads use disk-backed Blob slices.
+// Verified chunks live in OPFS. Installed reads use synchronous byte ranges in the WasmFS worker.
 export const CHUNK_BYTES = 16 * 1024 * 1024;
 const HASH = /^[a-f0-9]{64}$/;
-export const GAME_CHUNK_CACHE = 'xray-game-chunks-v1';
-const ARCHIVE_CACHE = 'xray-game-archives-v1';
-const INSTALLED_BLOB_LIMIT = 64;
+const CHUNK_STORE = 'game-chunks';
+const DESCRIPTOR_STORE = 'game-archives';
+const INSTALLED_HANDLE_LIMIT = 64;
+const openOPFS = name => import('./opfs-store.mjs').then(({openInstallStore}) => openInstallStore(name));
+const sha256 = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
 const BOOTSTRAP_MEMORY_LIMIT = 256 * 1024;
 export function gameStorageError(error) {
   return new Error(error?.name === 'QuotaExceededError'
     ? 'There is not enough browser storage for the complete game. Free disk space or clear data from other sites, then retry.'
     : 'Local game storage is unavailable. Check your browser storage settings and retry.', {cause:error});
 }
-// Synthetic CacheStorage key only: never requested from the server.
-export const chunkCacheKey=(url,hash)=>new URL('/.xray-cache/game-chunks/'+hash+'.bin',url).href;
+const descriptorKey = url => sha256(new TextEncoder().encode(url));
 export function validateDescriptor(d) {
   if (d?.format !== 'xray-archive-v1' || !Number.isSafeInteger(d.size) || d.size < 1 ||
       d.chunkBytes !== CHUNK_BYTES || !Array.isArray(d.chunks) ||
@@ -24,10 +25,10 @@ export function validateDescriptor(d) {
   return d;
 }
 export class ChunkReader {
-  constructor({onProgress=()=>{},fetcher=(...args)=>fetch(...args), cacheStorage=globalThis.caches, budget=64*1024*1024, mode='stream', digest=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('')}={}) {
-    this.fetcher=fetcher;this.cacheStorage=cacheStorage;this.budget=budget;this.digest=digest;this.mode=mode;
+  constructor({onProgress=()=>{},fetcher=(...args)=>fetch(...args), openStore=openOPFS, budget=64*1024*1024, mode='stream', digest=sha256}={}) {
+    this.fetcher=fetcher;this.openStore=openStore;this.budget=budget;this.digest=digest;this.mode=mode;
     this.descriptors=new Map();this.hot=new Map();this.pending=new Map();this.bytes=0;
-    this.installedBlobs=new Map();
+    this.stores=new Map();this.installedChunks=new Map();
     this.stats={downloadedBytes:0,networkChunks:0,cachedChunks:0,cachedBytes:0};
     this.onProgress=onProgress;this.transfers=new Map();this.lastReport=0;
   }
@@ -37,26 +38,25 @@ export class ChunkReader {
     let received=0,total=0;for(const transfer of this.transfers.values()){received+=transfer.received;total+=transfer.total;}
     try{this.onProgress({...this.stats,active:this.transfers.size,received,total,error,...this.installProgress});}catch{}
   }
-  async storage(name) {
-    try {
-      const cache=await this.cacheStorage?.open(name);
-      if(!cache && this.mode!=='stream')throw Error('CacheStorage is unavailable');
-      return cache;
-    } catch(error) {
+  storage(name) {
+    if(!this.stores.has(name)) this.stores.set(name,Promise.resolve().then(()=>this.openStore(name)).catch(error=>{
+      this.stores.delete(name);
       if(this.mode!=='stream')throw gameStorageError(error);
-    }
+      return null;
+    }));
+    return this.stores.get(name);
   }
-  async persist(cache,key,response) {
-    try{await cache?.put(key,response);}
+  async persist(store,key,bytes) {
+    try{await store?.put(key,bytes);}
     catch(error){if(this.mode==='install')throw gameStorageError(error);}
   }
   async descriptor(url) {
     if(!this.descriptors.has(url)) this.descriptors.set(url,(async()=>{
       const metadata=url+'.json';
       if(this.mode==='installed') {
-        const cache=await this.storage(ARCHIVE_CACHE), response=await cache.match(metadata);
+        const store=await this.storage(DESCRIPTOR_STORE), response=await store.get(await descriptorKey(metadata));
         if(!response)throw Error('Installed archive metadata is missing. Reload to repair game data.');
-        return validateDescriptor(await response.json());
+        return validateDescriptor(JSON.parse(await response.text()));
       }
       const response=await this.fetcher(metadata);
       if(!response.ok)throw Error('Archive metadata unavailable (HTTP '+response.status+'): '+new URL(metadata).pathname);
@@ -68,8 +68,8 @@ export class ChunkReader {
     if(this.mode!=='install')throw Error('The archive reader is not configured for installation');
     this.installProgress={phase:'install',checkedBytes:0,packBytes:0};
     this.report(true);
-    const metadata=await this.storage(ARCHIVE_CACHE);
-    await this.storage(GAME_CHUNK_CACHE);
+    const metadata=await this.storage(DESCRIPTOR_STORE);
+    await this.storage(CHUNK_STORE);
     const descriptors=[],chunks=new Map();
     for(const {url,size} of archives) {
       const d=await this.descriptor(url);
@@ -101,56 +101,75 @@ export class ChunkReader {
     }));
     if(failure)throw failure;
     // Publish the pinned metadata only after all its bytes are locally readable.
-    for(const {url,d} of descriptors)await this.persist(metadata,url+'.json',Response.json(d));
+    for(const {url,d} of descriptors)await this.persist(metadata,await descriptorKey(url+'.json'),JSON.stringify(d));
     this.report(true);
+  }
+  async openInstalledChunk(hash) {
+    const handle=await (await this.storage(CHUNK_STORE)).handle(hash);
+    if(!handle)throw Error('Missing chunk '+hash);
+    if(handle.createSyncAccessHandle){
+      try{
+        const file=await handle.createSyncAccessHandle({mode:'read-only'});
+        return {size:file.getSize(),close:()=>file.close(),read(offset,length){
+          const bytes=new Uint8Array(length);
+          if(file.read(bytes,{at:offset})!==length)throw Error('Short archive read');
+          return bytes;
+        }};
+      }catch(error){
+        if(!['TypeError','NotSupportedError','NoModificationAllowedError','InvalidStateError'].includes(error.name))throw error;
+      }
+    }
+    // Some browsers expose OPFS files but lack shared synchronous handles.
+    const file=await handle.getFile();
+    return {size:file.size,close(){},async read(offset,length){
+      const bytes=new Uint8Array(await file.slice(offset,offset+length).arrayBuffer());
+      if(bytes.byteLength!==length)throw Error('Short archive read');
+      return bytes;
+    }};
+  }
+  retireChunk(entry) {
+    entry.retired=true;
+    if(!entry.users)entry.file.then(file=>file.close()).catch(()=>{});
   }
   async readChunkRange(url,hash,size,offset,length,bootstrap=false) {
     if(this.mode!=='installed'){
       const bytes=await this.chunk(url,hash,size);
       return bytes.subarray(offset,offset+length);
     }
-    const key=chunkCacheKey(url,hash),missing='Installed game data is missing or damaged. Reload to repair it.';
-    let entry=this.installedBlobs.get(key);
-    if(!entry){
-      this.installedCache ??= this.storage(GAME_CHUNK_CACHE);
-      const blob=this.installedCache.then(async cache=>{
-        const response=await cache.match(key);
-        if(!response)throw Error(missing);
-        return response.blob();
-      });
-      entry={blob};
+    let entry=this.installedChunks.get(hash);
+    if(!entry)entry={file:this.openInstalledChunk(hash),users:0};
+    this.installedChunks.delete(hash);
+    this.installedChunks.set(hash,entry);
+    if(this.installedChunks.size>INSTALLED_HANDLE_LIMIT){
+      const oldest=this.installedChunks.keys().next().value;
+      this.retireChunk(this.installedChunks.get(oldest));
+      this.installedChunks.delete(oldest);
     }
-    this.installedBlobs.delete(key);
-    this.installedBlobs.set(key,entry);
-    if(this.installedBlobs.size>INSTALLED_BLOB_LIMIT)
-      this.installedBlobs.delete(this.installedBlobs.keys().next().value);
+    entry.users++;
     try {
-      const file=await entry.blob;
-      if(file.size!==size)throw Error(missing);
-      // The installer verifies every chunk before publishing the descriptor.
-      // Chromium can read this slice directly from the CacheStorage disk entry.
+      const file=await entry.file;
+      if(file.size!==size)throw Error('Archive size mismatch');
+      // Thousands of tiny texture metadata reads share compact bundles.
       if(bootstrap && size<=BOOTSTRAP_MEMORY_LIMIT){
-        // Texture metadata contains thousands of tiny reads of the same bundle.
-        // At most 64 compact bundles (16 MiB) can be retained with their handles.
-        entry.bootstrap ??= file.arrayBuffer().then(bytes=>{
-          if(bytes.byteLength!==size)throw Error(missing);
-          return new Uint8Array(bytes);
-        });
+        entry.bootstrap ??= file.read(0,size);
         return (await entry.bootstrap).subarray(offset,offset+length);
       }
-      const bytes=await file.slice(offset,offset+length).arrayBuffer();
-      if(bytes.byteLength!==length)throw Error(missing);
-      return new Uint8Array(bytes);
+      return await file.read(offset,length);
     } catch(error) {
-      if(this.installedBlobs.get(key)===entry)this.installedBlobs.delete(key);
-      throw Error(missing,{cause:error});
+      if(this.installedChunks.get(hash)===entry){
+        this.installedChunks.delete(hash);
+        this.retireChunk(entry);
+      }
+      throw Error('Installed game data is missing or damaged. Reload to repair it.',{cause:error});
+    } finally {
+      if(--entry.users===0&&entry.retired)entry.file.then(file=>file.close()).catch(()=>{});
     }
   }
   async chunk(url,hash,size) {
     if(!HASH.test(hash)||!Number.isSafeInteger(size)||size<1||size>32*1024*1024)throw Error('Invalid chunk identity');
     if(this.mode==='installed')return this.readChunkRange(url,hash,size,0,size);
     const networkURL=new URL('../chunks/'+hash+'.bin',url).href;
-    const key=chunkCacheKey(url,hash);
+    const key=hash;
     if(this.hot.has(key)){
       const bytes=this.hot.get(key);if(bytes.length!==size)throw Error('Game chunk size conflict');
       this.hot.delete(key);this.hot.set(key,bytes);return bytes;
@@ -159,36 +178,21 @@ export class ChunkReader {
       const bytes=await this.pending.get(key);if(bytes.length!==size)throw Error('Game chunk size conflict');return bytes;
     }
     const task=(async()=>{
-      const cache=await this.storage(GAME_CHUNK_CACHE);
+      const store=await this.storage(CHUNK_STORE);
       let bytes;
-      if(cache){
-        const cached=async candidate=>{
-          try {
-            const hit=await cache.match(candidate);if(!hit)return null;
-            const value=new Uint8Array(await hit.arrayBuffer());
-            if(value.length!==size || await this.digest(value)!==hash){await cache.delete(candidate).catch(()=>{});return null;}
-            return value;
-          }catch{return null;}
-        };
-        bytes=await cached(key);
-        if(!bytes){
-          // Index legacy URL keys once, lazily. No game bytes are fetched while
-          // building this migration index; each candidate is still verified.
-          this.legacyKeys ||= Promise.resolve().then(async()=>{
-            const index=new Map();
-            for(const r of await cache.keys?.()||[]){
-              const candidate=new URL(r.url),match=candidate.pathname.match(/\/chunks\/([a-f0-9]{64})\.bin$/);
-              if(match){const id=candidate.origin+'/'+match[1];if(!index.has(id))index.set(id,[]);index.get(id).push(r.url);}
-            }
-            return index;
-          }).catch(()=>new Map());
-          const legacy=(await this.legacyKeys).get(new URL(url).origin+'/'+hash)||[];
-          for(const candidate of new Set([networkURL,...legacy])){
-            bytes=await cached(candidate);if(!bytes)continue;
-            await this.persist(cache,key,new Response(bytes));break;
+      try {
+        const file=await store?.get(key);
+        if(file?.size===size){
+          const value=new Uint8Array(await file.arrayBuffer());
+          if(await this.digest(value)===hash){
+            bytes=value;
+            this.stats.cachedChunks++;
+            this.stats.cachedBytes+=bytes.length;
+            this.report();
           }
         }
-        if(bytes){this.stats.cachedChunks++;this.stats.cachedBytes+=bytes.length;this.report();}
+      } catch(error) {
+        if(this.mode!=='stream' && error.name!=='NotReadableError')throw gameStorageError(error);
       }
       if(!bytes){
         const transfer={received:0,total:size};this.transfers.set(key,transfer);this.report(true);
@@ -207,7 +211,7 @@ export class ChunkReader {
           this.stats.networkChunks++;this.stats.downloadedBytes+=bytes.length;
         }catch(error){if(this.mode==='stream')this.report(true,error.message);throw error;}
         finally{this.transfers.delete(key);this.report(true);}
-        await this.persist(cache,key,new Response(bytes));
+        await this.persist(store,key,bytes);
       }
       if(bytes.length<=this.budget){
         while(this.bytes+bytes.length>this.budget){const oldest=this.hot.keys().next().value;this.bytes-=this.hot.get(oldest).length;this.hot.delete(oldest);}

@@ -142,7 +142,7 @@ test("unified graphics defaults are seeded once in each mode's own app-data dire
     const config = `/${root}/${appDirectory}/user.ltx`;
     await context.onmessage({ data });
     assert.equal(response.type, "done");
-    assert.equal(files.get(config), "_preset Default\nvid_mode 1920x1080\n");
+    assert.equal(files.get(config), "_preset Default\n");
     const custom = "_preset Low\r\nvid_mode 1280x720\r\n";
     files.set(config, custom);
     await context.onmessage({ data });

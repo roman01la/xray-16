@@ -11,6 +11,9 @@
 #include "saved_game_wrapper.h"
 #include "ai_space.h"
 #include "xr_time.h"
+#ifdef XR_PLATFORM_WEB
+#include "xrEngine/StringTable/StringTable.h"
+#endif
 
 void CSavedGameWrapper::script_register(lua_State* luaState)
 {
@@ -29,5 +32,15 @@ void CSavedGameWrapper::script_register(lua_State* luaState)
             .def("actor_health", &CSavedGameWrapper::actor_health),
 
         def("valid_saved_game", (bool (*)(pcstr))(&CSavedGameWrapper::valid_saved_game))
+#ifdef XR_PLATFORM_WEB
+        , def("browser_save_filename", +[](pcstr name)
+        {
+            return luabind::string(StringTable().ConvertBrowserSaveText(name, true).c_str());
+        })
+        , def("browser_save_label", +[](pcstr name)
+        {
+            return luabind::string(StringTable().BrowserSaveLabel(name).c_str());
+        })
+#endif
     ];
 }

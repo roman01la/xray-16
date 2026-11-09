@@ -9,7 +9,7 @@ import {spawn} from 'node:child_process';
 import {createGunzip} from 'node:zlib';
 import {pathToFileURL} from 'node:url';
 const HASH=/^[a-f0-9]{64}$/,PATH=/^\/(releases|packs)\/[a-f0-9]{64}\/[a-zA-Z0-9_./#@+ -]+$/;
-const mime=p=>({html:'text/html; charset=utf-8',js:'text/javascript',mjs:'text/javascript',json:'application/json',wasm:'application/wasm',css:'text/css'})[p.split('.').at(-1)]||'application/octet-stream';
+const mime=p=>({html:'text/html; charset=utf-8',js:'text/javascript',mjs:'text/javascript',json:'application/json',wasm:'application/wasm',css:'text/css',ico:'image/x-icon'})[p.split('.').at(-1)]||'application/octet-stream';
 const equal=(a,b)=>{const x=Buffer.from(a||''),y=Buffer.from(b||'');return x.length===y.length&&timingSafeEqual(x,y);};
 function safePath(p){return PATH.test(p)&&!p.slice(1).split('/').some(x=>x==='..'||x==='.'||!x);}
 async function body(req,max){let size=0,parts=[];for await(const part of req){size+=part.length;if(size>max)throw Object.assign(Error('Request too large'),{status:413});parts.push(part);}return Buffer.concat(parts);}
@@ -101,11 +101,14 @@ export async function createGateway({root,token,origin,backendPort=8082,assetOri
     if(!active)return reply(503,'Preparing game deployment');
     // Keep the document URL stable and the game frame inside its release's worker scope.
     const source=active.entry.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;');
+    const icon=new URL('favicon.ico',new URL(active.entry,'http://local')).pathname;
+    const iconLink=active.files[icon]?`<link rel="icon" href="${icon}" type="image/x-icon">`:'';
     const html=`<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>S.T.A.L.K.E.R. — Call of Pripyat</title>
+${iconLink}
 <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}iframe{display:block;width:100%;height:100%;border:0}</style>
 <iframe src="${source}" title="S.T.A.L.K.E.R.: Call of Pripyat" allowfullscreen></iframe>
 </html>`;

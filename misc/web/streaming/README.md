@@ -8,7 +8,7 @@ verified chunks for the next attempt.
 
 X-Ray mounts the installed original archives read-only at `/stream`. The
 WasmFS proxy worker reads byte ranges from verified **16 MiB chunks** in
-local CacheStorage. The pack includes campaign resources, levels,
+the origin-private file system (OPFS). The pack includes campaign resources, levels,
 localization, and patches. It omits the stock multiplayer-only archives and
 bonus media. Single player and the custom multiplayer mode share the archive
 cache while keeping their own settings and saves.
@@ -46,7 +46,7 @@ collections enumerate numbered variants from the mounted filesystem table.
 This preserves the unnumbered sound first, followed by the existing numbered
 variants in numeric order, including loose overrides and gaps in numbering.
 The engine must be rebuilt with the streaming WasmFS library, and normal staging
-copies `streaming.js` and `chunk-reader.mjs` beside `xr_3da.js`.
+copies `streaming.js`, `chunk-reader.mjs`, and `opfs-store.mjs` beside `xr_3da.js`.
 
 The unified local preview opens at `/engine-preview/?stream=/pack/pack.json`.
 The hosted entry supplies the pack URL automatically. The standalone developer
@@ -72,9 +72,11 @@ to the staged engine assets. These overrides avoid changing production files.
 Each chunk filename is its SHA-256. Startup verifies the size and digest of
 cached and downloaded bytes before mounting the pack, including bootstrap
 chunks. A warm launch still reads and hashes the installed chunks locally.
-Runtime reads use pinned archive descriptors and slice just the requested bytes
-from CacheStorage blobs. The archive worker keeps up to 64 recent blob handles
-and retains compact bootstrap bundles of at most 256 KiB with their handles.
+Runtime reads use pinned archive descriptors and read the requested byte ranges
+through read-only OPFS handles in the WasmFS worker. The worker keeps up to 64
+recent handles and retains compact bootstrap bundles of at most 256 KiB with
+their handles. Browsers without shared synchronous access can read slices of
+OPFS files.
 The installer verifies SHA-256 during startup. Missing or truncated data
 fails the read and asks the player to reload and repair the installation.
 The engine also keeps a bounded 1 MiB cache of decoded `.ltx` entries up to
@@ -91,7 +93,7 @@ and may reclaim data under pressure.
 `node --test misc/web/tests/streaming.test.mjs misc/web/webgpu/shader-cache.test.mjs`
 checks startup installation, incremental updates and rollback, retry after a
 partial download, quota errors, archive boundaries, and local-only archive and
-shader reads after startup. Playback coverage checks exact blob ranges across
+shader reads after startup. Playback coverage checks exact OPFS ranges across
 chunk boundaries and bootstrap bundles without hashing or downloading again.
 
 An isolated Chrome run against the locally staged pack installed 319 distinct
@@ -191,22 +193,21 @@ existing single-player game tab.
 
 ## Granular updates and rollback
 
-Game chunk identity is now `(origin, SHA-256)`, independent of the pack's release
-URL. Persistent entries use a synthetic `/.xray-cache/game-chunks/<hash>.bin`
-CacheStorage key; that URL is never sent to the server. Each requested hash still
-comes from the selected release's archive descriptor. Thus a v2 descriptor can
-reuse a verified v1 chunk without substituting v1 metadata or mixing releases.
-Payload chunks and bundled bootstrap metadata both use this path. Legacy cache
-entries keyed by full `/packs/v1/chunks/...` URLs are located once, verified and
-promoted without downloading their bytes again. Cached and downloaded bytes
-must match both the expected length and hash.
+Game chunks are stored by SHA-256 under `xray-install-v1/game-chunks` in
+OPFS. Each selected release pins its own archive descriptors, so unchanged
+chunks and bootstrap bundles can be reused across versions. Startup checks
+both the length and digest before mounting the selected pack. The hosted
+launcher migrates verified files from the previous CacheStorage installer and
+retains those copies if an older game tab is still open. Runtime-only compiled
+shaders migrate with packaged shader programs. Saves and settings use separate
+directories.
 
 | Component | Update behavior |
 | --- | --- |
 | Game archive data and metadata bundles | Install every required hash absent from the verified cache at startup. Unchanged hashes survive release-directory changes and rollback. |
 | Engine override files | Existing OPFS sync compares size and SHA-256 per manifest entry. Unchanged files are not downloaded; changed files are replaced individually. The current complete override set is about 1.95 MB. |
 | Offline/runtime shader programs | Install packaged variants at startup. Offline and runtime results share stable origin-local shader-key entries across releases. Incompatible compiler, reflection, or packing ABI changes invalidate those programs. |
-| Engine and shader-compiler JS/WASM | Whole-file browser requests; no binary-delta patching. Updating the engine does not invalidate cached game chunks. Production HTTP caching can reuse unchanged URLs, but the local development server deliberately sends `no-store`. |
+| Engine and shader-compiler JS/WASM | The service worker serves release files from OPFS by SHA-256. Only new or missing hashes fetch a complete file. Engine updates reuse unchanged archive chunks. |
 | Saves and user configuration | Independent OPFS data; chunk/shader cache reuse and eviction do not erase saves. Existing `fsgame.ltx` is preserved by engine asset sync. |
 
 Publish each pack and matching engine files to new immutable versioned paths.
@@ -228,7 +229,7 @@ all their chunk identities.
 
 Verification includes v1 → v2 → v1 rollback, changed-chunk-only transfer, legacy
 URL migration, corruption recovery, and shader reuse across release paths.
-The real Chrome CacheStorage probe downloaded **16,777,221 bytes** for v1,
+The incremental update probe is expected to download **16,777,221 bytes** for v1,
 **5 bytes** for the changed v2 tail, and **0 bytes** on rollback. Each release's
 small descriptor was still fetched separately. These are controlled fixture
 measurements, not a prediction of update size for an arbitrarily repacked game.

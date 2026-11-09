@@ -112,6 +112,12 @@ bool CUIXmlInitBase::InitOptionsItem(const CUIXml& xml_doc, pcstr path, int inde
         cpcstr entry = xml_doc.ReadAttrib(buf, index, "entry");
         cpcstr group = xml_doc.ReadAttrib(buf, index, "group");
         pWnd->AssignProps(entry, group);
+#ifdef XR_PLATFORM_WEB
+        // The browser owns fullscreen. Its size change is handled by viewport
+        // tracking, so changing only window mode does not require vid_restart.
+        if (xr_stricmp(entry, "vid_window_mode") == 0)
+            return true;
+#endif
 
         if (cpcstr depends = xml_doc.ReadAttrib(buf, index, "depend", nullptr))
         {

@@ -230,6 +230,7 @@ void CGameFont::OnRender()
 u16 CGameFont::GetCutLengthPos(float fTargetWidth, pcstr pszText)
 {
     VERIFY(pszText);
+    fTargetWidth /= GlyphScale();
 
     xr_wide_char wsStr[MAX_MB_CHARS], wsPos[MAX_MB_CHARS];
     float fCurWidth = 0.0f, fDelta = 0.0f;
@@ -256,6 +257,7 @@ u16 CGameFont::GetCutLengthPos(float fTargetWidth, pcstr pszText)
 u16 CGameFont::SplitByWidth(u16* puBuffer, u16 uBufferSize, float fTargetWidth, pcstr pszText)
 {
     VERIFY(puBuffer && uBufferSize && pszText);
+    fTargetWidth /= GlyphScale();
 
     xr_wide_char wsStr[MAX_MB_CHARS], wsPos[MAX_MB_CHARS];
     float fCurWidth = 0.0f, fDelta = 0.0f;
@@ -301,7 +303,7 @@ void CGameFont::MasterOut(bool bCheckDevice, bool bUseCoords, bool bScaleCoords,
     rs.x = (bUseCoords ? (bScaleCoords ? (DI2PX(_x)) : _x) : fCurrentX);
     rs.y = (bUseCoords ? (bScaleCoords ? (DI2PY(_y)) : _y) : fCurrentY);
     rs.c = dwCurrentColor;
-    rs.height = fCurrentHeight;
+    rs.height = GetHeight();
     rs.align = eCurrentAlignment;
     int vs_sz = vsnprintf(rs.string, sizeof(rs.string), fmt, p);
     // VERIFY( ( vs_sz != -1 ) && ( rs.string[ vs_sz ] == '\0' ) );
@@ -348,7 +350,7 @@ void CGameFont::OutNextVA(pcstr format, va_list args)
 void CGameFont::OutSkip(float val) { fCurrentY += val * CurrentHeight_(); }
 float CGameFont::SizeOf_(const char cChar)
 {
-    return (GetCharTC((u16)(u8)(((IsMultibyte() && cChar == ' ')) ? 0 : cChar)).z * vInterval.x);
+    return (GetCharTC((u16)(u8)(((IsMultibyte() && cChar == ' ')) ? 0 : cChar)).z * vInterval.x * GlyphScale());
 }
 
 float CGameFont::SizeOf_(pcstr s)
@@ -390,7 +392,7 @@ float CGameFont::SizeOf_(pcstr s)
             }
         }
     }
-    return (X * vInterval.x);
+    return (X * vInterval.x * GlyphScale());
 }
 
 float CGameFont::SizeOf_(const xr_wide_char* wsStr)
@@ -433,10 +435,29 @@ float CGameFont::SizeOf_(const xr_wide_char* wsStr)
             }
         }
     }
-    return (X * vInterval.x);
+    return (X * vInterval.x * GlyphScale());
 }
 
-float CGameFont::CurrentHeight_() { return fCurrentHeight * vInterval.y; }
+#ifdef XR_PLATFORM_WEB
+float CGameFont::GlyphScale() const
+{
+    // Match UI layout, which already scales with render height. A 720-line
+    // target uses the original glyph size, whatever size the CSS canvas is.
+    return std::max(Device.dwHeight, 1u) / 720.0f;
+}
+#endif
+
+float CGameFont::GetHeight() const
+{
+#ifdef XR_PLATFORM_WEB
+    // SetHeightI already converts relative height into render pixels.
+    if (!(uFlags & fsDeviceIndependent))
+        return fCurrentHeight * GlyphScale();
+#endif
+    return fCurrentHeight;
+}
+
+float CGameFont::CurrentHeight_() { return GetHeight() * vInterval.y; }
 void CGameFont::SetHeightI(float S)
 {
     VERIFY(uFlags & fsDeviceIndependent);

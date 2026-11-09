@@ -15,6 +15,7 @@ const dist = process.env.XRAY_WEB_DIST_INPUT ? resolve(process.env.XRAY_WEB_DIST
 const capture = process.env.XRAY_SHADER_CAPTURE === "1";
 const output = process.env.XRAY_WEB_OUTPUT ? resolve(process.env.XRAY_WEB_OUTPUT) : join(dist, capture ? "webgpu-dev" : "webgpu");
 await mkdir(output, { recursive: true });
+await copyFile(resolve(source, '../../../server/web/opfs-store.mjs'), join(output, 'opfs-store.mjs'));
 for (const obsolete of ["command-context.js", "gl-constants.js"])
   await rm(join(output, obsolete), {force:true});
 for (const file of [

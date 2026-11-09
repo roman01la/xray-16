@@ -55,6 +55,11 @@ protected:
     IFontRender* pFontRender;
 
 protected:
+#ifdef XR_PLATFORM_WEB
+    float GlyphScale() const;
+#else
+    constexpr float GlyphScale() const { return 1.0f; }
+#endif
     const Fvector& GetCharTC(u16 c) const { return TCMap[c]; }
 
 public:
@@ -67,7 +72,7 @@ public:
     virtual u32 GetColor() const override { return dwCurrentColor; }
     virtual void SetHeightI(float S) override;
     virtual void SetHeight(float S) override;
-    virtual float GetHeight() const override { return fCurrentHeight; };
+    virtual float GetHeight() const override;
     virtual void SetInterval(float x, float y) override { vInterval.set(x, y); };
     virtual void SetInterval(const Fvector2& v) override { vInterval.set(v); };
     virtual void SetAligment(EAligment aligment) override { eCurrentAlignment = aligment; }

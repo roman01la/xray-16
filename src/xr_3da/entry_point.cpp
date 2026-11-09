@@ -14,7 +14,42 @@
 #if defined(XR_PLATFORM_WEB)
 #include <emscripten.h>
 #include <emscripten/wasmfs.h>
+#include <utime.h>
 #include "../../misc/web/streaming/mount.h"
+#endif
+
+#if defined(XR_PLATFORM_WEB)
+static void RestoreBrowserSaveTimes()
+{
+    const int size = MAIN_THREAD_EM_ASM_INT({
+        return Module['xraySaveTimes']?.length || 0;
+    });
+    if (size <= 0)
+        return;
+
+    std::string entries(size, '\0');
+    MAIN_THREAD_EM_ASM({
+        growMemViews();
+        HEAPU8.set(Module['xraySaveTimes'], $0);
+        delete Module['xraySaveTimes'];
+    }, double(uintptr_t(entries.data())));
+
+    // Seed the mount's stat data before the engine indexes the files. New
+    // writes update stat normally, and a reload reads the OPFS times again.
+    const char* end = entries.data() + entries.size();
+    for (const char* entry = entries.data(); entry < end;)
+    {
+        const char* next = std::strchr(entry, '\0') + 1;
+        char* path = nullptr;
+        const time_t seconds = std::strtoll(entry, &path, 10);
+        if (seconds > 0 && *path == '\t')
+        {
+            const utimbuf times{seconds, seconds};
+            utime(path + 1, &times);
+        }
+        entry = next;
+    }
+}
 #endif
 
 // Always request high performance GPU
@@ -106,6 +141,7 @@ int main(int argc, char *argv[])
 
 #if defined(XR_PLATFORM_WEB)
     wasmfs_create_directory("/opfs", 0777, wasmfs_create_opfs_backend());
+    RestoreBrowserSaveTimes();
     for (int i = 1; i < argc; ++i)
         if (strcmp(argv[i], "-stream_mount") == 0)
         {

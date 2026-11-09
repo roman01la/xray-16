@@ -8,7 +8,8 @@ test('same loader starts without a network bridge and transfers ports only for m
  const run=new Function('Module','worker','shaderCompilerPort','handlers','wasmMemory','wasmModule','globalThis',statement);
  const worker={postMessage:(message,ports)=>calls.push({message,ports})},shader={};
  run({},worker,shader,[],{},{},{});assert.deepEqual(calls[0].ports,[shader]);assert.equal(calls[0].message.zonePort,undefined);
- const network={};run({zoneBridge:{createPort:()=>network},zoneEpoch:'test'},worker,shader,[],{},{},{__xrayGPUDiagnosticsChannel:'test-tab'});
+ const network={},telemetry={name:'test-tab',detailed:false};
+ run({zoneBridge:{createPort:()=>network},zoneEpoch:'test'},worker,shader,[],{},{},{__xrayGPUDiagnosticsChannel:telemetry});
  assert.deepEqual(calls[1].ports,[shader,network]);assert.equal(calls[1].message.zoneEpoch,'test');
- assert.equal(calls[1].message.gpuDiagnosticsChannel,'test-tab');
+ assert.deepEqual(calls[1].message.gpuDiagnosticsChannel,telemetry);
 });

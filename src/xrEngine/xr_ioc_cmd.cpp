@@ -1,4 +1,8 @@
 #include "stdafx.h"
+
+#ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
+#endif
 #include "IGame_Level.h"
 
 #include "XR_IOConsole.h"
@@ -16,6 +20,9 @@ xr_vector<xr_token> VidQualityToken;
 
 extern xr_vector<xr_token> vid_monitor_token;
 extern xr_map<u32, xr_vector<xr_token>> vid_mode_token;
+#ifdef XR_PLATFORM_WEB
+SDL_Point GetBrowserDisplaySize();
+#endif
 
 const xr_token vid_bpp_token[] = {{"16", 16}, {"32", 32}, {0, 0}};
 
@@ -356,14 +363,10 @@ class CCC_VidMode : public CCC_Token
 {
     u32 _dummy = 0;
 #ifdef XR_PLATFORM_WEB
-    // The browser viewport and pixel ratio are independent of render size.
-    // Leave room for a custom resolution from the player's existing config.
-    xr_token m_webModes[8] = {
-        { "960x540", 0 }, { "1280x720", 1 }, { "1600x900", 2 },
-        { "1920x1080", 3 }, { "2560x1440", 4 }, { "3840x2160", 5 },
-        {}, {},
-    };
-    TStatus m_webCurrent{};
+    static constexpr int m_webHeights[] = {480, 540, 720, 900, 1080, 1440, 2160};
+    // Reserve slots for the display maximum, a saved custom mode and a sentinel.
+    xr_token m_webModes[std::size(m_webHeights) + 3]{};
+    TStatus m_webLabels[std::size(m_webHeights) + 2]{};
 #endif
 
 public:
@@ -402,15 +405,29 @@ public:
     const xr_token* GetToken() noexcept override
     {
 #ifdef XR_PLATFORM_WEB
-        auto* const custom = std::end(m_webModes) - 2;
-        GetStatus(m_webCurrent);
-        const auto current = std::find_if(std::begin(m_webModes), custom, [this](const xr_token& token)
+        const auto display = GetBrowserDisplaySize();
+        int count = 0;
+        const auto add = [&](u32 width, u32 height)
         {
-            return xr_strcmp(token.name, m_webCurrent) == 0;
-        });
-        *custom = {};
-        if (psDeviceMode.Width && psDeviceMode.Height && current == custom)
-            *custom = { m_webCurrent, static_cast<int>(custom - m_webModes) };
+            if (width < 640 || height < 480)
+                return;
+            auto& label = m_webLabels[count];
+            xr_sprintf(label, "%ux%u", width, height);
+            if (std::any_of(m_webModes, m_webModes + count, [&](const xr_token& mode)
+                { return xr_strcmp(mode.name, label) == 0; }))
+                return;
+            // IDs identify sizes rather than positions: changing the current
+            // custom entry must not change the meaning of another selection.
+            m_webModes[count++] = {label, int((width << 13) | height)};
+        };
+        for (const int height : m_webHeights)
+        {
+            if (height < display.y)
+                add(u32(std::lround(double(display.x) * height / display.y)), height);
+        }
+        add(display.x, display.y);
+        add(psDeviceMode.Width, psDeviceMode.Height);
+        m_webModes[count] = {};
         return m_webModes;
 #else
         return vid_mode_token[psDeviceMode.Monitor].data();
@@ -495,22 +512,65 @@ public:
 #ifdef XR_PLATFORM_WEB
     const xr_token* GetToken() noexcept override
     {
-        static const xr_token browserModes[] = { { "st_opt_windowed_borderless", rsWindowedBorderless }, {} };
+        static const xr_token browserModes[] = {
+            { "st_opt_windowed", rsWindowed },
+            { "st_opt_fullscreen", rsFullscreen },
+            {}
+        };
         return browserModes;
     }
+
+    void GetStatus(TStatus& status) override
+    {
+        const bool fullscreen = MAIN_THREAD_EM_ASM_INT({
+            return window.xrayBrowserFullscreen?.isActive() ? 1 : 0;
+        });
+        xr_strcpy(status, fullscreen ? "st_opt_fullscreen" : "st_opt_windowed");
+    }
+
+    // Browser fullscreen belongs to the current page and requires a gesture.
+    // Skip writing it to cfg files, including the temporary options backup.
+    void Save(IWriter*) override {}
 #endif
 
     void Execute(pcstr args) override
     {
 #ifdef XR_PLATFORM_WEB
-        psDeviceMode.WindowStyle = rsWindowedBorderless;
+        if (xr_stricmp(args, "st_opt_fullscreen") == 0)
+            browserWindowRequest = 1;
+        else if (xr_stricmp(args, "st_opt_windowed") == 0 || xr_stricmp(args, "st_opt_windowed_borderless") == 0)
+            browserWindowRequest = 0;
+        else
+            InvalidSyntax();
 #else
         CCC_Token::Execute(args);
-#endif
         m_fullscreen.set(fl_fullscreen, psDeviceMode.WindowStyle == rsFullscreen);
+#endif
     }
 
+#ifdef XR_PLATFORM_WEB
+    class BrowserWindowMode final : public IConsole_Command
+    {
+    public:
+        explicit BrowserWindowMode(pcstr name) : IConsole_Command(name) {}
+
+        void Execute(pcstr args) override
+        {
+            if (xr_stricmp(args, "apply") == 0 && browserWindowRequest != -1)
+            {
+                MAIN_THREAD_EM_ASM({
+                    window.xrayBrowserFullscreen?.set(Boolean($0));
+                }, browserWindowRequest);
+            }
+            browserWindowRequest = -1;
+        }
+    };
+#endif
+
 private:
+#ifdef XR_PLATFORM_WEB
+    inline static int browserWindowRequest = -1;
+#endif
     enum { fl_fullscreen = 1u << 0u };
     inline static Flags32 m_fullscreen; // for rs_fullscreen backwards compatibility
 
@@ -534,6 +594,9 @@ public:
     };
 };
 using CCC_Fullscreen = CCC_VidWindowMode::CCC_Fullscreen;
+#ifdef XR_PLATFORM_WEB
+using CCC_BrowserWindowMode = CCC_VidWindowMode::BrowserWindowMode;
+#endif
 //-----------------------------------------------------------------------
 class CCC_SND_Restart : public IConsole_Command
 {
@@ -897,6 +960,9 @@ void CCC_Register()
     CMD1(CCC_VidMonitor, "vid_monitor");
     CMD1(CCC_VidMode, "vid_mode");
     CMD1(CCC_VidWindowMode, "vid_window_mode");
+#ifdef XR_PLATFORM_WEB
+    CMD1(CCC_BrowserWindowMode, "browser_window_mode");
+#endif
 
 #ifdef DEBUG
     CMD3(CCC_Token, "vid_bpp", &psDeviceMode.BitsPerPixel, vid_bpp_token);

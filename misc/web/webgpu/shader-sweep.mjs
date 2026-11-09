@@ -6,6 +6,7 @@ import {parseArgs} from 'node:util';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {enableShaderPipelineProbe,pressShaderKey,readStockScenario,runStockPhases,seedShaderSettings,stageShaderActorProbe} from './shader-stock-scenario.mjs';
 import {SHADER_CACHE_VERSION} from './shader-cache.mjs';
+import {INSTALL_DIRECTORY} from '../../../server/web/opfs-store.mjs';
 
 // Local developer integration sweep. Sources remain in the private output folder.
 const {values,positionals}=parseArgs({
@@ -134,7 +135,14 @@ try {
      await page.send('Page.navigate',{url:origin+'/shader-sweep.html'});
      await poll('setup document',()=>page.evaluate(`location.pathname==='/shader-sweep.html'&&!!document.body`),15000);
      if(clearShaderCache){
-      await page.evaluate(`caches.delete(${JSON.stringify(SHADER_CACHE_VERSION)})`,true);
+      await page.evaluate(`(async()=>{
+       const root=await navigator.storage.getDirectory();
+       try {
+        const install=await root.getDirectoryHandle(${JSON.stringify(INSTALL_DIRECTORY)});
+        await install.removeEntry(${JSON.stringify(SHADER_CACHE_VERSION)},{recursive:true});
+       } catch(error) { if(error.name!=='NotFoundError')throw error; }
+       await globalThis.caches?.delete(${JSON.stringify(SHADER_CACHE_VERSION)});
+      })()`,true);
       clearShaderCache=false;
      }
      const configPath=singleplayer?['stream-cop','_appdata_']:['zone-engine-preview-coverage','_multiplayer_','v1'];
@@ -150,6 +158,8 @@ try {
       await poll('stock launcher',()=>page.evaluate(`location.search.includes('autostart=0')&&document.querySelector('#game')?.value==='stream-cop'&&document.querySelector('#launch')?.disabled===false`),60000);
       const campaign=stock?.savedGame?stock.savedGame.slot+'/single/alife/load':'all/single/alife/new';
       await page.evaluate(`document.querySelector('#extra-args').value=${JSON.stringify('-start server('+campaign+') client(localhost)')};document.querySelector('#launch').click()`);
+      await poll('stock game ready',()=>page.evaluate("document.querySelector('#start-game')?.disabled===false"),240000);
+      await page.evaluate("document.querySelector('#start-game').click()");
      }
      await poll(map+' WebGPU render',async()=>{
       const info=await page.evaluate(`({status:document.querySelector('#status')?.textContent,stats:document.querySelector('#browser-diagnostics')?.textContent,synced:document.querySelector('#boot')?.hidden&&document.querySelector('#log')?.textContent?.includes('End of synchronization'),engineError:(globalThis.sweepLog??[]).find(line=>line.includes('worker sent an error!'))})`).catch(()=>null);

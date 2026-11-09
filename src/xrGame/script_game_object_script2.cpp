@@ -106,8 +106,11 @@ luabind::class_<CScriptGameObject>& script_register_game_object1(luabind::class_
         .def("group", &CScriptGameObject::Group)
         .def("change_team", (void (CScriptGameObject::*)(u8, u8, u8))(&CScriptGameObject::ChangeTeam))
         .def("set_visual_memory_enabled", &CScriptGameObject::SetVisualMemoryEnabled)
-        .def("kill", (void (CScriptGameObject::*)(CScriptGameObject*))&CScriptGameObject::Kill)
-        .def("kill", (void (CScriptGameObject::*)(CScriptGameObject*, bool))(&CScriptGameObject::Kill))
+        .def("kill", +[](CScriptGameObject* self, CScriptGameObject* who)
+        {
+            self->Kill(who);
+        })
+        .def("kill", &CScriptGameObject::Kill)
         .def("hit", &CScriptGameObject::Hit)
         .def("play_cycle", (void (CScriptGameObject::*)(LPCSTR))(&CScriptGameObject::play_cycle))
         .def("play_cycle", (void (CScriptGameObject::*)(LPCSTR, bool))(&CScriptGameObject::play_cycle))

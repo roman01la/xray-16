@@ -16,6 +16,7 @@ namespace
 {
 // One atomic stores both dimensions so the renderer sees a consistent pair.
 std::atomic<u64> browserViewportSize{};
+SDL_Point browserDisplaySize{1280, 720};
 
 SDL_Point BrowserRenderSize(u64 viewport)
 {
@@ -39,11 +40,19 @@ void TrackBrowserViewport()
         return;
     initialized = true;
 
+    u32 display[2]{};
     MAIN_THREAD_EM_ASM({
+        // Screen dimensions are in CSS pixels; the browser does not expose
+        // the display's actual hardware modes.
+        const dpr = window.devicePixelRatio || 1;
+        const index = $1 / 4;
+        HEAPU32[index] = Math.round((window.screen.width || window.innerWidth) * dpr);
+        HEAPU32[index + 1] = Math.round((window.screen.height || window.innerHeight) * dpr);
+
         const root = document.documentElement;
         if (!root.classList.contains('game-only'))
             return;
-        const index = $0 / 8;
+        const viewportIndex = $0 / 8;
         let lastSize = 0n;
         let publishedSize = 0n;
         const measure = (initial = false) => {
@@ -54,7 +63,7 @@ void TrackBrowserViewport()
             const size = BigInt(width) << 32n | BigInt(height);
             if (size !== publishedSize && (initial || size === lastSize)) {
                 growMemViews();
-                Atomics.store(HEAPU64, index, size);
+                Atomics.store(HEAPU64, viewportIndex, size);
                 publishedSize = size;
             }
             lastSize = size;
@@ -63,9 +72,20 @@ void TrackBrowserViewport()
         // event. Wait for two equal samples before resetting GPU targets.
         measure(true);
         setInterval(measure, 150);
-    }, double(uintptr_t(&browserViewportSize)));
+    }, double(uintptr_t(&browserViewportSize)), double(uintptr_t(display)));
+    if (display[0] >= 640 && display[1] >= 480)
+    {
+        const double scale = std::min(1.0, 4096.0 / std::max(display[0], display[1]));
+        browserDisplaySize = {int(std::lround(display[0] * scale)), int(std::lround(display[1] * scale))};
+    }
 }
 } // namespace
+
+SDL_Point GetBrowserDisplaySize()
+{
+    TrackBrowserViewport();
+    return browserDisplaySize;
+}
 
 void UpdateBrowserViewport(CRenderDevice& device)
 {
@@ -280,12 +300,13 @@ void CRenderDevice::SelectResolution(const bool windowed)
     psDeviceMode.Monitor = 0;
     psDeviceMode.WindowStyle = rsWindowedBorderless;
     psDeviceMode.RefreshRate = 0;
+    const auto display = GetBrowserDisplaySize();
     if (psDeviceMode.Width == 0 || psDeviceMode.Height == 0)
     {
-        psDeviceMode.Width = 1280;
-        psDeviceMode.Height = 720;
+        // Start at up to 1080 lines, in the display's aspect ratio.
+        psDeviceMode.Height = std::max(480, std::min(1080, display.y));
+        psDeviceMode.Width = std::max(640, int(std::lround(double(display.x) * psDeviceMode.Height / display.y)));
     }
-    TrackBrowserViewport();
     const auto size = BrowserRenderSize(browserViewportSize.load(std::memory_order_relaxed));
     dwWidth = size.x;
     dwHeight = size.y;

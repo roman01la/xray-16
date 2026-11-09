@@ -51,6 +51,12 @@
 	<string id="renderer_rgl">
 		<text>Enhanced full dyn. lighting (OpenGL)</text>
 	</string>
+	<string id="ui_mm_saved_game_unnamed">
+		<text>Unnamed save</text>
+	</string>
+	<string id="ui_mm_saved_game_world_time">
+		<text>In-game time</text>
+	</string>
 	<string id="ui_mm_window_mode">
 		<text>Window mode</text>
 	</string>

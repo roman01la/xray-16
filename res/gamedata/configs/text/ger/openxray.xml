@@ -45,6 +45,12 @@
 	<string id="renderer_rgl">
 		<text>Erw. Volldyn. Beleuchtung (OpenGL)</text>
 	</string>
+	<string id="ui_mm_saved_game_unnamed">
+		<text>Unbenannter Spielstand</text>
+	</string>
+	<string id="ui_mm_saved_game_world_time">
+		<text>Spielzeit</text>
+	</string>
 	<string id="ui_mm_window_mode">
 		<text>Window mode</text>
 	</string>

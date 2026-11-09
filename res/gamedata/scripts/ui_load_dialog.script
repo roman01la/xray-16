@@ -1,5 +1,9 @@
 saved_game_extension	= ".scop"
 
+function display_save_name(filename)
+	return browser_save_label and browser_save_label(filename) or filename
+end
+
 class "load_item" (CUIListBoxItem)
 
 function load_item:__init(height) super(height)
@@ -136,48 +140,26 @@ function delete_save_game(filename)
 
 end
 
-function AddTimeDigit(str, dig)
-	if (dig > 9) then
-		str = str .. dig
-	else
-		str = str .. "0" .. dig
-	end
-
-	return str
-
-end
-
 function file_data(fname)
 	local f = getFS();
 	local flist = f:file_list_open_ex("$game_saves$",bit_or(FS.FS_ListFiles,FS.FS_RootOnly) , fname .. saved_game_extension)
 	local f_cnt = flist:Size()
 
 	if f_cnt > 0 then
-		local file		=	flist:GetAt(0)
 		local sg = CSavedGameWrapper(fname)
 
 		local y,m,d,h,min,sec,ms = 0,0,0,0,0,0,0
 		y,m,d,h,min,sec,ms = sg:game_time():get(y,m,d,h,min,sec,ms)
 
 
-		local date_time = ""
-
-		date_time = AddTimeDigit(date_time, h)
-		date_time = date_time .. ":"
-		date_time = AddTimeDigit(date_time, min)
-		date_time = date_time .. " "
-		date_time = AddTimeDigit(date_time, m)
-		date_time = date_time .. "/"
-		date_time = AddTimeDigit(date_time, d)
-		date_time = date_time .. "/"
-
-		date_time = date_time .. y
-
-
-		--string.format("[%d/%d/%d %d]",m,d,h,min,y)
+		local date_time = string.format("%02d:%02d %02d/%02d/%04d", h, min, d, m, y)
+		local game_time_label = game.translate_string("ui_mm_saved_game_world_time")
+		if game_time_label == "ui_mm_saved_game_world_time" then
+			game_time_label = game.translate_string("ui_inv_time")
+		end
 		local health = string.format("\\n%s %d%s", game.translate_string("st_ui_health_sensor"),sg:actor_health()*100,"%")
 
-		return game.translate_string("st_level") .. ": " .. game.translate_string(sg:level_name()) .. "\\n" .. game.translate_string("ui_inv_time")..": " .. date_time .. health
+		return game.translate_string("st_level") .. ": " .. game.translate_string(sg:level_name()) .. "\\n" .. game_time_label .. ": " .. date_time .. health
 	else
 		return "no file data"
 	end
@@ -198,19 +180,19 @@ function load_dialog:OnListItemClicked()
 
 		return
 	end
-	local item_text				= item.fn:GetText()
-	self.file_caption:SetText	(item_text)
+	local filename = item.file_name
+	self.file_caption:SetText(display_save_name(filename))
 	self.file_caption:SetEllipsis(true)
-	self.file_data:SetText		(file_data(item_text))
+	self.file_data:SetText(file_data(filename))
 
-	if file_exist(item_text .. saved_game_extension) ~= true then
+	if file_exist(filename .. saved_game_extension) ~= true then
 		self.list_box:RemoveItem(item)
 		return
 	end
 
 	local r = self.picture:GetTextureRect()
-	if file_exist(item_text .. ".dds") then
-		self.picture:InitTexture(item_text)
+	if file_exist(filename .. ".dds") then
+		self.picture:InitTexture(filename)
 	else
 		self.picture:InitTexture("ui\\ui_noise")
 	end
@@ -229,7 +211,7 @@ function load_dialog:OnMsgYes()
 	if self.msgbox_id == 1 then
 		local item  = self.list_box:GetItemByIndex(index)
 
-		local fname = item.fn:GetText()
+		local fname = item.file_name
 
 		delete_save_game	(fname)
 
@@ -254,7 +236,7 @@ function load_dialog:load_game_internal()
 
 	local item  = self.list_box:GetItemByIndex(index)
 
-	local fname = item.fn:GetText()
+	local fname = item.file_name
 
 	if (alife() == nil) then
 		console:execute	("disconnect")
@@ -276,7 +258,7 @@ function load_dialog:OnButton_load_clicked()
 		return
 	end
 
-	local fname		= item.fn:GetText()
+	local fname		= item.file_name
 
 	if ( not valid_saved_game(fname) ) then
 		self.msgbox_id						= 0
@@ -343,7 +325,8 @@ function load_dialog:AddItemToList(file_name, date_time)
 
 	_itm.fn:SetWndPos	(vector2():set(0,0))
 	_itm.fn:SetWndSize	(self.file_item_fn_sz)
-	_itm.fn:SetText		(file_name)
+	_itm.file_name = file_name
+	_itm.fn:SetText(display_save_name(file_name))
 
 	_itm.fage			= _itm:AddTextField(date_time, self.file_item_fd_sz.x)
 	_itm.fage:SetFont	(GetFontLetterica16Russian())

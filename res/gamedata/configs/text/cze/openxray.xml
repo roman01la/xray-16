@@ -51,6 +51,12 @@
 	<string id="renderer_rgl">
 		<text>Pokroèilé dynamické osvìtlení (OpenGL)</text>
 	</string>
+	<string id="ui_mm_saved_game_unnamed">
+		<text>Nepojmenovaná pozice</text>
+	</string>
+	<string id="ui_mm_saved_game_world_time">
+		<text>Herní èas</text>
+	</string>
 	<string id="ui_mm_window_mode">
 		<text>Režim okna</text>
 	</string>

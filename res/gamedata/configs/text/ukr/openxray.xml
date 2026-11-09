@@ -51,6 +51,12 @@
 	<string id="renderer_rgl">
 		<text>Покр. повне освітлення (OpenGL)</text>
 	</string>
+	<string id="ui_mm_saved_game_unnamed">
+		<text>Збереження без назви</text>
+	</string>
+	<string id="ui_mm_saved_game_world_time">
+		<text>Ігровий час</text>
+	</string>
 	<string id="ui_mm_window_mode">
 		<text>Режим вікна</text>
 	</string>

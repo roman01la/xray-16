@@ -46,6 +46,10 @@ public:
 
     shared_str GetCurrentLanguage() const;
     shared_str GetCurrentFontPrefix() const;
+#ifdef XR_PLATFORM_WEB
+    xr_string ConvertBrowserSaveText(pcstr text, bool toUtf8) const;
+    xr_string BrowserSaveLabel(pcstr filename) const;
+#endif
     shared_str GetCurrency() const;
     xr_token* GetLanguagesToken() const;
 

@@ -1,5 +1,13 @@
 class "options_dialog" (CUIScriptWnd)
 
+local function renderer_mode(dialog)
+	if dialog.combo_renderer then
+		return dialog.combo_renderer:CurrentID()
+	end
+	-- WebGPU uses the renderer_r3 token for advanced graphics options.
+	return 4
+end
+
 function options_dialog:__init() super()
 
 	self.m_preconditions	= {}
@@ -91,6 +99,9 @@ function options_dialog:InitControls()
 end
 
 function options_dialog:SetCurrentValues()
+	if is_browser_build and is_browser_build() then
+		get_console():execute("browser_window_mode discard")
+	end
 	local opt = COptionsManager()
 
 	opt:SetCurrentValues("mm_opt_video_preset")
@@ -125,7 +136,7 @@ end
 
 function options_dialog:UpdateDependControls()
 	self.scroll_v:Clear()
-	local _current_id = self.combo_renderer:CurrentID()
+	local _current_id = renderer_mode(self)
 
 	for i,j in pairs(self.m_preconditions) do
 		if(j.func(_current_id)) then
@@ -182,7 +193,9 @@ function options_dialog:InitCallBacks()
 	self:AddCallback("btn_simply_graphic",	ui_events.BUTTON_CLICKED,	self.OnSimplyGraphic,		self)
 	self:AddCallback("btn_keyb_default",	ui_events.BUTTON_CLICKED,	self.OnBtnKeybDefault,		self)
 	self:AddCallback("btn_check_updates",	ui_events.BUTTON_CLICKED,	self.OnBtnCheckUpdates,		self)
-	self:AddCallback("combo_renderer",		ui_events.LIST_ITEM_SELECT,	self.UpdateDependControls,	self)
+	if self.combo_renderer then
+		self:AddCallback("combo_renderer", ui_events.LIST_ITEM_SELECT, self.UpdateDependControls, self)
+	end
 	self:AddCallback("btn_cancel_download",	ui_events.BUTTON_CLICKED,	self.OnBtn_CancelDownload,	self)
 	self:AddCallback("tab_ao_opt",			ui_events.TAB_CHANGED,		self.OnAOOptionChange,		self)
 	self:AddCallback("check_simple_pickup",	ui_events.BUTTON_CLICKED,	self.OnPickupOptionChange,	self)
@@ -296,7 +309,7 @@ end
 
 function options_dialog:OnAOOptionChange()
 	local ao_opt_id = self.tab_ao_opt:GetActiveId()
-	local render_id = self.combo_renderer:CurrentID()
+	local render_id = renderer_mode(self)
 	if(render_id>=4) and (ao_opt_id=="hdao") then
 		self.combo_ssao:enable_id(4)
 	else
@@ -412,6 +425,9 @@ function options_dialog:OnBtn_CancelDownload()
 end
 
 function options_dialog:OnApplyChanges()
+	if is_browser_build and is_browser_build() then
+		get_console():execute("browser_window_mode apply")
+	end
     self.timer = nil
     _G.b_discard_settings_shown = false
 

@@ -167,7 +167,7 @@ async function seedGraphicsDefaults(app) {
   } catch (error) {
     if (error.name !== "NotFoundError") throw error;
   }
-  await writeBlob(app, "user.ltx", new Blob(["_preset Default\nvid_mode 1920x1080\n"]));
+  await writeBlob(app, "user.ltx", new Blob(["_preset Default\n"]));
 }
 
 async function syncEngineData(root, appDirectory = '_appdata_') {
@@ -221,6 +221,24 @@ async function syncEngineData(root, appDirectory = '_appdata_') {
   else await prepareConfig();
 }
 
+// WasmFS remembers POSIX timestamps only for the lifetime of its mount.
+async function readSaveTimes(root) {
+  const game = await gameDir(root);
+  const app = await game.getDirectoryHandle("_appdata_");
+  const saves = await app.getDirectoryHandle("savedgames");
+  const entries = [];
+  for await (const [name, handle] of saves.entries()) {
+    if (handle.kind !== "file" || !name.endsWith(".scop")) continue;
+    try {
+      const {lastModified} = await handle.getFile();
+      entries.push(`${Math.floor(lastModified / 1000)}\t/opfs/${root}/_appdata_/savedgames/${name}\0`);
+    } catch (error) {
+      if (error.name !== "NotFoundError") console.warn("Could not read save timestamp", name, error);
+    }
+  }
+  return new TextEncoder().encode(entries.join(""));
+}
+
 async function status() {
   const roots = [];
   for await (const [name, handle] of (
@@ -254,7 +272,8 @@ onmessage = async (e) => {
             postMessage({ id, type: "stream-progress", detail }),
           );
         }
-        postMessage({ id, type: "done", streaming });
+        const saveTimes = e.data.includeSaveTimes ? await readSaveTimes(e.data.root) : undefined;
+        postMessage({ id, type: "done", streaming, saveTimes }, saveTimes ? [saveTimes.buffer] : []);
         break;
       }
     }

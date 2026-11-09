@@ -39,6 +39,7 @@ void dxFontRender::OnRender(CGameFont& owner)
         owner.uFlags |= CGameFont::fsValid;
     }
 
+    const float glyphScale = owner.GlyphScale();
     for (u32 i = 0; i < owner.strings.size();)
     {
         // calculate first-fit
@@ -130,13 +131,13 @@ void dxFontRender::OnRender(CGameFont& owner)
                             for (size_t k = 0; k < bindingLen; ++k)
                             {
                                 const Fvector l = owner.GetCharTC(wideBinding[1 + k]);
-                                ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j);
+                                ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j, glyphScale);
                             }
                         }
                         else
                         {
                             const Fvector l = owner.GetCharTC(wsStr[1 + j]);
-                            ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j);
+                            ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j, glyphScale);
                         }
                     }
                     else
@@ -152,14 +153,14 @@ void dxFontRender::OnRender(CGameFont& owner)
                             while (binding[0])
                             {
                                 const Fvector l = owner.GetCharTC((u16)(u8)binding[0]);
-                                ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j);
+                                ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j, glyphScale);
                                 ++binding;
                             }
                         }
                         else
                         {
                             const Fvector l = owner.GetCharTC((u16)(u8)PS.string[j]);
-                            ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j);
+                            ImprintChar(l, owner, v, X, Y2, clr2, Y, clr, wsStr, j, glyphScale);
                         }
                     }
                 }
@@ -177,9 +178,9 @@ void dxFontRender::OnRender(CGameFont& owner)
     }
 }
 
-inline void dxFontRender::ImprintChar(Fvector l, const CGameFont& owner, FVF::TL*& v, float& X, float Y2, u32 clr2, float Y, u32 clr, xr_wide_char* wsStr, int j)
+inline void dxFontRender::ImprintChar(Fvector l, const CGameFont& owner, FVF::TL*& v, float& X, float Y2, u32 clr2, float Y, u32 clr, xr_wide_char* wsStr, int j, float glyphScale)
 {
-    float scw = l.z * g_current_font_scale.x;
+    float scw = l.z * g_current_font_scale.x * glyphScale;
 
     float fTCWidth = l.z / owner.vTS.x;
 
@@ -202,9 +203,9 @@ inline void dxFontRender::ImprintChar(Fvector l, const CGameFont& owner, FVF::TL
     X += scw * owner.vInterval.x;
     if (owner.IsMultibyte())
     {
-        X -= 2;
+        X -= 2 * glyphScale;
         if (IsNeedSpaceCharacter(wsStr[1 + j]))
-            X += owner.fXStep;
+            X += owner.fXStep * glyphScale;
     }
 }
 } // namespace xray::render::RENDER_NAMESPACE

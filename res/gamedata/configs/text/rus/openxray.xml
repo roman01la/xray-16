@@ -51,6 +51,12 @@
 	<string id="renderer_rgl">
 		<text>Ул. полное освещение (OpenGL)</text>
 	</string>
+	<string id="ui_mm_saved_game_unnamed">
+		<text>Сохранение без имени</text>
+	</string>
+	<string id="ui_mm_saved_game_world_time">
+		<text>Игровое время</text>
+	</string>
 	<string id="ui_mm_window_mode">
 		<text>Режим окна</text>
 	</string>

@@ -29,6 +29,7 @@ function save_dialog:__finalize()
 end
 
 function save_dialog:FillList()
+	self.selected_filename = nil
 	self.list_box:RemoveAll()
 	local flist = getFS():file_list_open_ex("$game_saves$",FS.FS_ListFiles,"*"..saved_game_extension)
 	local f_cnt = flist:Size()
@@ -108,14 +109,16 @@ function save_dialog:InitCallBacks()
 end
 
 function save_dialog:OnListItemClicked()
+	self.selected_filename = nil
 	if self.list_box:GetSize()==0 then return end
 
 	local item			= self.list_box:GetSelectedItem()
 
 	if item==nil then return end
 
-	local item_text			= item.fn:GetText()
-	self.editbox:SetText	(item_text)
+	self.selected_filename = item.file_name
+	self.editbox:SetText(ui_load_dialog.display_save_name(item.file_name))
+	self.selected_name = self.editbox:GetText()
 end
 
 function save_dialog:OnMsgYes()
@@ -150,7 +153,7 @@ function save_dialog:delete_selected_file()
 	if index == -1 then return end
 
 	local item		= self.list_box:GetItemByIndex(index)
-	local filename	= item.fn:GetText()
+	local filename = item.file_name
 
 	ui_load_dialog.delete_save_game(filename)
 
@@ -170,6 +173,13 @@ function save_dialog:OnButton_ok_clicked()
 		self.message_box:InitMessageBox("message_box_empty_file_name")
 		self.message_box:ShowDialog(true)
 		return
+	end
+
+	-- Keep the file identifier separate from the text rendered in the list.
+	if self.selected_filename and self.new_save == self.selected_name then
+		self.new_save = self.selected_filename
+	elseif browser_save_filename then
+		self.new_save = browser_save_filename(self.new_save)
 	end
 
 	-- check for match name
@@ -222,7 +232,8 @@ function save_dialog:AddItemToList(file_name, date_time)
 
 	_itm.fn:SetWndPos	(vector2():set(0,0))
 	_itm.fn:SetWndSize	(self.file_item_fn_sz)
-	_itm.fn:SetText		(file_name)
+	_itm.file_name = file_name
+	_itm.fn:SetText(ui_load_dialog.display_save_name(file_name))
 
 	_itm.fage			= _itm:AddTextField(date_time, self.file_item_fd_sz.x)
 	_itm.fage:SetFont	(GetFontLetterica16Russian())

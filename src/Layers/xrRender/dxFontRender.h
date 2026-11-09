@@ -16,7 +16,7 @@ public:
     void OnRender(CGameFont& owner) override;
 
 private:
-    inline void ImprintChar(Fvector l, const CGameFont& owner, FVF::TL*& v, float& X, float Y2, u32 clr2, float Y, u32 clr, xr_wide_char* wsStr, int j);
+    inline void ImprintChar(Fvector l, const CGameFont& owner, FVF::TL*& v, float& X, float Y2, u32 clr2, float Y, u32 clr, xr_wide_char* wsStr, int j, float glyphScale);
 
 private:
     ref_shader pShader;

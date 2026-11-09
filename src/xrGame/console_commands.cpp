@@ -653,6 +653,15 @@ public:
 
         string_path S, S1;
         S[0] = 0;
+#ifdef XR_PLATFORM_WEB
+        const auto browserFilename = StringTable().ConvertBrowserSaveText(args, true);
+        if (browserFilename.size() >= MAX_PATH)
+        {
+            Log("! Save failed: the file name is too long");
+            return;
+        }
+        args = browserFilename.c_str();
+#endif
         strncpy_s(S, sizeof(S), args, MAX_PATH - 1);
 
 #ifdef DEBUG
@@ -689,7 +698,12 @@ public:
         StaticDrawableWrapper* _s = CurrentGameUI()->AddCustomStatic("game_saved", true, compat ? 3.0f : -1.0f);
 
         pstr save_name;
+#ifdef XR_PLATFORM_WEB
+        const auto browserLabel = StringTable().BrowserSaveLabel(S);
+        STRCONCAT(save_name, StringTable().translate("st_game_saved").c_str(), ": ", browserLabel.c_str());
+#else
         STRCONCAT(save_name, StringTable().translate("st_game_saved").c_str(), ": ", S);
+#endif
         _s->wnd()->TextItemControl()->SetText(save_name);
 
         xr_strcat(S, ".dds");

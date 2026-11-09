@@ -6,6 +6,10 @@
 #include "xrCore/XML/XMLDocument.hpp"
 #include "xrCore/Threading/ParallelForEach.hpp"
 
+#ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
+#endif
+
 constexpr pcstr OPENXRAY_XML = "openxray.xml";
 
 CStringTable& StringTable()
@@ -198,6 +202,66 @@ shared_str CStringTable::GetCurrentFontPrefix() const
 {
     return pData ? pData->m_fontPrefix : nullptr;
 }
+
+#ifdef XR_PLATFORM_WEB
+xr_string CStringTable::ConvertBrowserSaveText(pcstr text, bool toUtf8) const
+{
+    const size_t length = xr_strlen(text);
+    if (std::all_of(text, text + length, [](unsigned char c) { return c < 0x80; }))
+        return text;
+
+    const auto prefix = GetCurrentFontPrefix();
+    int codePage = 1251;
+    if (prefix && xr_strcmp(prefix.c_str(), "_west") == 0)
+        codePage = 1252;
+    else if (prefix && xr_strcmp(prefix.c_str(), "_cent") == 0)
+        codePage = 1250;
+
+    // The UI uses the font's legacy code page, while OPFS requires UTF-8
+    // filenames. Convert only the names that cross that boundary.
+    xr_string result(length * 3, '\0');
+    const int written = EM_ASM_INT({
+        growMemViews();
+        // Chrome's decoder requires an ordinary buffer rather than a view
+        // into the shared WebAssembly heap.
+        const source = HEAPU8.slice($0, $0 + $1);
+        const legacy = new TextDecoder('windows-' + $4);
+        if ($3) {
+            try {
+                new TextDecoder('utf-8', {fatal: true}).decode(source);
+                HEAPU8.set(source, $2);
+                return source.length;
+            } catch {
+                const bytes = new TextEncoder().encode(legacy.decode(source));
+                HEAPU8.set(bytes, $2);
+                return bytes.length;
+            }
+        }
+        const highCharacters = legacy.decode(Uint8Array.from({length: 128}, (_, i) => i + 128));
+        let offset = 0;
+        for (const character of new TextDecoder().decode(source)) {
+            const code = character.codePointAt(0);
+            const high = highCharacters.indexOf(character);
+            HEAPU8[$2 + offset++] = code < 128 ? code : high < 0 ? 63 : 128 + high;
+        }
+        return offset;
+    }, double(uintptr_t(text)), double(length), double(uintptr_t(result.data())), int(toUtf8), codePage);
+    result.resize(written);
+    return result;
+}
+
+xr_string CStringTable::BrowserSaveLabel(pcstr filename) const
+{
+    // Old browser builds stored replacement characters after losing the
+    // original name. The file can still be loaded using its exact identifier.
+    if (std::strstr(filename, "\xEF\xBF\xBD"))
+    {
+        STRING_VALUE label;
+        return translate("ui_mm_saved_game_unnamed", label) ? label.c_str() : "Unnamed save";
+    }
+    return ConvertBrowserSaveText(filename, false);
+}
+#endif
 
 shared_str CStringTable::GetCurrency() const
 {

@@ -7,9 +7,8 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 function fixture(){
  const a=new Uint8Array(CHUNK_BYTES).fill(65),b=new Uint8Array(5).fill(66),c=new Uint8Array(CHUNK_BYTES).fill(67);
  const d={format:'xray-archive-v1',size:a.length+b.length,chunkBytes:CHUNK_BYTES,chunks:[hash(a),hash(b)]};
- const stored=new Map(),requests=[];let fail=false,corrupt=false;
- const cache={match:async k=>stored.get(k)?.clone(),put:async(k,v)=>stored.set(k,v),delete:async k=>stored.delete(k)};
- const reader=new ChunkReader({budget:CHUNK_BYTES,cacheStorage:{open:async()=>cache},digest:async b=>hash(b),fetcher:async url=>{
+ const cache=memoryStore(),stored=cache.items,requests=[];let fail=false,corrupt=false;
+ const reader=new ChunkReader({budget:CHUNK_BYTES,openStore:async()=>cache,digest:async b=>hash(b),fetcher:async url=>{
   requests.push(url);if(url.endsWith('.json'))return Response.json(d);
   if(fail)return new Response('',{status:503});
   return new Response(corrupt?c:url.includes(hash(a))?a:b);
@@ -31,11 +30,11 @@ test('missing and corrupt chunks fail closed and can retry',async()=>{
  const corrupt=fixture();corrupt.corrupt();await assert.rejects(corrupt.reader.read(url,0,1,()=>assert.fail()),/integrity/);assert.equal(corrupt.reader.hot.size,0);assert.equal(corrupt.stored.size,0);
 });
 test('persistent cache corruption is discarded and fetched again',async()=>{
- const f=fixture();f.stored.set('https://test/pack/chunks/'+hash(f.b)+'.bin',new Response(new Uint8Array(5)));
+ const f=fixture();f.stored.set(hash(f.b),new Blob([new Uint8Array(5)]));
  let output;await f.reader.read(url,CHUNK_BYTES,1,b=>output=b[0]);assert.equal(output,66);assert.equal(f.reader.stats.networkChunks,1);
 });
 test('concurrent requests share download and quota failure preserves read',async()=>{
- const f=fixture();f.reader.cacheStorage={open:async()=>{throw Error('quota');}};
+ const f=fixture();f.reader.openStore=async()=>{throw Error('quota');};
  await Promise.all([f.reader.read(url,0,1,()=>{}),f.reader.read(url,1,1,()=>{})]);assert.equal(f.reader.stats.networkChunks,1);
 });
 test('manifest validation rejects writes, traversal, duplicate paths and missing levels',()=>{
@@ -51,7 +50,7 @@ test('streaming config preserves writable save and engine override paths',()=>{
 test('compact archive index reads do not download payload chunks',async()=>{
  const index=Uint8Array.from([1,2,3,4,5,6,7,8]),digest=hash(index),requests=[];
  const descriptor={format:'xray-archive-v1',size:CHUNK_BYTES*40,chunkBytes:CHUNK_BYTES,chunks:Array(40).fill('a'.repeat(64)),bootstrap:[{offset:CHUNK_BYTES*39+10,size:8,hash:digest}]};
- const reader=new ChunkReader({cacheStorage:null,digest:async b=>hash(b),fetcher:async url=>{requests.push(url);if(url.endsWith('.json'))return Response.json(descriptor);assert.ok(url.endsWith(digest+'.bin'));return new Response(index);}});
+ const reader=new ChunkReader({openStore:async()=>null,digest:async b=>hash(b),fetcher:async url=>{requests.push(url);if(url.endsWith('.json'))return Response.json(descriptor);assert.ok(url.endsWith(digest+'.bin'));return new Response(index);}});
  const output=[];await reader.read(url,CHUNK_BYTES*39+12,4,b=>output.push(...b));assert.deepEqual(output,[3,4,5,6]);assert.equal(reader.stats.downloadedBytes,8);assert.equal(requests.length,2);
 });
 test('bad metadata and invalid ranges fail before payload allocation',async()=>{
@@ -61,7 +60,7 @@ test('bad metadata and invalid ranges fail before payload allocation',async()=>{
 test('texture metadata sharing one bootstrap blob preserves archive offsets',async()=>{
  const bundle=Uint8Array.from([10,11,12,20,21]),digest=hash(bundle),requests=[];
  const descriptor={format:'xray-archive-v1',size:CHUNK_BYTES*2,chunkBytes:CHUNK_BYTES,chunks:['a'.repeat(64),'b'.repeat(64)],bootstrap:[{offset:100,size:3,hash:digest,chunkOffset:0,chunkSize:5},{offset:CHUNK_BYTES+100,size:2,hash:digest,chunkOffset:3,chunkSize:5}]};
- const reader=new ChunkReader({cacheStorage:null,digest:async b=>hash(b),fetcher:async url=>{requests.push(url);return url.endsWith('.json')?Response.json(descriptor):new Response(bundle);}});
+ const reader=new ChunkReader({openStore:async()=>null,digest:async b=>hash(b),fetcher:async url=>{requests.push(url);return url.endsWith('.json')?Response.json(descriptor):new Response(bundle);}});
  const output=[];await reader.read(url,101,2,b=>output.push(...b));await reader.read(url,CHUNK_BYTES+100,2,b=>output.push(...b));assert.deepEqual(output,[11,12,20,21]);assert.equal(reader.stats.downloadedBytes,5);assert.equal(requests.length,2);
 });
 test('archive metadata parser selects .thm entries and rejects malformed ranges',async()=>{
@@ -71,15 +70,16 @@ test('archive metadata parser selects .thm entries and rejects malformed ranges'
  assert.deepEqual(textureMetadataEntries(table,1000),[{offset:100,size:20}]);assert.throws(()=>textureMetadataEntries(table.subarray(0,-1),1000),/table/);assert.throws(()=>textureMetadataEntries(table,110),/range/);
 });
 
-function updateCache(){
+function memoryStore(){
  const items=new Map();
- return {items,async open(){return {match:async key=>items.get(key)?.clone(),put:async(key,response)=>items.set(key,response.clone()),delete:async key=>items.delete(key),keys:async()=>[...items.keys()].map(url=>({url}))};}};
+ return {items,async get(key){return items.get(key);},async put(key,bytes){items.set(key,new Blob([bytes]));},
+  async handle(key){const file=items.get(key);return file?{getFile:async()=>file}:null;}};
 }
 test('immutable release update downloads only changed chunks and rollback reuses old bytes',async()=>{
  const shared=new Uint8Array(CHUNK_BYTES).fill(7),old=Uint8Array.from([1,2,3,4,5]),updated=Uint8Array.from([1,2,9,4,5]);
- const cacheStorage=updateCache(),requests=[],chunks=new Map([shared,old,updated].map(b=>[hash(b),b]));
+ const store=memoryStore(),requests=[],chunks=new Map([shared,old,updated].map(b=>[hash(b),b]));
  const versions={v1:[hash(shared),hash(old)],v2:[hash(shared),hash(updated)]};
- const make=()=>new ChunkReader({cacheStorage,budget:0,digest:async b=>hash(b),fetcher:async url=>{
+ const make=()=>new ChunkReader({openStore:async()=>store,budget:0,digest:async b=>hash(b),fetcher:async url=>{
   requests.push(url);
   if(url.endsWith('.json')){const version=new URL(url).pathname.split('/')[2];return Response.json({format:'xray-archive-v1',size:shared.length+5,chunkBytes:CHUNK_BYTES,chunks:versions[version]});}
   const key=url.split('/').pop().replace('.bin','');assert.ok(chunks.has(key));return new Response(chunks.get(key));
@@ -91,52 +91,44 @@ test('immutable release update downloads only changed chunks and rollback reuses
  assert.equal(requests.filter(s=>s.endsWith('.bin')).length,3);
  assert.equal(requests.filter(s=>s.endsWith('.json')).length,3); // release descriptors stay pinned, never cache-swapped
 });
-test('old release URL caches migrate after verification without redownloading payload',async()=>{
- const bytes=Uint8Array.from([8,9,10]),digest=hash(bytes),cacheStorage=updateCache();
- cacheStorage.items.set(`https://test/packs/old/chunks/${digest}.bin`,new Response(bytes));
- const reader=new ChunkReader({cacheStorage,digest:async b=>hash(b),fetcher:()=>assert.fail('cached payload must not download')});
- assert.deepEqual(await reader.chunk('https://test/packs/new/resources/configs.db',digest,3),bytes);
- assert.equal(reader.stats.cachedChunks,1);
- assert.ok(cacheStorage.items.has(`https://test/.xray-cache/game-chunks/${digest}.bin`));
-});
 test('corrupt shared update cache is repaired only for the requested chunk',async()=>{
- const bytes=Uint8Array.from([4,5,6]),digest=hash(bytes),cacheStorage=updateCache();let requests=0;
- const key=`https://test/.xray-cache/game-chunks/${digest}.bin`;cacheStorage.items.set(key,new Response(Uint8Array.from([4,0,6])));
- const reader=new ChunkReader({cacheStorage,digest:async b=>hash(b),fetcher:async url=>{requests++;assert.match(url,/packs\/v2\/chunks/);return new Response(bytes);}});
+ const bytes=Uint8Array.from([4,5,6]),digest=hash(bytes),store=memoryStore();let requests=0;
+ const key=digest;await store.put(key,Uint8Array.from([4,0,6]));
+ const reader=new ChunkReader({openStore:async()=>store,digest:async b=>hash(b),fetcher:async url=>{requests++;assert.match(url,/packs\/v2\/chunks/);return new Response(bytes);}});
  assert.deepEqual(await reader.chunk('https://test/packs/v2/resources/configs.db',digest,3),bytes);assert.equal(requests,1);
- assert.deepEqual(new Uint8Array(await cacheStorage.items.get(key).arrayBuffer()),bytes);
+ assert.deepEqual(new Uint8Array(await store.items.get(key).arrayBuffer()),bytes);
  await assert.rejects(reader.chunk('https://test/packs/v3/resources/configs.db',digest,2),/size conflict/);
 });
 
 test('download progress reports streamed bytes, completion and failures without changing data',async()=>{
  const bytes=new Uint8Array([1,2,3,4]),events=[];
- const reader=new ChunkReader({cacheStorage:null,onProgress:p=>events.push(p),digest:async b=>hash(b),fetcher:async()=>new Response(new ReadableStream({async start(controller){
+ const reader=new ChunkReader({openStore:async()=>null,onProgress:p=>events.push(p),digest:async b=>hash(b),fetcher:async()=>new Response(new ReadableStream({async start(controller){
   controller.enqueue(bytes.slice(0,2));await new Promise(resolve=>setTimeout(resolve,170));controller.enqueue(bytes.slice(2));controller.close();
  }}))});
  assert.deepEqual(await reader.chunk(url,hash(bytes),4),bytes);
  assert.ok(events.some(p=>p.active===1&&p.received===4&&p.total===4));
  assert.equal(events.at(-1).active,0);assert.equal(events.at(-1).downloadedBytes,4);
  const broken=[];
- const bad=new ChunkReader({cacheStorage:null,onProgress:p=>broken.push(p),fetcher:async()=>new Response(new Uint8Array(5))});
+ const bad=new ChunkReader({openStore:async()=>null,onProgress:p=>broken.push(p),fetcher:async()=>new Response(new Uint8Array(5))});
  await assert.rejects(bad.chunk(url,hash(bytes),4),/length mismatch/);
  assert.ok(broken.some(p=>p.error));assert.equal(broken.at(-1).active,0);assert.equal(broken.at(-1).downloadedBytes,0);
 });
 
-function packCache() {
+function packStores() {
   const stores=new Map();
-  return {stores,async open(name){
-    if(!stores.has(name))stores.set(name,updateCache());
-    return stores.get(name).open();
+  return {stores,async openStore(name){
+    if(!stores.has(name))stores.set(name,memoryStore());
+    return stores.get(name);
   }};
 }
 
 test('complete startup installation shares payloads across modes, pins metadata and stays offline during play',async()=>{
   const shared=Uint8Array.of(1,2),old=Uint8Array.of(3,4),updated=Uint8Array.of(5,6),bootstrap=Uint8Array.of(1);
   const chunks=new Map([shared,old,updated,bootstrap].map(bytes=>[hash(bytes),bytes]));
-  const cacheStorage=packCache(),requests=[],events=[];
+  const {openStore,stores}=packStores(),requests=[],events=[];
   const files=['resources/configs.db','levels/levels.db0','patches/game.db'];
   const archives=version=>files.map(path=>({url:`https://test/packs/${version}/${path}`,size:2}));
-  const options={cacheStorage,digest:async bytes=>hash(bytes),budget:0,fetcher:async url=>{
+  const options={openStore,digest:async bytes=>hash(bytes),budget:0,fetcher:async url=>{
     requests.push(url);
     const path=new URL(url).pathname;
     if(path.endsWith('.json')){
@@ -172,26 +164,32 @@ test('complete startup installation shares payloads across modes, pins metadata 
   assert.deepEqual(await read(singleplayer,archives('v1')[1].url,2),[3,4]);
   assert.equal((await install('v1')).stats.downloadedBytes,0);
   assert.equal(requests.filter(url=>url.endsWith('.bin')).length,4);
-  await cacheStorage.stores.get('xray-game-chunks-v1').items.delete(`https://test/.xray-cache/game-chunks/${hash(old)}.bin`);
+  stores.get('game-chunks').items.delete(hash(old));
   await assert.rejects(read(runtime(),archives('v1')[1].url,2),/Reload to repair/);
   await assert.rejects(read(runtime(),archives('unknown')[0].url,1),/metadata is missing/);
 });
 
-test('installed reads use exact disk blob ranges across chunks and bootstrap bundles',async()=>{
+test('installed reads use exact OPFS ranges across chunks and bootstrap bundles',async()=>{
   const a='a'.repeat(64),b='b'.repeat(64),bundle='c'.repeat(64),reads=[],matches=[];
   const d={format:'xray-archive-v1',size:CHUNK_BYTES+8,chunkBytes:CHUNK_BYTES,chunks:[a,b],
     bootstrap:[{offset:100,size:5,hash:bundle,chunkOffset:8,chunkSize:20}]};
   const sizes=new Map([[a,CHUNK_BYTES],[b,8],[bundle,20]]);
   const makeReader=()=>new ChunkReader({mode:'installed',fetcher:()=>assert.fail('gameplay fetch'),
-    digest:()=>assert.fail('gameplay digest'),cacheStorage:{open:async name=>({match:async key=>{
-      if(name==='xray-game-archives-v1')return Response.json(d);
-      const id=key.split('/').at(-1).slice(0,-4);matches.push(id);
-      return {arrayBuffer:()=>assert.fail('whole chunk materialized'),blob:async()=>({size:sizes.get(id),arrayBuffer:async()=>{
-        assert.equal(id,bundle);reads.push([id,0,sizes.get(id)]);return Uint8Array.from({length:sizes.get(id)},(_,i)=>i).buffer;
-      },slice(start,end){
-        reads.push([id,start,end]);return {arrayBuffer:async()=>new Uint8Array(end-start).fill(id.charCodeAt(0)).buffer};
-      }})};
-    }})}});
+    digest:()=>assert.fail('gameplay digest'),openStore:async name=>{
+      if(name==='game-archives')return {get:async()=>new Blob([JSON.stringify(d)])};
+      return {handle:async id=>{
+        matches.push(id);
+        return {async createSyncAccessHandle({mode}){
+          assert.equal(mode,'read-only');
+          return {getSize:()=>sizes.get(id),close(){},read(bytes,{at}){
+            reads.push([id,at,at+bytes.length]);
+            if(id===bundle)bytes.set(Uint8Array.from({length:bytes.length},(_,i)=>at+i));
+            else bytes.fill(id.charCodeAt(0));
+            return bytes.length;
+          }};
+        }};
+      }};
+    }});
   const reader=makeReader(),out=new Uint8Array(5);
   assert.equal(await reader.read(url,CHUNK_BYTES-3,5,(bytes,at)=>out.set(bytes,at)),5);
   assert.deepEqual([...out],[97,97,97,98,98]);
@@ -206,29 +204,29 @@ test('installed reads use exact disk blob ranges across chunks and bootstrap bun
 });
 
 test('a failed startup does not publish archive metadata and resumes verified chunks on retry',async()=>{
-  const good=Uint8Array.of(7),bad=Uint8Array.of(8),cacheStorage=packCache();
+  const good=Uint8Array.of(7),bad=Uint8Array.of(8),{openStore,stores}=packStores();
   const files=[{url:'https://test/pack/resources/configs.db',size:1},{url:'https://test/pack/levels/levels.db0',size:1}];
   let fail=true;
-  const options={cacheStorage,budget:0,mode:'install',digest:async bytes=>hash(bytes),fetcher:async url=>{
+  const options={openStore,budget:0,mode:'install',digest:async bytes=>hash(bytes),fetcher:async url=>{
     if(url.endsWith('.json'))return Response.json({format:'xray-archive-v1',size:1,chunkBytes:CHUNK_BYTES,chunks:[hash(url.includes('/resources/')?good:bad)]});
     if(url.includes(hash(good)))return new Response(good);
     return fail?new Response('',{status:503}):new Response(bad);
   }};
   await assert.rejects(new ChunkReader(options).install(files),/HTTP 503/);
-  assert.equal(cacheStorage.stores.get('xray-game-archives-v1').items.size,0);
-  assert.equal(cacheStorage.stores.get('xray-game-chunks-v1').items.size,1);
+  assert.equal(stores.get('game-archives').items.size,0);
+  assert.equal(stores.get('game-chunks').items.size,1);
   fail=false;
   const retry=new ChunkReader(options);
   await retry.install(files);
   assert.equal(retry.stats.networkChunks,1);
   assert.equal(retry.stats.cachedChunks,1);
-  assert.equal(cacheStorage.stores.get('xray-game-archives-v1').items.size,2);
-  const quota=packCache(),open=quota.open.bind(quota);
-  quota.open=async name=>{
+  assert.equal(stores.get('game-archives').items.size,2);
+  const quota=packStores(),open=quota.openStore;
+  quota.openStore=async name=>{
     const cache=await open(name);
-    if(name==='xray-game-chunks-v1')cache.put=()=>{throw new DOMException('full','QuotaExceededError');};
+    if(name==='game-chunks')cache.put=()=>{throw new DOMException('full','QuotaExceededError');};
     return cache;
   };
-  await assert.rejects(new ChunkReader({...options,cacheStorage:quota}).install(files),/not enough browser storage/);
-  assert.equal(quota.stores.get('xray-game-archives-v1').items.size,0);
+  await assert.rejects(new ChunkReader({...options,openStore:quota.openStore}).install(files),/not enough browser storage/);
+  assert.equal(quota.stores.get('game-archives').items.size,0);
 });

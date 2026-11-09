@@ -189,10 +189,10 @@ $("launch").onclick = async () => {
   $("pick").disabled = true;
   $("game").disabled = true;
   $("ingest-status").textContent = "syncing engine data...";
-  let streaming;
+  let streaming, saveTimes;
   try {
     const pack = streamURL && root === "stream-cop" ? new URL(streamURL, location.href).href : undefined;
-    ({ streaming } = await askWorker({ type: "sync-engine-data", root, pack }));
+    ({ streaming, saveTimes } = await askWorker({ type: "sync-engine-data", root, pack, includeSaveTimes: true }));
   } catch (e) {
     $("ingest-status").textContent = "engine data sync failed: " + e.message;
     print("engine data sync failed: " + e.message);
@@ -223,6 +223,7 @@ $("launch").onclick = async () => {
     await createModule({
       canvas,
       arguments: args,
+      xraySaveTimes: saveTimes,
       print: printArgs,
       printErr: printArgs,
     });
