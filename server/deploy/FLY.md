@@ -25,7 +25,7 @@ public access and confirmed permission to distribute the game assets.
   to the active release, with no-store caching.
 - This build uses browser-held portable save keys. Copy save key and Open save
   allow another browser to resume the same identity. Keep a copy before clearing
-  browser storage. The public Zaton alpha runs stock native A-Life for NPCs.
+  browser storage. Each public campaign map runs a stock native A-Life host.
 
 ## Persistent data
 
@@ -34,20 +34,21 @@ initializes owned directories then drops to uid/gid 10001. The gateway supervise
 Rust and X-Ray and forwards SIGTERM. Fly allows 25 seconds for shutdown.
 
 - `/data/zone/zone.sqlite`: durable player records and ownership (plus SQLite WAL).
-- `/data/collision`: private Zaton manifest and hash-named cform/gamemtl files.
-- `/data/alife/bin`: optimized native X-Ray runtime and its shared libraries.
-- `/data/alife/zaton`: private stock archives, engine overrides and persistent
-  native app data. Keep the native save, world fence and outbox together.
+- `/data/collision`: private collision manifests and hash-named files.
+  `/data/collision/campaign` also holds the five-map configuration and approved routes.
+- `/data/alife`: stock archives shared from Zaton and separate native app data for
+  each map. Keep each native save, world fence and outbox together.
 - `/data/web/blobs`: immutable decoded file bytes keyed by SHA-256.
 - `/data/web/manifests`: release history; `/data/web/active.json` is atomically
   replaced only after every referenced blob has been verified as present.
 
 The unified browser release uses one campaign asset pack. Its level archives
 contain Zaton, Jupiter, Pripyat, Jupiter Underground and Lab X8. The private
-`ZONE_COLLISION_MANIFEST` points to the geometry the Rust server simulates.
-The public multiplayer world is currently `zaton-static-v1`. Playing the
-other maps in multiplayer requires authoritative world instances and travel
-that carries the player's character state and inventory across maps.
+`ZONE_CAMPAIGN_CONFIG` points to the geometry and travel settings Rust uses for
+all five maps. Players enter at `zaton-static-v1`. The approved crossings lead
+through Jupiter and Jupiter Underground to Pripyat. The Lab X8 lift keeps its
+power and access-card checks. Regular multiplayer acquisition of the card remains
+open.
 
 The initial game payload is approximately 4.44 GiB, including the engine and
 all pack chunks. The browser installs the full pack at startup before opening
@@ -57,7 +58,7 @@ Engine overrides retain their existing per-file checks.
 Old release URL mappings remain available to running clients. Blob garbage
 collection is deliberately not automatic; check capacity before many updates.
 
-The native Zaton configuration uses two shared CPUs and 4 GiB of memory.
+The campaign configuration uses eight shared CPUs and 12 GiB of memory.
 Capacity testing at 200 players remains open. Dedicated IPv4 is $2/month plus Machine, volume
 and applicable bandwidth charges. Daily volume snapshots retain five days;
 application backup scheduling and target-host restore drills remain plan items.
@@ -69,14 +70,14 @@ publishing. Never put it in a URL, source file, browser module, or command argum
 Use the existing authenticated Fly CLI. From the repository root:
 
 ```sh
-build_context=$(python3 server/tools/stage-fly.py)
-flyctl deploy "$build_context" --config "$build_context/fly.toml" \
-  --app roman-stalker-wan --remote-only --ha=false --no-public-ips --yes
+flyctl deploy --config server/deploy/fly.toml --image "$campaign_image" \
+  --app roman-stalker-wan --ha=false --no-public-ips --yes
 ```
 
-The staging script constructs a small source-only context. Never send the main
-checkout as a remote Docker context: it contains private data and large builds.
-Only one Machine may own this world/database. Do not enable HA cloning casually.
+Use the verified campaign image containing Rust, the gateway and the native Linux
+runtime under `/opt/zone-native`. The staging script can construct the Rust and
+gateway source context when building a replacement. Only one Machine may own
+the campaign database and native checkpoints.
 
 Before deploying the survival configuration, take and verify an online SQLite
 backup. Install the stock-derived item catalog, authored stash export and
@@ -88,8 +89,8 @@ and outside the source-only build context. [Export commands](../MECHANICS.md)
 
 Upload the matching browser files before switching the server image. After the
 new gateway and Rust process pass health checks, activate the prepared frontend
-manifest. Use the manual test plan for the hosted Zaton alpha and the separate
-local campaign and native A-Life checks. [Manual test plan](../MECHANICS_TEST_PLAN.md)
+manifest. Use the manual test plan for the hosted campaign and isolated recovery
+checks. [Manual test plan](../MECHANICS_TEST_PLAN.md)
 
 ## Native A-Life
 
@@ -244,8 +245,9 @@ python3 server/tools/publish-web.py --unified --mode multiplayer \
 
 Single-player saves stay in the existing `stream-cop/_appdata_/savedgames`.
 Multiplayer keeps its isolated app-data directory and existing portable save key.
-Fresh single-player and multiplayer profiles use the Extreme preset and render
-at 1920×1080. Existing graphics settings stay in the player's configuration.
+Fresh single-player and multiplayer profiles use the middle graphics preset,
+called Default in X-Ray, and render at 1920×1080. Existing graphics settings
+stay in the player's configuration.
 Loading feedback reports files prepared, bytes downloaded/read from cache, and
 current-transfer progress, then yields to the rendered game.
 

@@ -167,7 +167,7 @@ async function seedGraphicsDefaults(app) {
   } catch (error) {
     if (error.name !== "NotFoundError") throw error;
   }
-  await writeBlob(app, "user.ltx", new Blob(["_preset Extreme\nvid_mode 1920x1080\n"]));
+  await writeBlob(app, "user.ltx", new Blob(["_preset Default\nvid_mode 1920x1080\n"]));
 }
 
 async function syncEngineData(root, appDirectory = '_appdata_') {

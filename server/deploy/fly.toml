@@ -14,17 +14,13 @@ kill_timeout = 25
   ZONE_DATABASE = "/data/zone/zone.sqlite"
   ZONE_MAX_PLAYERS = "200"
   ZONE_ASSET_ORIGIN = "https://roman-stalker-assets.t3.tigrisfiles.io"
-  ZONE_COLLISION_MANIFEST = "/data/collision/zaton.json"
+  ZONE_CAMPAIGN_CONFIG = "/data/collision/campaign/campaign.json"
   ZONE_ITEM_CATALOG = "/data/zone/game/catalog.json"
   ZONE_AUTHORED_LOOT = "/data/zone/game/authored-loot.json"
-  ZONE_LOOSE_LOOT = "/data/zone/game/loose-loot.json"
   ZONE_RELOAD_TIMINGS = "/data/zone/game/reload-timings.json"
-  ZONE_LADDERS = "/data/zone/game/ladders.json"
-  ZONE_ENVIRONMENT_FIELDS = "/data/zone/game/fields.json"
   ZONE_ARTEFACT_SITES = "/data/zone/game/artefact-sites.json"
-  ZONE_ALIFE_INTEREST_SOCKET = "/run/zone-alife/zaton"
-  ZONE_NATIVE_ALIFE_ROOT = "/data/alife/zaton"
-  ZONE_NATIVE_ALIFE_BIN = "/data/alife/bin/xr_3da"
+  ZONE_NATIVE_ALIFE_ROOT = "/data/alife"
+  ZONE_NATIVE_ALIFE_BIN = "/opt/zone-native/bin/xr_3da"
   RUST_LOG = "zone_server=info,str0m=warn"
   ZONE_PUBLIC_ADDR = "77.83.143.60:50000"
   ZONE_ORIGIN = "https://stalker-online.xyz"
@@ -56,5 +52,5 @@ kill_timeout = 25
 # Connectivity/recovery test sizing. Use dedicated CPUs for capacity claims.
 [[vm]]
   cpu_kind = "shared"
-  cpus = 2
-  memory = "4gb"
+  cpus = 8
+  memory = "12gb"

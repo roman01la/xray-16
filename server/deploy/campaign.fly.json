@@ -1,0 +1,45 @@
+{
+  "regions": [
+    {
+      "collision": "/data/collision/zaton.json",
+      "spawn": [87.599976, -6.55, 115],
+      "ladders": "/data/zone/game/ladders.json",
+      "looseLoot": "/data/zone/game/loose-loot.json",
+      "environmentFields": "/data/zone/game/fields.json",
+      "alifeSocket": "/run/zone-alife/zaton"
+    },
+    {
+      "collision": "jupiter.json",
+      "spawn": [-57.432891845703125, 3.5884768962860107, 195.27294921875],
+      "ladders": "/data/zone/game/ladders.json",
+      "environmentFields": "radiation-jupiter.json",
+      "alifeSocket": "/run/zone-alife/jupiter"
+    },
+    {
+      "collision": "pripyat.json",
+      "spawn": [144.8163604736328, 0.0043980032205581665, -172.23068237304688],
+      "ladders": "/data/zone/game/ladders.json",
+      "environmentFields": "radiation-pripyat.json",
+      "alifeSocket": "/run/zone-alife/pripyat"
+    },
+    {
+      "collision": "jupiter_underground.json",
+      "spawn": [-46.90910339355469, 8.10816478729248, 452.83489990234375],
+      "ladders": "/data/zone/game/ladders.json",
+      "environmentFields": "radiation-jupiter_underground.json",
+      "alifeSocket": "/run/zone-alife/jupiter_underground"
+    },
+    {
+      "collision": "labx8.json",
+      "spawn": [-78.0431900024414, -7.795438289642334, 100.48445892333984],
+      "ladders": "/data/zone/game/ladders.json",
+      "looseLoot": "loose-labx8.json",
+      "environmentFields": "radiation-labx8.json",
+      "alifeSocket": "/run/zone-alife/labx8"
+    }
+  ],
+  "travel": {
+    "export": "travel.json",
+    "approvals": "approvals.json"
+  }
+}
