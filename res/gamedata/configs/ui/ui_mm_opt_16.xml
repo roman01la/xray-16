@@ -364,6 +364,15 @@
             </output_wnd>
         </track_fps_limit>
 
+        <list_fps_limit x="144" y="5" width="160" height="20" list_length="5" always_show_scroll="0">
+            <options_item entry="rs_fps_limit_preset" group="mm_opt_video"/>
+            <list_font r="170" g="170" b="170" font="letterica16"/>
+            <text_color>
+                <e r="170" g="170" b="170"/>
+                <d r="70" g="70" b="70"/>
+            </text_color>
+        </list_fps_limit>
+
         <cap_fps_limit_in_menu x="16" y="3" width="108" height="24">
             <text r="170" g="170" b="170" font="letterica16" align="r" vert_align="c">ui_mm_fps_limit_in_menu</text>
         </cap_fps_limit_in_menu>

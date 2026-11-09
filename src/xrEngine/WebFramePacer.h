@@ -7,7 +7,7 @@ class CWebFramePacer
 {
 public:
     void SetVsyncPaced(bool paced);
-    void SetFrameLimit(double hz) { frameLimitHz = hz; }
+    void SetFrameLimit(int hz);
     bool IsFrameDue(double now);
 
 private:
@@ -29,7 +29,8 @@ private:
     bool lastTickRendered{};
     bool lastChangeDown{};
     double lastTick{};
-    double frameLimitHz{};
+    int frameLimitHz{60};
+    double frameLimitCredit{};
     u32 interval{ 1 };
     u32 refreshesSinceFrame{};
     u32 missFrames{};

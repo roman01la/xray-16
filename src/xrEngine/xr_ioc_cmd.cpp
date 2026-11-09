@@ -774,6 +774,47 @@ extern int ps_fps_limit;
 extern int ps_fps_limit_in_menu;
 #ifdef XR_PLATFORM_WEB
 extern int ps_vsync_interval;
+
+class CCC_WebFrameLimit final : public CCC_Token
+{
+    xr_token m_limits[6] = {{"30", 30}, {"60", 60}, {"100", 100}, {"120", 120}, {}, {}};
+    TStatus m_custom{};
+
+public:
+    explicit CCC_WebFrameLimit(pcstr name) : CCC_Token(name, nullptr, nullptr) {}
+
+    const xr_token* GetToken() noexcept override
+    {
+        auto* const custom = std::end(m_limits) - 2;
+        const auto current = std::find_if(std::begin(m_limits), custom, [](const xr_token& option)
+        {
+            return option.id == ps_fps_limit;
+        });
+        *custom = {};
+        if (current == custom)
+        {
+            GetStatus(m_custom);
+            *custom = {m_custom, ps_fps_limit};
+        }
+        return m_limits;
+    }
+
+    void Execute(pcstr args) override
+    {
+        for (auto option = GetToken(); option->name; ++option)
+        {
+            if (EQ(option->name, args))
+            {
+                ps_fps_limit = option->id;
+                return;
+            }
+        }
+        InvalidSyntax();
+    }
+
+    void GetStatus(TStatus& status) override { xr_itoa(ps_fps_limit, status, 10); }
+    void Save(IWriter*) override {} // rs_fps_limit owns the saved integer.
+};
 #endif
 
 void CCC_Register()
@@ -823,6 +864,7 @@ void CCC_Register()
     CMD4(CCC_Integer, "rs_fps_limit", &ps_fps_limit, 30, 501);
     CMD4(CCC_Integer, "rs_fps_limit_in_menu", &ps_fps_limit_in_menu, 30, 501);
 #ifdef XR_PLATFORM_WEB
+    CMD1(CCC_WebFrameLimit, "rs_fps_limit_preset");
     CMD4(CCC_Integer, "rs_vsync_interval", &ps_vsync_interval, 0, 4);
 #endif
     CMD3(CCC_Mask, "rs_always_active", &psDeviceFlags, rsAlwaysActive);

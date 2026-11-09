@@ -20,6 +20,9 @@ DeviceMode psDeviceMode =
 Flags32 psDeviceFlags =
 {
    rsDrawStatic | rsDrawDynamic | rsDrawDetails | rsDrawParticles | mtSound | mtNetwork
+#ifdef XR_PLATFORM_WEB
+   | rsVSync
+#endif
 };
 
 // textures

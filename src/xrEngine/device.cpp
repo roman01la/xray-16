@@ -30,7 +30,11 @@ ENGINE_API bool g_bRendering = false;
 ENGINE_API bool g_bBenchmark = false;
 string512 g_sBenchmarkName;
 
+#ifdef XR_PLATFORM_WEB
+int ps_fps_limit = 60;
+#else
 int ps_fps_limit = 501;
+#endif
 int ps_fps_limit_in_menu = 60;
 #ifdef XR_PLATFORM_WEB
 int ps_vsync_interval = 0;
@@ -67,6 +71,15 @@ void CWebFramePacer::SetVsyncPaced(bool paced)
     lastTick = 0;
     lastTickRendered = false;
     refreshesSinceFrame = 0;
+    frameLimitCredit = 0;
+}
+
+void CWebFramePacer::SetFrameLimit(int hz)
+{
+    if (frameLimitHz == hz)
+        return;
+    frameLimitHz = hz;
+    frameLimitCredit = 0;
 }
 
 bool CWebFramePacer::IsFrameDue(double now)
@@ -83,6 +96,7 @@ bool CWebFramePacer::IsFrameDue(double now)
     {
         refreshesSinceFrame = 0;
         missFrames = misses = spareFrames = 0;
+        frameLimitCredit = 0;
         lastTickRendered = true;
         return true;
     }
@@ -94,11 +108,15 @@ bool CWebFramePacer::IsFrameDue(double now)
 
     refreshesSinceFrame += refreshes;
     const u32 paced = ps_vsync_interval > 0 ? u32(ps_vsync_interval) : std::min(interval, maxInterval);
-    const u32 limited = frameLimitHz > 0 ? u32(1000.0 / (period * frameLimitHz) + 0.5) : 1;
-    const u32 target = std::max(paced, limited);
-    lastTickRendered = refreshesSinceFrame >= target;
+    const double refreshesPerFrame = std::max(1.0, 1000.0 / (period * frameLimitHz));
+    // Carry the fractional refresh forward for limits such as 100 on 120 Hz.
+    frameLimitCredit = std::min(frameLimitCredit + refreshes, refreshesPerFrame + 1.0);
+    lastTickRendered = refreshesSinceFrame >= paced && frameLimitCredit >= refreshesPerFrame;
     if (lastTickRendered)
+    {
         refreshesSinceFrame = 0;
+        frameLimitCredit = std::min(frameLimitCredit - refreshesPerFrame, 1.0);
+    }
     return lastTickRendered;
 }
 
@@ -413,31 +431,39 @@ void CRenderDevice::ProcessFrame()
     const u64 frameEndTime = TimerGlobal.GetElapsed_ms();
     const u64 frameTime = frameEndTime - frameStartTime;
 
-    u32 updateDelta = 1000 / ps_fps_limit;
+    int frameLimit = ps_fps_limit;
 
     if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
-        updateDelta = 1000 / g_svDedicateServerUpdateReate;
+        frameLimit = g_svDedicateServerUpdateReate;
 
     else if (Paused() || g_pGameLevel == nullptr)
-        updateDelta = 1000 / ps_fps_limit_in_menu;
+    {
+#ifdef XR_PLATFORM_WEB
+        frameLimit = std::min(frameLimit, ps_fps_limit_in_menu);
+#else
+        frameLimit = ps_fps_limit_in_menu;
+#endif
+    }
 
 #ifdef XR_PLATFORM_WEB
     const bool vsync = psDeviceFlags.test(rsVSync);
+    const double frameBudgetMs = 1000.0 / frameLimit;
     if (vsync)
         emscripten_set_main_loop_timing(EM_TIMING_RAF, 1);
-    else if (frameTime < updateDelta)
-        emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, updateDelta);
+    else if (frameTime < frameBudgetMs)
+        emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, int(std::ceil(frameBudgetMs)));
     else
         // A queued task yields to input/readback without the nested timer's
         // minimum delay. Vsync-off must not use the adaptive rAF frame pacer.
         emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
     g_webFramePacer.SetVsyncPaced(vsync);
-    g_webFramePacer.SetFrameLimit(1000.0 / updateDelta);
+    g_webFramePacer.SetFrameLimit(frameLimit);
     EM_ASM({
         globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4);
     }, cpuSimulationEnd - cpuFrameStart, cpuRenderEnd - cpuSimulationEnd,
-        cpuWaitEnd - cpuRenderEnd, static_cast<int>(vsync), updateDelta);
+        cpuWaitEnd - cpuRenderEnd, static_cast<int>(vsync), frameBudgetMs);
 #else
+    const u32 updateDelta = 1000 / frameLimit;
     if (frameTime < updateDelta)
         Sleep(updateDelta - frameTime);
 #endif

@@ -493,6 +493,28 @@
       <options_item entry="r2_ls_squality" group="mm_opt_video_adv"/>
     </track_particles_distance>
 
+    <cap_fps_limit x="17" y="0" width="119" height="21">
+        <text font="letterica16" color="ui_6">ui_mm_fps_limit</text>
+    </cap_fps_limit>
+    <list_fps_limit x="162" y="0" width="200" height="21" list_length="5" always_show_scroll="0">
+        <options_item entry="rs_fps_limit_preset" group="mm_opt_video"/>
+        <list_font r="216" g="186" b="140" font="letterica16"/>
+        <text_color>
+            <e r="216" g="186" b="140"/>
+            <d color="ui_gray"/>
+        </text_color>
+    </list_fps_limit>
+
+    <cap_fps_limit_in_menu x="17" y="0" width="119" height="21">
+        <text font="letterica16" color="ui_6">ui_mm_fps_limit_in_menu</text>
+    </cap_fps_limit_in_menu>
+    <track_fps_limit_in_menu x="162" y="0" width="176" height="21" step="1" is_integer="1">
+        <options_item entry="rs_fps_limit_in_menu" group="mm_opt_video"/>
+        <output_wnd x="180" y="0" width="20" height="20">
+            <text font="letterica16" color="ui_6" align="r"/>
+        </output_wnd>
+    </track_fps_limit_in_menu>
+
     <cap_vsync x="17" y="0" width="119" height="21">
       <text font="letterica16" color="ui_6">ui_mm_vsync</text>
     </cap_vsync>

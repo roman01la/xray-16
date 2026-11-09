@@ -21,6 +21,11 @@ video settings limits the size of the render target. For example, a 1920×1080
 preset renders at 1440×1080 in a 4:3 browser window. The browser scales that
 frame to fit the viewport as the window or display scaling changes.
 
+New browser profiles use a 60 FPS limit and VSync. Change either in **Options →
+Video → Advanced**. The FPS limit offers 30, 60, 100, and 120. With VSync on,
+the browser presents on display refreshes, so a 60 Hz display can show up to
+60 FPS even with a higher limit. Menus also respect the separate menu FPS limit.
+
 Escape opens the game menu and F1–F4 use the quick slots. If the browser uses
 Escape to release the mouse, press it again. Add `diagnostics=1` to the page query
 for the selected GPU adapter, FPS, render size, CPU and GPU timings, and WebGPU
