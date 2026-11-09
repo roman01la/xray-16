@@ -12,9 +12,19 @@ test('public gateway isolates admin, verifies uploads, atomically publishes and 
   assert.equal((await fetch(base+'/_deploy/blobs/'+hash,{method:'PUT',headers:{...admin,'Content-Encoding':'gzip'},body:gzipSync(bytes)})).status,201);
   assert.equal((await fetch(base+path)).status,404);
   const chunk='/packs/'+hash+'/chunks/'+hash+'.bin';
-  const manifest={format:1,entry:path,files:{[path]:{sha256:hash,size:bytes.length},[chunk]:{sha256:hash,size:bytes.length}}};
+  const entry=path+'?stream=/packs/'+hash+'/pack.json&slot=public';
+  const manifest={format:1,entry,files:{[path]:{sha256:hash,size:bytes.length},[chunk]:{sha256:hash,size:bytes.length}}};
   assert.equal((await fetch(base+'/_deploy/publish',{method:'POST',headers:admin,body:JSON.stringify(manifest)})).status,200);
-  const home=await fetch(base+'/',{redirect:'manual'});assert.equal(home.status,302);assert.equal(home.headers.get('location'),path);
+  const home=await fetch(base+'/',{redirect:'manual'});
+  assert.equal(home.status,200);
+  assert.equal(home.url,base+'/');
+  assert.equal(home.headers.get('cache-control'),'no-store');
+  assert.equal(home.headers.get('cross-origin-embedder-policy'),'require-corp');
+  assert.ok((await home.text()).includes('src="'+entry.replace('&','&amp;')+'"'));
+  const head=await fetch(base+'/',{method:'HEAD'});
+  assert.equal(head.status,200);
+  assert.equal(head.headers.get('content-length'),home.headers.get('content-length'));
+  assert.equal(await head.text(),'');
   assert.equal((await fetch(base+chunk,{redirect:'manual'})).status,200);
   await writeFile(root+'/cdn-ready.json',JSON.stringify([hash]));
   const redirect=await fetch(base+chunk,{redirect:'manual'});assert.equal(redirect.status,307);assert.equal(redirect.headers.get('location'),'https://cdn.example/chunks/'+hash+'.bin');
@@ -32,7 +42,7 @@ test('public gateway isolates admin, verifies uploads, atomically publishes and 
   const spPath='/releases/'+hash+'/singleplayer.html',sp={format:1,mode:'singleplayer',entry:spPath,files:{[spPath]:{sha256:hash,size:bytes.length}}};
   assert.equal((await fetch(base+'/_deploy/publish',{method:'POST',headers:admin,body:JSON.stringify(sp)})).status,200);
   assert.equal((await fetch(base+'/singleplayer/',{redirect:'manual'})).status,404);
-  assert.equal((await fetch(base+'/',{redirect:'manual'})).headers.get('location'),path);
+  assert.ok((await (await fetch(base+'/')).text()).includes('src="'+entry.replace('&','&amp;')+'"'));
   assert.equal((await fetch(base+'/_deploy/publish',{method:'POST',headers:admin,body:JSON.stringify(manifest)})).status,200);
   for(const route of ['/singleplayer','/singleplayer/','/multiplayer','/multiplayer/']){
    for(const method of ['GET','HEAD'])assert.equal((await fetch(base+route,{method,redirect:'manual'})).status,404);

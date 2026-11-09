@@ -21,8 +21,9 @@ public access and confirmed permission to distribute the game assets.
 - `/metrics` and `/_deploy/*` require the private `ZONE_DEV_TOKEN` bearer token.
   No database, collision directory, filesystem browsing, or test pages are served.
 - Every asset response has COOP/COEP/CORP headers for the threaded WASM engine.
-  Content-versioned URLs have immutable caching and SHA-256 ETags. Root redirects
-  to the active release, with no-store caching.
+  Content-versioned URLs have immutable caching and SHA-256 ETags. The root
+  serves a no-store page that loads the active release in a full-window frame,
+  keeping the public URL in the address bar.
 - This build uses browser-held portable save keys. Copy save key and Open save
   allow another browser to resume the same identity. Keep a copy before clearing
   browser storage. Each public campaign map runs a stock native A-Life host.

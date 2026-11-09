@@ -97,7 +97,22 @@ export async function createGateway({root,token,origin,backendPort=8082,assetOri
     });upstream.setTimeout(15000,()=>upstream.destroy());upstream.on('error',()=>{if(!res.headersSent)reply(502);else res.destroy();});upstream.end(payload);return;
    }
    if(!['GET','HEAD'].includes(req.method))return reply(405);
-   if(path==='/'){if(!active)return reply(503,'Preparing game deployment');res.writeHead(302,{...headers,Location:active.entry});res.end();return;}
+   if(path==='/'){
+    if(!active)return reply(503,'Preparing game deployment');
+    // Keep the document URL stable and the game frame inside its release's worker scope.
+    const source=active.entry.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;');
+    const html=`<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>S.T.A.L.K.E.R. — Call of Pripyat</title>
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}iframe{display:block;width:100%;height:100%;border:0}</style>
+<iframe src="${source}" title="S.T.A.L.K.E.R.: Call of Pripyat" allowfullscreen></iframe>
+</html>`;
+    headers['Content-Type']='text/html; charset=utf-8';
+    headers['Content-Length']=Buffer.byteLength(html);
+    return reply(200,req.method==='HEAD'?undefined:html);
+   }
    const decoded=decodeURIComponent(path),file=active?.files[decoded];if(!file)return reply(404);
    if(assetOrigin&&/^\/packs\/[a-f0-9]{64}\/chunks\/[a-f0-9]{64}\.bin$/.test(decoded)&&await cdnReady(file.sha256)){res.writeHead(307,{...headers,'Cache-Control':'public, max-age=300',Location:assetOrigin+'/chunks/'+file.sha256+'.bin'});res.end();return;}
    headers['Cache-Control']='public, max-age=31536000, immutable';headers['ETag']='"'+file.sha256+'"';headers['Content-Type']=mime(decoded);
