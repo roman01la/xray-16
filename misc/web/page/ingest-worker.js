@@ -160,6 +160,16 @@ async function removeRetired(game, retired) {
   }
 }
 
+async function seedGraphicsDefaults(app) {
+  try {
+    await app.getFileHandle("user.ltx");
+    return;
+  } catch (error) {
+    if (error.name !== "NotFoundError") throw error;
+  }
+  await writeBlob(app, "user.ltx", new Blob(["_preset Extreme\nvid_mode 1920x1080\n"]));
+}
+
 async function syncEngineData(root, appDirectory = '_appdata_') {
   const game = await gameDir(root);
   const manifest = await fetch("./engine_data.json");
@@ -196,13 +206,19 @@ async function syncEngineData(root, appDirectory = '_appdata_') {
   postMessage({type:'engine-progress',done:files.length,total:files.length});
   for (const sub of ["logs", "savedgames", "screenshots"])
     await ensureDir(game, ["_appdata_", sub]);
-  const migrate = async () => migrateStockBindings(await ensureDir(game, appDirectory.split('/')));
-  try {
-    if (navigator.locks) await navigator.locks.request(`xray-stock-keybinds:${root}:${appDirectory}`, migrate);
-    else await migrate();
-  } catch (error) {
-    console.warn('Could not restore alpha default keybinds. Will retry on the next launch.', error);
-  }
+  const prepareConfig = async () => {
+    const app = await ensureDir(game, appDirectory.split("/"));
+    if (root === "stream-cop" || root.startsWith("zone-engine-preview-"))
+      await seedGraphicsDefaults(app);
+    try {
+      await migrateStockBindings(app);
+    } catch (error) {
+      console.warn("Could not restore alpha default keybinds. Will retry on the next launch.", error);
+    }
+  };
+  if (navigator.locks)
+    await navigator.locks.request(`xray-stock-keybinds:${root}:${appDirectory}`, prepareConfig);
+  else await prepareConfig();
 }
 
 async function status() {

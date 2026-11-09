@@ -203,7 +203,8 @@ python3 server/tools/publish-web.py --unified --mode multiplayer \
 
 Single-player saves stay in the existing `stream-cop/_appdata_/savedgames`.
 Multiplayer keeps its isolated app-data directory and existing portable save key.
-Fresh SP profiles use `_preset default` (medium); existing settings survive.
+Fresh single-player and multiplayer profiles use the Extreme preset and render
+at 1920×1080. Existing graphics settings stay in the player's configuration.
 Loading feedback reports files prepared, bytes downloaded/read from cache, and
 current-transfer progress, then yields to the rendered game.
 

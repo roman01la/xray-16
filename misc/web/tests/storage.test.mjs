@@ -99,3 +99,55 @@ test("engine sync replaces same-size stale files and refuses corrupt or failed d
     assert.equal(await content.text(), mode === "valid" ? "new!" : "old!");
   }
 });
+
+test("unified graphics defaults are seeded once in each mode's own app-data directory", async () => {
+  const source = await readFile(new URL("../page/ingest-worker.js", import.meta.url), "utf8");
+  const files = new Map();
+  const directory = (path) => ({
+    async getDirectoryHandle(name) { return directory(`${path}/${name}`); },
+    async getFileHandle(name, { create = false } = {}) {
+      const key = `${path}/${name}`;
+      if (!files.has(key)) {
+        if (!create) throw new DOMException("Missing file", "NotFoundError");
+        files.set(key, "");
+      }
+      return {
+        async getFile() { return new Blob([files.get(key)]); },
+        async createSyncAccessHandle() {
+          return {
+            truncate() { files.set(key, ""); },
+            write(bytes) { files.set(key, new TextDecoder().decode(bytes)); },
+            flush() {},
+            close() {},
+          };
+        },
+      };
+    },
+  });
+  let response;
+  const context = vm.createContext({
+    Blob,
+    Uint8Array,
+    migrateStockBindings,
+    navigator: {
+      storage: { getDirectory: async () => directory("") },
+      locks: { request: async (key, prepare) => prepare() },
+    },
+    fetch: async () => ({ ok: true, json: async () => ({ files: [], retired: [] }) }),
+    postMessage: (result) => (response = result),
+  });
+  vm.runInContext(source.replace("import {migrateStockBindings} from './stock-bindings.mjs';", ""), context);
+  for (const [root, appDirectory] of [["stream-cop", "_appdata_"], ["zone-engine-preview-public", "_multiplayer_/v1"]]) {
+    const data = { id: 1, type: "sync-engine-data", root, appDirectory };
+    const config = `/${root}/${appDirectory}/user.ltx`;
+    await context.onmessage({ data });
+    assert.equal(response.type, "done");
+    assert.equal(files.get(config), "_preset Extreme\nvid_mode 1920x1080\n");
+    const custom = "_preset Low\r\nvid_mode 1280x720\r\n";
+    files.set(config, custom);
+    await context.onmessage({ data });
+    assert.equal(response.type, "done");
+    assert.equal(files.get(config), custom);
+  }
+  assert.equal(files.has("/zone-engine-preview-public/_appdata_/user.ltx"), false);
+});

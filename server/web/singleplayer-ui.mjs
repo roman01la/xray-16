@@ -74,20 +74,6 @@ const observer=new MutationObserver(observe);observer.observe(status,{childList:
 if(!isSecureContext||!crossOriginIsolated||!navigator.gpu||!navigator.storage?.getDirectory){fail('This game needs a desktop browser with WebGPU and local file storage. Please use a current Chrome or Edge browser.');retry.hidden=true;}
 else {
  try{
- // Seed the engine's built-in medium preset only for a fresh profile.
- // Existing user.ltx belongs to the player and must survive site updates.
- await navigator.locks.request('singleplayer-default-settings',async()=>{
-  const root=await navigator.storage.getDirectory();
-  const game=await root.getDirectoryHandle('stream-cop',{create:true});
-  const app=await game.getDirectoryHandle('_appdata_',{create:true});
-  try{await app.getFileHandle('user.ltx');}
-  catch(error){
-   if(error.name!=='NotFoundError')throw error;
-   const file=await app.getFileHandle('user.ltx',{create:true});
-   const writer=await file.createWritable();
-   await writer.write('_preset default\n');await writer.close();
-  }
- });
  await import(multiplayer?'./public-ui.mjs':'./main.js');const gpu=document.querySelector('#webgpu-stats');if(gpu)observer.observe(gpu,{childList:true,characterData:true,subtree:true});observe();}
  catch(error){fail(error.message||'The game could not start. Check your connection and try again.');}
 }
