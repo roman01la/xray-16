@@ -37,6 +37,9 @@
 #include "HudItem.h"
 #include "ai_sounds.h"
 #include "ai_space.h"
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+#include "alife_simulator.h"
+#endif
 #include "trade.h"
 #include "Inventory.h"
 
@@ -482,6 +485,15 @@ struct playing_pred
 
 void CActor::Hit(SHit* pHDS)
 {
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    if (m_zoneAlifeTarget)
+    {
+        ++m_zoneAlifeHits;
+        if (auto* host = ai().get_alife())
+            host->report_host_hit(ID(), *pHDS);
+        return;
+    }
+#endif
     bool b_initiated = pHDS->aim_bullet; // physics strike by poltergeist
 
     pHDS->aim_bullet = false;
@@ -1053,6 +1065,13 @@ float CActor::currentFOV()
 
 void CActor::UpdateCL()
 {
+    if (zoneAlifeTarget())
+    {
+        // Maintain the original position history used by NPC vision.
+        CGameObject::UpdateCL();
+        return;
+    }
+
     if (g_Alive() && Level().CurrentViewEntity() == this)
     {
         if (CurrentGameUI() && !CurrentGameUI()->TopInputReceiver() && !m_holder)
@@ -1222,6 +1241,27 @@ void CActor::UpdateCL()
 }
 
 float NET_Jump = 0;
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+void CActor::applyZoneAlifePose(const Fvector& position, float yaw, bool crouched)
+{
+    const u32 stance = crouched ? mcCrouch : 0;
+    const bool changedStance = mstate_real != stance || !m_current_legs;
+    if (changedStance)
+    {
+        mstate_real = stance;
+        g_SetAnimation(mstate_real);
+    }
+    // The Rust player yaw uses atan2(x, z), opposite the X-Ray heading.
+    const float heading = -yaw;
+    if (!changedStance && Position().similar(position) && r_model_yaw == heading)
+        return;
+    r_model_yaw = heading;
+    XFORM().setHPB(heading, 0.f, 0.f);
+    Position().set(position);
+    spatial_move();
+}
+#endif
+
 void CActor::set_state_box(u32 mstate)
 {
     if (mstate & mcCrouch)
@@ -1236,6 +1276,9 @@ void CActor::set_state_box(u32 mstate)
 }
 void CActor::shedule_Update(u32 DT)
 {
+    if (zoneAlifeTarget())
+        return;
+
     setSVU(OnServer());
     //.	UpdateInventoryOwner			(DT);
 

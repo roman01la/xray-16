@@ -1,5 +1,9 @@
 #include "pch_script.h"
 #include "Actor.h"
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+#include "ai_space.h"
+#include "alife_simulator.h"
+#endif
 #include "HUDManager.h"
 #include "Actor_Flags.h"
 #include "Inventory.h"
@@ -550,6 +554,9 @@ bool CActor::net_Spawn(CSE_Abstract* DC)
     // force actor to be local on server client
     CSE_Abstract* e = (CSE_Abstract*)(DC);
     CSE_ALifeCreatureActor* E = smart_cast<CSE_ALifeCreatureActor*>(e);
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    m_zoneAlifeTarget = E->s_flags.test(M_SPAWN_ZONE_TARGET) && ai().get_alife() && ai().alife().uses_host_interests();
+#endif
     if (OnServer())
     {
         E->s_flags.set(M_SPAWN_OBJECT_LOCAL, TRUE);
@@ -716,7 +723,7 @@ bool CActor::net_Spawn(CSE_Abstract* DC)
     m_bWasHitted = false;
     m_dwILastUpdateTime = 0;
 
-    if (IsGameTypeSingle())
+    if (IsGameTypeSingle() && !zoneAlifeTarget())
     {
         Level().MapManager().AddMapLocation("actor_location", ID());
         Level().MapManager().AddMapLocation("actor_location_p", ID());
@@ -724,9 +731,19 @@ bool CActor::net_Spawn(CSE_Abstract* DC)
         m_statistic_manager = xr_new<CActorStatisticMgr>();
     }
 
-    spatial.type |= STYPE_REACTTOSOUND;
-    psHUD_Flags.set(HUD_WEAPON_RT, TRUE);
-    psHUD_Flags.set(HUD_WEAPON_RT2, TRUE);
+    if (zoneAlifeTarget())
+    {
+        character_physics_support()->movement()->DestroyCharacter();
+        setLocal(FALSE);
+        setVisible(TRUE);
+        spatial.type &= ~STYPE_REACTTOSOUND;
+    }
+    else
+    {
+        spatial.type |= STYPE_REACTTOSOUND;
+        psHUD_Flags.set(HUD_WEAPON_RT, TRUE);
+        psHUD_Flags.set(HUD_WEAPON_RT2, TRUE);
+    }
 
     if (Level().IsDemoPlay() && OnClient())
     {
@@ -819,6 +836,9 @@ void CActor::net_Relcase(IGameObject* O)
 
 bool CActor::net_Relevant() // relevant for export to server
 {
+    if (zoneAlifeTarget())
+        return false;
+
     if (OnServer())
     {
         return getSVU() || getLocal();
@@ -1871,7 +1891,7 @@ void CActor::net_Save(NET_Packet& P)
 #endif
 }
 
-bool CActor::net_SaveRelevant() { return true; }
+bool CActor::net_SaveRelevant() { return !zoneAlifeTarget(); }
 void CActor::SetHitInfo(IGameObject* who, IGameObject* weapon, s16 element, Fvector Pos, Fvector Dir)
 {
     m_iLastHitterID = (who != NULL) ? who->ID() : u16(-1);

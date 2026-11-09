@@ -8,7 +8,6 @@ if (!globalThis.XRAY_WEBGPU) {
 }
 
 import "./storage-manager.js";
-import {prepareStreaming} from "./streaming.js";
 const streamURL = new URLSearchParams(location.search).get("stream");
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
@@ -67,6 +66,9 @@ let nextRequestId = 0;
 worker.addEventListener("message", (e) => {
   if(e.data.type==='engine-progress'){
     window.dispatchEvent(new CustomEvent('xray-engine-progress',{detail:e.data}));return;
+  }
+  if(e.data.type==='stream-progress'){
+    window.dispatchEvent(new CustomEvent('xray-stream-progress',{detail:e.data.detail}));return;
   }
   if (e.data.type === "progress") {
     $("progress").hidden = false;
@@ -189,8 +191,8 @@ $("launch").onclick = async () => {
   $("ingest-status").textContent = "syncing engine data...";
   let streaming;
   try {
-    await askWorker({ type: "sync-engine-data", root });
-    if (streamURL && root === "stream-cop") streaming = await prepareStreaming(streamURL, root);
+    const pack = streamURL && root === "stream-cop" ? new URL(streamURL, location.href).href : undefined;
+    ({ streaming } = await askWorker({ type: "sync-engine-data", root, pack }));
   } catch (e) {
     $("ingest-status").textContent = "engine data sync failed: " + e.message;
     print("engine data sync failed: " + e.message);
@@ -273,9 +275,4 @@ window.saveFromOpfs = async (path, name) => {
   return `${file}: ${blob.size} bytes`;
 };
 
-$("fullscreen").onclick = () => {
-  canvas.requestFullscreen().catch((e) => {
-    $("status").textContent = "Fullscreen: " + e.message;
-  });
-};
 $("restart").onclick = () => location.reload();

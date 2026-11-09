@@ -1,7 +1,15 @@
 let connection, worker;
+const shaderCaptureBuild = false;
 export function startShaderCompiler() {
   return connection ||= new Promise((resolve, reject) => {
-    worker = new Worker(new URL('./shader-compiler-worker.mjs', import.meta.url),
+    const workerURL = new URL('./shader-compiler-worker.mjs', import.meta.url);
+    if (shaderCaptureBuild) {
+      const query = new URLSearchParams(globalThis.location?.search);
+      for (const name of ['shaderCapture','shaderMap','shaderPreset','shaderScenario']) {
+        if (query.has(name)) workerURL.searchParams.set(name, query.get(name));
+      }
+    }
+    worker = new Worker(workerURL,
       {type:'module', name:'xray-shader-compiler'});
     const timeout = setTimeout(() => reject(Error('Shader compiler startup timed out')),120000);
     worker.onerror = event => {clearTimeout(timeout);reject(Error(event.message || 'Shader compiler worker failed'));};

@@ -1,0 +1,94 @@
+{
+  "date": "2026-11-08",
+  "setup": "Optimized native headless stock Zaton. A disposable Lua fixture spawns a stock armed stalker and delivers a controlled hit. A private socket harness supplies player poses.",
+  "simulationThreadCaptureLimitMs": 100,
+  "macosArm64": {
+    "captureMs": [
+      32.35,
+      68.94,
+      78.8
+    ],
+    "offThreadWriteMs": [
+      5.77,
+      3.8,
+      4.44
+    ],
+    "corpse": {
+      "items": 11,
+      "generationAtPublish": 2
+    }
+  },
+  "linuxArm64DelayedFsync": {
+    "captureMs": [
+      47.64,
+      40.23,
+      31.02
+    ],
+    "offThreadWriteMs": [
+      1016.79,
+      1510.04,
+      1006.96
+    ],
+    "windows": [
+      {
+        "delayedIoWindowMs": 1012.53,
+        "npcUpdatesDuringWindow": 1,
+        "npcUpdatesBeforeWindow": 0,
+        "maxConsecutiveNpcUpdateGapMs": null
+      },
+      {
+        "delayedIoWindowMs": 1509.34,
+        "npcUpdatesDuringWindow": 6,
+        "npcUpdatesBeforeWindow": 2,
+        "maxConsecutiveNpcUpdateGapMs": 272.37
+      },
+      {
+        "delayedIoWindowMs": 1003.47,
+        "npcUpdatesDuringWindow": 3,
+        "npcUpdatesBeforeWindow": 4,
+        "maxConsecutiveNpcUpdateGapMs": 277.81
+      }
+    ],
+    "delayedFsyncMs": 250,
+    "corpse": {
+      "items": 12,
+      "generationAtPublish": 2
+    }
+  },
+  "earlierLinuxCapturesMs": [
+    40.78,
+    52.36,
+    47.3,
+    58.78,
+    99.3
+  ],
+  "peakMeasuredCaptureMs": 99.3,
+  "timingLimitations": "The first cold-start write saw one NPC update before the feed reached its steady cadence. An earlier steady run recorded four updates in one write window and failed the initial five-update harness criterion. The final run records both pre-window and during-window counts. Concurrent updates prove the disk delay did not stop the simulation. NPC cadence varied and a 100\u2013200-player load was not tested.",
+  "asyncLinuxRestart": {
+    "sameGameDirectory": true,
+    "latestSaveLoaded": true,
+    "sameCorpseBytesReplayed": true,
+    "items": 12,
+    "generationAtRestart": 3
+  },
+  "earlierSynchronousMacRestart": {
+    "stockSaveLoaded": true,
+    "originalDeathIdMatchedSqlite": true,
+    "corpseCount": 1,
+    "items": 12,
+    "deathRecords": 1,
+    "notes": "The first replacement attempted startup before macOS released the old process lock. The verified Rust import used the same save and outbox after the lock became available."
+  },
+  "olderSaveWithCurrentFence": {
+    "olderSaveRejected": true,
+    "processExit": 1
+  },
+  "unifiedBrowserSinglePlayer": {
+    "singlePlayer": true,
+    "chunks": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "remaining": "Recheck in-place x86-64 restart with the asynchronous host and measure capture and NPC cadence at target population.",
+  "followup": "native-alife-world-admission.json"
+}

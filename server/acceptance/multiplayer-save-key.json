@@ -1,0 +1,75 @@
+{
+  "date": "2026-11-08",
+  "localEnvironment": "Optimized unified WebGPU build and Rust, stock Zaton, loopback, two Chrome macOS ARM64 profile directories. The recovery profile reused the local asset bytes and began with empty identity storage.",
+  "localFixture": "An isolated SQLite copy contains the 60-round box acquired and transferred using the original inventory UI in the preceding authored-loot check. The source profile was seeded with that disposable key.",
+  "local": {
+    "separateBrowserProfiles": true,
+    "panelAtTestViewport": {
+      "visibleHeight": 593,
+      "panelTop": 12,
+      "panelBottom": 581,
+      "scrolls": true
+    },
+    "copiedWithRustOffline": true,
+    "sourceKeyCopyUi": "clipboard",
+    "distinctPreImportIdentity": true,
+    "unknownKeyRejectedAndCurrentCharacterPreserved": true,
+    "openedThroughGameSavePanel": true,
+    "stablePrincipal": true,
+    "sameWorld": true,
+    "sameLife": 0,
+    "alive": true,
+    "health": 100,
+    "sameInventoryCount": 7,
+    "sameAuthoredBox": {
+      "section": "ammo_5.45x39_fmj",
+      "revision": 3,
+      "rounds": 60
+    },
+    "resumedAfterRustRestartWithoutReimport": true,
+    "nativeInventoryReconciled": true,
+    "webgpuValidationErrors": 0,
+    "packChunkDownloads": 319
+  },
+  "localPriorFailures": [
+    "The short viewport clipped the lower controls.",
+    "Chrome routed the pointer-locked canvas click over Copy save key to the game.",
+    "The original copy handler called Rust even for an enrolled key already present in browser storage."
+  ],
+  "browserAndGatewayTestsPassed": 126,
+  "pointerLock": {
+    "lockedBeforeOpening": true,
+    "releasedOnOpen": true,
+    "blocksRecaptureWhileOpen": true,
+    "clickRecapturesAfterClosing": true
+  },
+  "singlePlayerRegression": {
+    "singlePlayer": true,
+    "savePanelHidden": true,
+    "chunks": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "hosted": {
+    "publicRelease": "dc8632a6fce491811f2201bbd335a4e964dbc59430d1d5b00972af5b36139459",
+    "world": "zaton-static-v1",
+    "separateBrowserProfiles": true,
+    "disposableAccounts": true,
+    "distinctPreImportIdentity": true,
+    "copyControl": true,
+    "openSaveControl": true,
+    "stablePrincipal": true,
+    "sameInventoryCount": 6,
+    "life": 0,
+    "publicServerRestarted": false,
+    "nativeInventoryReconciled": true,
+    "webgpuValidationErrors": 0,
+    "packChunksSeededFromMatchingLocalAssets": 319,
+    "localPackBytesTransferred": 0
+  },
+  "hostedScope": "Actual shipped browser UI and public Rust over WebRTC. The check compared the stable principal, native starter inventory count and life. Exact changed item records and Rust restart were checked in the local run. The hosted check reused the warm cache primed in the initial attempt from all 12 matching archive descriptors.",
+  "hostedEarlierAttempts": [
+    "A direct test URL omitted map=zaton, which the deployed menu supplies. Correcting the route loaded rendered Zaton.",
+    "The extra hosted inventory instrumentation stalled. The passing run used the released game\u2019s own native inventory report."
+  ]
+}

@@ -5,13 +5,13 @@ export class InventoryClient {
  constructor(client,{principal,storage=globalThis.localStorage,onChange=()=>{},onError=()=>{},schedule=(fn,ms)=>setTimeout(fn,ms),cancel=timer=>clearTimeout(timer)}){
   if(!id(principal))throw Error('Inventory requires a persistent principal');
   this.client=client;this.storage=storage;this.key=`zone.inventory.pending.v1.${principal}`;
-  this.onChange=onChange;this.onError=onError;this.view=null;this.closed=false;this.inFlight=false;this.refreshing=null;
+  this.onChange=onChange;this.onError=onError;this.view=null;this.closed=false;this.inFlight=false;this.reloadInFlight=false;this.refreshing=null;
   this.schedule=schedule;this.cancel=cancel;this.retryTimer=null;this.retryDelay=1000;
  }
  async refresh(){
-  if(this.closed)return null;if(this.inFlight){this.dirty=true;return this.view;}
+  if(this.closed)return null;if(this.inFlight&&!this.reloadInFlight){this.dirty=true;return this.view;}
   if(this.refreshing){this.dirty=true;return this.refreshing;}
-  this.refreshing=(async()=>{let view;do{this.dirty=false;view=await this.readCoherent();}while(this.dirty&&!this.closed&&!this.inFlight);return view;})().finally(()=>{this.refreshing=null;});return this.refreshing;
+  this.refreshing=(async()=>{let view;do{this.dirty=false;view=await this.readCoherent();}while(this.dirty&&!this.closed&&(!this.inFlight||this.reloadInFlight));return view;})().finally(()=>{this.refreshing=null;});return this.refreshing;
  }
  async readCoherent(){
   for(let attempt=0;attempt<5&&!this.closed;attempt++){
@@ -72,6 +72,7 @@ export class InventoryClient {
   if(this.retryTimer!==null){this.cancel(this.retryTimer);this.retryTimer=null;}
   const raw=this.storage.getItem(this.key);if(!raw)return this.refresh();
   const pending=JSON.parse(raw),{kind,command}=pending;if(!['move','respawn','batch'].includes(kind))throw Error('Invalid pending inventory action');this.inFlight=true;
+  this.reloadInFlight=kind==='move'&&['reload','nextAmmo'].includes(command?.action?.kind);
   try{
    if(kind==='batch'){
     if(!Array.isArray(pending.commands)||!Array.isArray(pending.results)||pending.commands.length+pending.results.length>4096)throw Error('Invalid pending inventory batch');
@@ -93,7 +94,7 @@ export class InventoryClient {
    if(!['committed','respawned','rejected','conflict'].includes(result?.status))throw Error('Invalid inventory action result');
    this.storage.removeItem(this.key);this.retryDelay=1000;return result;
   }finally{
-   this.inFlight=false;
+   this.inFlight=false;this.reloadInFlight=false;
    // Reconcile current authority rather than applying an old replay response as a
    // new state change (the item may since have been dropped, looted or lost).
    if(this.refreshing)await this.refreshing.catch(this.onError);

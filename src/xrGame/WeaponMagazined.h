@@ -68,6 +68,10 @@ protected:
     virtual void state_Misfire(float dt);
 
 public:
+#ifdef XRAY_WEB_MULTIPLAYER
+    void PlayConfirmedHudShot(bool launcher);
+    void PlayConfirmedHudReload(unsigned sound, ref_sound& playback);
+#endif
     CWeaponMagazined(ESoundTypes eSoundType = SOUND_TYPE_WEAPON_SUBMACHINEGUN);
     virtual ~CWeaponMagazined();
 
@@ -143,6 +147,13 @@ public:
     void OnNextFireMode();
     void OnPrevFireMode();
     bool HasFireModes() { return m_bHasDifferentFireModes; }
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    u8 NativeFireModeSelector() const
+    {
+        return m_bHasDifferentFireModes && m_iCurFireMode >= 0 && m_iCurFireMode < 255
+            ? static_cast<u8>(m_iCurFireMode + 1) : 0;
+    }
+#endif
 #ifdef __EMSCRIPTEN__
     void SetPresentationScope(pcstr section);
     void SetPresentationFireMode(u8 selector)

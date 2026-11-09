@@ -10,22 +10,100 @@ class Client extends EventTarget {
 }
 test('only a pthread executing the C++ hook claims the session',async t=>{
   const reports=[];const c=new Client(),hub=createPthreadBridge(c,{epoch:'test',onApplied:r=>reports.push(r)}),idle={},application={},other={},heap=new Uint8Array(100);
+  c.vitals=[7,750,500,625,125,250,3,48500,50000,60000,1000,2,864,0x40c2];
   const options={epoch:'test',contract,getHeap:()=>heap};
   const cleanups=[installDormantEngineBridge(idle,hub.createPort(),options),installDormantEngineBridge(application,hub.createPort(),options),installDormantEngineBridge(other,hub.createPort(),options)];
   t.after(()=>{cleanups.forEach(f=>f());hub.close();});
   await wait();assert.equal(c.closed,false);
   assert.equal(application.zoneEnginePoll(0n,100),0);await wait();
-  assert.equal(application.zoneEnginePoll(0n,100),60);assert.equal(new DataView(heap.buffer).getFloat32(28,true),2);
+  assert.equal(application.zoneEnginePoll(0n,100),68);assert.equal(new DataView(heap.buffer).getFloat32(28,true),2);
+  assert.equal(application.zoneEngineVitals(6,8n),false);
+  assert.equal(application.zoneEngineVitals(7,8n),true);
+  assert.deepEqual([...new Float32Array(heap.buffer,8,8)],[.75,.5,.625,.125,.25,48.5,50,60]);
+  assert.equal(new DataView(heap.buffer).getUint32(40,true),0x40c2);
   application.zoneEngineInput({x:1,z:0,yaw:0,sprint:false});await wait();assert.equal(c.input.x,1);
   assert.deepEqual(reports,[]);application.zoneEngineApplied(10,1);await wait();assert.deepEqual(reports,[{tick:10,entities:1}]);
   assert.equal(other.zoneEnginePoll(0n,100),0);await wait();assert.equal(other.zoneEnginePoll(0n,100),-1);assert.equal(c.closed,false);
   hub.close();await wait();assert.equal(application.zoneEnginePoll(0n,100),-1);assert.throws(()=>hub.createPort(),/closed/);
+});
+test('weapon selection follows reliable vitals independently of snapshots',async t=>{
+  const c=new Client(),scope={},heap=new Uint8Array(100),calls=[];
+  const state=slot=>[7,750,500,625,125,250,3,48500,50000,60000,1000,slot,864,0x40c2];
+  c.vitals=state(3);
+  c.selectWeapon=(life,slot)=>new Promise(resolve=>calls.push({life,slot,resolve}));
+  const hub=createPthreadBridge(c,{epoch:'weapon-slot'});
+  const cleanup=installDormantEngineBridge(scope,hub.createPort(),{epoch:'weapon-slot',contract,getHeap:()=>heap});
+  t.after(()=>{cleanup();hub.close();});
+  const publish=slot=>{
+    c.vitals=state(slot);
+    c.dispatchEvent(new CustomEvent('vitals',{detail:c.vitals}));
+  };
+  scope.zoneEnginePoll(0n,heap.length);await wait();
+  assert.equal(scope.zoneEngineWeaponSlot(7),3);
+  const first=scope.zoneEngineSelectWeapon(7,2);
+  assert.equal(scope.zoneEnginePendingWeaponSlot(7),2);
+  assert.equal(scope.zoneEngineWeaponSlot(7),0);
+  await wait();
+  assert.deepEqual([calls[0].life,calls[0].slot],[7,2]);
+  publish(2);
+  calls[0].resolve({status:'selected',slot:2});
+  await first;
+  assert.equal(scope.zoneEngineWeaponSlot(7),2);
+  assert.equal(scope.zoneEngineWeaponSlot(8),0);
+  // An older unconsumed snapshot must never replace the confirmed slot.
+  assert.equal(scope.zoneEnginePoll(0n,heap.length),68);
+  assert.equal(scope.zoneEngineWeaponSlot(7),2);
+
+  const switchAgain=scope.zoneEngineSelectWeapon(7,3);
+  await scope.zoneEngineSelectWeapon(7,1);
+  await scope.zoneEngineSelectWeapon(7,1);
+  assert.equal(scope.zoneEnginePendingWeaponSlot(7),0);
+  await wait();
+  assert.equal(calls[1].slot,3);
+  publish(3);
+  calls[1].resolve({status:'selected',slot:3});
+  await wait();
+  assert.equal(calls[2].slot,0);
+  assert.equal(scope.zoneEngineWeaponSlot(7),0);
+  publish(0);
+  calls[2].resolve({status:'selected',slot:0});
+  await switchAgain;
+  assert.equal(scope.zoneEnginePendingWeaponSlot(7),-1);
+  assert.equal(scope.zoneEngineWeaponSlot(7),0);
 });
 test('disconnect before a worker starts prevents late attachment',async t=>{
   const c=new Client(),hub=createPthreadBridge(c,{epoch:'test'}),scope={};
   const cleanup=installDormantEngineBridge(scope,hub.createPort(),{epoch:'test',contract,getHeap:()=>new Uint8Array(100)});
   t.after(()=>{cleanup();hub.close();});
   c.dispatchEvent(new Event('disconnected'));scope.zoneEnginePoll(0n,100);await wait();assert.equal(scope.zoneEnginePoll(0n,100),-1);
+});
+test('aim, authoritative reload and ladder cues temporarily suppress detector output',async t=>{
+ const c=new Client(),hub=createPthreadBridge(c,{epoch:'detector'}),scope={},heap=new Uint8Array(8192);
+ const cleanup=installDormantEngineBridge(scope,hub.createPort(),{epoch:'detector',contract,getHeap:()=>heap});
+ t.after(()=>{cleanup();hub.close();});
+ scope.zoneEnginePoll(0n,heap.length);await wait();scope.zoneEnginePoll(0n,heap.length);
+ const view={generation:1,life:9,items:[],detector:{tier:4,working:true,points:[[1,2,3]],labels:['af_cristall']}};
+ c.dispatchEvent(new CustomEvent('world-items',{detail:view}));await wait();
+ assert.ok(scope.zoneEngineWorldItemsPoll(0n,heap.length)>0);
+ const cue=(aiming=false)=>{
+  assert.equal(scope.zoneEngineDetectorHint(9,0n,aiming),true);
+  return [...new Float32Array(heap.buffer,0,6)];
+ };
+ assert.deepEqual(cue(),[4,1,0,0,0,1]);
+ assert.deepEqual(cue(true),[4,0,0,0,0,0]);
+ const reload={type:'weapon_reload',life:9,item:'e'.repeat(32),alias:'anm_reload',milliseconds:2000,sound:1,cancelled:false};
+ c.dispatchEvent(new CustomEvent('weapon-reload',{detail:reload}));await wait();
+ assert.deepEqual(scope.zoneEngineConsumeWeaponReload(),reload);
+ assert.deepEqual(cue(),[4,0,0,0,0,0]);
+ const finish={...reload,alias:'',milliseconds:0,sound:0};
+ c.dispatchEvent(new CustomEvent('weapon-reload',{detail:finish}));await wait();
+ assert.deepEqual(cue(),[4,1,0,0,0,1]);
+ for(const [tick,flags,expected] of [[11,16,0],[12,2,1]]){
+  c.snapshot={...c.snapshot,tick,entities:[{...c.snapshot.entities[0],flags}]};
+  c.dispatchEvent(new CustomEvent('snapshot',{detail:c.snapshot}));await wait();
+  assert.ok(scope.zoneEnginePoll(0n,heap.length)>0);
+  assert.deepEqual(cue(),[4,expected,0,0,0,expected]);
+ }
 });
 test('detonation polling writes stock sections and coordinates to the active wasm64 worker only',async t=>{
  const c=new Client(),hub=createPthreadBridge(c,{epoch:'blast'}),scope={},heap=new Uint8Array(1200).fill(255);
@@ -48,6 +126,49 @@ test('detonation polling writes stock sections and coordinates to the active was
  assert.equal(heap[292],0);
  assert.equal(scope.zoneEngineDetonations(8n,8),0);
  cleanup();assert.equal(scope.zoneEngineDetonations,undefined);
+});
+test('positional gunshots preserve sound mode across the wasm64 worker bridge',async t=>{
+ const c=new Client(),hub=createPthreadBridge(c,{epoch:'shots'}),scope={},heap=new Uint8Array(1240).fill(255);
+ const cleanup=installDormantEngineBridge(scope,hub.createPort(),{epoch:'shots',contract,getHeap:()=>heap});
+ t.after(()=>{cleanup();hub.close();});
+ assert.equal(scope.zoneEngineGunshots(8n,8),0);
+ scope.zoneEnginePoll(0n,100);await wait();
+ c.dispatchEvent(new CustomEvent('gunshots',{detail:[[9,'wpn_pb',1,-15.5,3.25,7],[10,'wpn_groza',2,2,4,-8]]}));
+ await wait();
+ assert.equal(scope.zoneEngineGunshots(100n,8),0);
+ assert.equal(scope.zoneEngineGunshots(8n,8),2);
+ const view=new DataView(heap.buffer),decoder=new TextDecoder();
+ assert.deepEqual([8,12,16].map(at=>view.getFloat32(at,true)),[-15.5,3.25,7]);
+ assert.equal(view.getUint32(20,true),1);
+ assert.equal(view.getUint32(24,true),9);
+ assert.equal(decoder.decode(heap.subarray(28,34)),'wpn_pb');
+ assert.equal(heap[34],0);
+ assert.equal(view.getUint32(172,true),2);
+ assert.equal(view.getUint32(176,true),10);
+ assert.equal(decoder.decode(heap.subarray(180,189)),'wpn_groza');
+ assert.equal(heap[189],0);
+ assert.equal(scope.zoneEngineGunshots(8n,8),0);
+ cleanup();assert.equal(scope.zoneEngineGunshots,undefined);
+});
+test('grenade positions cross the worker ABI and a lost final frame times out',async t=>{
+ const c=new Client(),hub=createPthreadBridge(c,{epoch:'grenade'}),scope={},heap=new Uint8Array(512).fill(255);
+ c.grenades={tick:9,entries:[[4,'grenade_f1',1.25,2,-3]],receivedAt:Date.now()};
+ const cleanup=installDormantEngineBridge(scope,hub.createPort(),{epoch:'grenade',contract,getHeap:()=>heap});
+ t.after(()=>{cleanup();hub.close();});
+ assert.equal(scope.zoneEngineGrenadesPoll(80n,8),-1);
+ scope.zoneEnginePoll(0n,80);await wait();
+ assert.equal(scope.zoneEnginePoll(0n,80),68);
+ assert.equal(scope.zoneEngineGrenadesPoll(80n,8),1);
+ const view=new DataView(heap.buffer);
+ assert.equal(view.getUint32(80,true),4);
+ assert.deepEqual([84,88,92].map(at=>view.getFloat32(at,true)),[1.25,2,-3]);
+ assert.equal(new TextDecoder().decode(heap.subarray(96,106)),'grenade_f1');
+ assert.equal(heap[106],0);
+ assert.equal(scope.zoneEngineGrenadesPoll(80n,8),-1);
+ c.grenades.receivedAt-=1000;
+ c.dispatchEvent(new CustomEvent('snapshot',{detail:{...c.snapshot,tick:11}}));await wait();
+ assert.equal(scope.zoneEngineGrenadesPoll(80n,8),0);
+ assert.equal(scope.zoneEngineGrenadesPoll(80n,8),-1);
 });
 test('corpse polling stays dormant until the application hook and copies explicit closure',async t=>{
  const c=new Client(),hub=createPthreadBridge(c,{epoch:'corpse'}),scope={},heap=new Uint8Array(512);

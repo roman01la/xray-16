@@ -8,6 +8,13 @@
 
 #include "StdAfx.h"
 #include "alife_switch_manager.h"
+#include "alife_host_targets.h"
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+#include "Level.h"
+#include "CustomMonster.h"
+#include "Include/xrRender/KinematicsAnimated.h"
+#include "Include/xrRender/RenderVisual.h"
+#endif
 #include "xrServer_Objects_ALife.h"
 #include "alife_graph_registry.h"
 #include "alife_object_registry.h"
@@ -45,6 +52,145 @@ struct remove_non_savable_predicate
 };
 
 CALifeSwitchManager::~CALifeSwitchManager() {}
+
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+void CALifeSwitchManager::open_host_interests()
+{
+    if (m_hostInterests)
+        return;
+    string_path outbox;
+    FS.update_path(outbox, "$app_data_root$", "zone-alife-outbox");
+    convert_path_separators(outbox);
+    const auto* configuredOutbox = std::getenv("ZONE_ALIFE_OUTBOX_DIR");
+    m_hostInterests = std::make_unique<AlifeHostInterests>();
+    R_ASSERT2(m_hostInterests->open(std::getenv("ZONE_ALIFE_INTEREST_SOCKET"),
+                  configuredOutbox ? configuredOutbox : outbox),
+        "A-Life needs a private Unix socket and writable, exclusive world state");
+    m_hostTargets = std::make_unique<AlifeHostTargets>();
+    Msg("* Zone A-Life interest receiver ready");
+}
+
+void CALifeSwitchManager::refresh_host_interests(CLevel& level) const
+{
+    if (!m_hostInterests || !initialized())
+        return;
+    const auto name = ai().game_graph().header().level(graph().level().level_id()).name();
+    m_hostInterests->refresh(name.c_str());
+    if (level.CurrentEntity())
+        m_hostTargets->update(level, server(), *m_hostInterests);
+}
+#endif
+
+bool CALifeSwitchManager::host_interests_requested()
+{
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    static const bool enabled = std::strstr(Core.Params, "-zone-alife-host") != nullptr;
+    return enabled || Device.IsHeadlessAlifeHost();
+#else
+    return false;
+#endif
+}
+
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+void CALifeSwitchManager::report_host_hit(u16 target, const SHit& hit) const
+{
+    if (m_hostInterests && m_hostTargets)
+        m_hostTargets->reportHit(target, hit, *m_hostInterests);
+}
+void CALifeSwitchManager::report_host_death(CSE_Abstract& entity)
+{
+    if (m_hostTargets)
+        m_hostTargets->observeDeath(Level(), entity);
+}
+void CALifeSwitchManager::publish_host_npcs(CLevel& level) const
+{
+    if (!m_hostInterests)
+        return;
+    if (m_hostTargets)
+        m_hostTargets->collectCorpses(level, server(), *m_hostInterests);
+    for (unsigned i = 0; m_hostTargets && i < 128; ++i)
+    {
+        const auto attack = m_hostInterests->nextAttack();
+        if (!attack)
+            break;
+        m_hostInterests->completeAttack(*attack, m_hostTargets->applyAttack(level, *attack));
+    }
+    if (!m_hostInterests->wantsNpcFrame())
+        return;
+    std::array<AlifeHostInterests::NpcPose, AlifeHostInterests::MaxNpcs> npcs;
+    std::size_t count = 0;
+    for (u32 i = 0; i < level.Objects.o_count() && count < npcs.size(); ++i)
+    {
+        const auto* npc = smart_cast<const CCustomMonster*>(level.Objects.o_get_by_iterator(i));
+        if (!npc || !npc->Local() || npc->getDestroy() || !npc->Visual() || !_valid(npc->Position()) ||
+            !std::isfinite(npc->GetfHealth()))
+            continue;
+        const auto name = npc->cNameVisual();
+        if (!name.c_str() || !name.size() || name.size() >= 128)
+            continue;
+        const std::string_view model(name.c_str(), name.size());
+        if (model.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-\\") != std::string_view::npos)
+            continue;
+        float yaw, pitch, bank;
+        npc->XFORM().getHPB(yaw, pitch, bank);
+        if (!std::isfinite(yaw))
+            continue;
+        const CBlend* primary = nullptr;
+        if (auto* animated = npc->Visual()->dcast_PKinematicsAnimated())
+            for (u32 part = 0; part < MAX_PARTS; ++part)
+                for (u32 j = 0; j < animated->LL_PartBlendsCount(part); ++j)
+                {
+                    const auto* blend = animated->LL_PartBlend(part, j);
+                    if (blend && blend->channel == 0 && blend->motionID.valid() &&
+                        (!primary || blend->blendAmount > primary->blendAmount))
+                        primary = blend;
+                }
+        const auto& p = npc->Position();
+        const auto health = static_cast<u16>(npc->g_Alive() ?
+            std::max(1.f, std::ceil(std::clamp(npc->GetfHealth(), 0.f, 1.f) * 100.f)) : 0.f);
+        const auto time = primary && std::isfinite(primary->timeCurrent) ?
+            static_cast<u32>(std::clamp(primary->timeCurrent * 1000.f, 0.f, 65535.f)) : 0;
+        Fvector center, half;
+        npc->BoundingBox().getcenter(center);
+        npc->BoundingBox().getradius(half);
+        if (!_valid(center) || !_valid(half) || std::abs(center.x) > 30.f || std::abs(center.y) > 30.f ||
+            std::abs(center.z) > 30.f || half.x > 30.f || half.y > 30.f || half.z > 30.f)
+            continue;
+        npcs[count++] = {npc->ID(), health, p.x, p.y, p.z, yaw, primary ? primary->motionID.val : u32(-1), time,
+            npc->spawn_time(), {center.x, center.y, center.z},
+            {std::max(.025f, half.x), std::max(.025f, half.y), std::max(.025f, half.z)}, model};
+    }
+    m_hostInterests->publishNpcs(npcs.data(), count);
+}
+#endif
+
+bool CALifeSwitchManager::uses_host_interests() const noexcept
+{
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    return bool(m_hostInterests);
+#else
+    return false;
+#endif
+}
+
+bool CALifeSwitchManager::near_switch_interest(const Fvector& position, float distance) const
+{
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    if (m_hostInterests)
+        return m_hostInterests->near(position.x, position.y, position.z, distance);
+#endif
+    return graph().actor()->o_Position.distance_to(position) <= distance;
+}
+
+std::size_t CALifeSwitchManager::host_interest_count() const noexcept
+{
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    return m_hostInterests ? m_hostInterests->size() : 0;
+#else
+    return 0;
+#endif
+}
+
 void CALifeSwitchManager::add_online(CSE_ALifeDynamicObject* object, bool update_registries)
 {
     START_PROFILE("ALife/switch/add_online")

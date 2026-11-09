@@ -1,0 +1,55 @@
+{
+  "name": "stock-jupiter-models-effects",
+  "map": "jupiter",
+  "save": "online-stash.scop",
+  "phases": [
+    {
+      "name": "spawn-late-game-gear",
+      "commands": [
+        "g_god on"
+      ],
+      "expect": [
+        "SHADER_SWEEP GEAR scheduled=4 map=jupiter"
+      ],
+      "lua": "local function printf(format,...) log1(string.format(format,...)) end\nlocal a=db.actor; assert(level.name()==\"jupiter\"); local p=a:position(); local d=a:direction(); d:mul(3); p:add(d); p.y=p.y+1; _G.shader_sweep_gear={}; for _,s in ipairs({\"wpn_gauss\",\"wpn_g36\",\"wpn_rpg7\",\"detector_elite\"}) do local o=alife():create(s,p,a:level_vertex_id(),a:game_vertex_id()); assert(o); _G.shader_sweep_gear[s]=o.id; p.x=p.x+0.7 end; printf(\"SHADER_SWEEP GEAR scheduled=4 map=%s\",level.name())"
+    },
+    {
+      "name": "confirm-visuals-and-play-effects",
+      "commands": [],
+      "expect": [
+        "SHADER_SWEEP MODEL wpn_gauss",
+        "SHADER_SWEEP MODEL wpn_g36",
+        "SHADER_SWEEP MODEL wpn_rpg7",
+        "SHADER_SWEEP MODEL detector_elite",
+        "bloodsucker_invisibility active=true",
+        "gauss_shot_sparks active=true",
+        "af_electra_idle_color active=true"
+      ],
+      "lua": "local function printf(format,...) log1(string.format(format,...)) end\nlocal n=0; for s,id in pairs(_G.shader_sweep_gear) do local o=level.object_by_id(id); assert(o and o:get_visual_name()); printf(\"SHADER_SWEEP MODEL %s %s\",s,o:get_visual_name()); n=n+1 end; assert(n==4)\nlocal a=db.actor; local p=a:position(); local d=a:direction(); d:mul(4); p:add(d); p.y=p.y+1; _G.shader_sweep_particles={}; for _,name in ipairs({[[anomaly2\\effects\\bloodsucker_invisibility]],[[weapons\\effects\\gauss_shot_sparks]],[[artefact\\effects\\af_electra_idle_color]]}) do local fx=particles_object(name); fx:play_at_pos(p); _G.shader_sweep_particles[name]=fx; printf(\"SHADER_SWEEP EFFECT %s active=%s\",name,tostring(fx:playing())) end"
+    },
+    {
+      "name": "night-thunder",
+      "commands": [],
+      "expect": [
+        "SHADER_SWEEP WEATHER map=jupiter cycle=default_thunder hour=23"
+      ],
+      "lua": "level.change_game_time(0, (23 - level.get_time_hours()) % 24, 0)\nlocal function printf(format,...) log1(string.format(format,...)) end\nlevel.set_weather(\"default_thunder\",true); printf(\"SHADER_SWEEP WEATHER map=%s cycle=%s hour=%d\",level.name(),level.get_weather(),level.get_time_hours())"
+    },
+    {
+      "name": "clear-noon",
+      "commands": [],
+      "expect": [
+        "SHADER_SWEEP WEATHER map=jupiter cycle=default_clear hour=12"
+      ],
+      "lua": "level.change_game_time(0, (12 - level.get_time_hours()) % 24, 0)\nlocal function printf(format,...) log1(string.format(format,...)) end\nlevel.set_weather(\"default_clear\",true); printf(\"SHADER_SWEEP WEATHER map=%s cycle=%s hour=%d\",level.name(),level.get_weather(),level.get_time_hours())"
+    },
+    {
+      "name": "emission",
+      "commands": [],
+      "expect": [
+        "SHADER_SWEEP SURGE started=true active=true"
+      ],
+      "lua": "local function printf(format,...) log1(string.format(format,...)) end\nlocal started=level.set_weather_fx(\"fx_surge_day_1\"); printf(\"SHADER_SWEEP SURGE started=%s active=%s\",tostring(started),tostring(level.is_wfx_playing()))"
+    }
+  ]
+}

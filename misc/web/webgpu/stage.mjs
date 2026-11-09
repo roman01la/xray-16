@@ -19,6 +19,7 @@ for (const obsolete of ["command-context.js", "gl-constants.js"])
   await rm(join(output, obsolete), {force:true});
 for (const file of [
   "xr_3da.wasm",
+  "audio-worklet.mjs",
   "ingest-worker.js",
   "stock-bindings.mjs",
   "engine_data.json",
@@ -48,6 +49,17 @@ for (const file of [
   "occlusion.js",
 ])
   await copyFile(join(source, file), join(output, file));
+const captureModule = join(output, "shader-capture.mjs");
+if (capture) {
+  await copyFile(join(source, "shader-capture.mjs"), captureModule);
+  const client = join(output, "shader-compiler-client.mjs");
+  const code = await readFile(client, "utf8");
+  const flag = "const shaderCaptureBuild = false;";
+  if (!code.includes(flag)) throw Error("Shader capture staging flag changed");
+  await writeFile(client, code.replace(flag, "const shaderCaptureBuild = true;"));
+} else {
+  await rm(captureModule, {force:true});
+}
 await mkdir(join(output, "compiler-wasm"), {recursive:true});
 for (const name of ["shaderc.mjs", "shaderc.wasm", "naga.wasm", "LICENSES.txt"])
   await copyFile(join(source,"compiler-wasm",name),join(output,"compiler-wasm",name));
@@ -57,6 +69,8 @@ try {
   if (e.code !== "EEXIST") throw e;
 }
 let loader = await readFile(join(dist, "xr_3da.js"), "utf8");
+// Emscripten 7.0.0 can pass null for ai_canonname. Wasm64 requires numeric zero.
+loader = loader.replaceAll("proto,null,", "proto,0,");
 loader = loader.replace(/\bGL\b/g, "CanvasTransferRegistry").replace(/softFullscreenResizeWebGLRenderTarget/g, "resizeFullscreenCanvas");
 const hook = "wasmModule=msgData.wasmModule;createWasm();";
 if (!loader.includes(hook))
@@ -104,7 +118,9 @@ await writeFile(join(output, "index.html"), html);
 console.log("Staged native WebGPU build:", output);
 
 // Offline artifacts and runtime results share the browser shader cache.
-const shaderSource = join(source, "shaders");
+const shaderSource = capture && process.env.XRAY_SHADER_PACKAGE
+  ? resolve(process.env.XRAY_SHADER_PACKAGE)
+  : join(source, "shaders");
 await mkdir(join(output, "shaders"), { recursive: true });
 const shaderKeys = [];
 for (const name of (await readdir(shaderSource)).sort()) {

@@ -25,6 +25,9 @@ class CALifeUpdateManager : public CALifeSwitchManager,
 {
 private:
     bool m_first_time;
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    u32 m_last_host_checkpoint = 0;
+#endif
 
 protected:
     u64 m_max_process_time;

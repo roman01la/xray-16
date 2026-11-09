@@ -1,0 +1,50 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized Rust and unified WASM with Chrome WebGPU, stock Zaton field and ladder exports, and the catalog-matched reload timing export. The fixture seeded Svarog and a Makarov with 16 loose rounds, and placed characters at surveyed approaches. Native inputs were O, R, W, and D.",
+  "engineWasmSha256": "878a9a2597013bb8ca9909a32ace0bfde6b9d9d3026a6ca43b96e438cb539352",
+  "serverSha256": "425a4f0117a3f59f9565639b2171b8ec06ffb8a10bb3e857cc684c3066764fc2",
+  "reload": {
+    "manualDraw": "* Zone detector draw: detector_scientific 1701 ms",
+    "phase": "anm_reload_empty",
+    "milliseconds": 2368,
+    "hide": "* Zone detector motion: anm_hide_fast",
+    "resumed": "* Zone detector motion: anm_show_fast",
+    "originalDeadlineKept": true,
+    "rounds": 8,
+    "reserve": 8
+  },
+  "ladder": {
+    "spawnId": 6,
+    "heightGained": 0.4766573905944824,
+    "attachedWhileIdle": true,
+    "detached": true,
+    "detachedPosition": [
+      415.5642395019531,
+      -7.443911552429199,
+      210.9256591796875
+    ],
+    "hide": "* Zone detector motion: anm_hide_fast",
+    "resumed": "* Zone detector motion: anm_show_fast"
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "saveAndReload": true,
+    "multiplayerRequests": 0,
+    "validationErrors": 0
+  },
+  "testSuites": {
+    "rust": 146,
+    "browser": 132
+  },
+  "screenshots": {
+    "beforeDuringAfterReload": "native-detector-reload.jpg",
+    "beforeDuringAfterClimb": "native-detector-ladder.jpg"
+  },
+  "manualStow": {
+    "spawnId": 6,
+    "detached": true,
+    "stayedStowed": true,
+    "resumedOnlyOnBinding": true,
+    "draw": "* Zone detector draw: detector_scientific 1701 ms"
+  }
+}

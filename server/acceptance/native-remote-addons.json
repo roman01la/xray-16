@@ -1,0 +1,138 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized Rust and two local Chrome WebGPU instances on stock Zaton. Seeded stock LR300 and loose parts. The owner fitted and removed all three parts through the original inventory context menu. The observer stood 4.5 metres away and aimed at the owner with the original camera input.",
+  "engineWasmSha256": "97cdb1ecf5e502d74d081cd3f1875029e8791f819c9eaa33a3fee1829820d83c",
+  "serverSha256": "f00a0e8c2593c1d13be24db56e2f768f2e8bde34e28f23fa872dc817fc8e0ca2",
+  "appearance": {
+    "actor": 2,
+    "distance": 4.5,
+    "events": [
+      {
+        "name": "bare",
+        "appearance": {
+          "outfit": "stalker_outfit",
+          "weapon": "wpn_lr300"
+        },
+        "bones": "* Zone observer addons: wpn_lr300 mask=0 bones=0"
+      },
+      {
+        "name": "scope",
+        "appearance": {
+          "outfit": "stalker_outfit",
+          "weapon": "wpn_lr300",
+          "weaponAddons": 1
+        },
+        "bones": "* Zone observer addons: wpn_lr300 mask=1 bones=1",
+        "menuToObserverMs": 1502
+      },
+      {
+        "name": "suppressor",
+        "appearance": {
+          "outfit": "stalker_outfit",
+          "weapon": "wpn_lr300",
+          "weaponAddons": 5
+        },
+        "bones": "* Zone observer addons: wpn_lr300 mask=5 bones=5",
+        "menuToObserverMs": 1512
+      },
+      {
+        "name": "launcher",
+        "appearance": {
+          "outfit": "stalker_outfit",
+          "weapon": "wpn_lr300",
+          "weaponAddons": 7
+        },
+        "bones": "* Zone observer addons: wpn_lr300 mask=7 bones=7",
+        "menuToObserverMs": 1470
+      },
+      {
+        "name": "detach-launcher",
+        "appearance": {
+          "outfit": "stalker_outfit",
+          "weapon": "wpn_lr300",
+          "weaponAddons": 5
+        },
+        "bones": "* Zone observer addons: wpn_lr300 mask=5 bones=5",
+        "menuToObserverMs": 1519
+      },
+      {
+        "name": "detach-scope",
+        "appearance": {
+          "outfit": "stalker_outfit",
+          "weapon": "wpn_lr300",
+          "weaponAddons": 4
+        },
+        "bones": "* Zone observer addons: wpn_lr300 mask=4 bones=4",
+        "menuToObserverMs": 1510
+      },
+      {
+        "name": "detach-suppressor",
+        "appearance": {
+          "outfit": "stalker_outfit",
+          "weapon": "wpn_lr300"
+        },
+        "bones": "* Zone observer addons: wpn_lr300 mask=0 bones=0",
+        "menuToObserverMs": 1508
+      }
+    ],
+    "holstered": {
+      "outfit": "stalker_outfit"
+    },
+    "drawn": {
+      "outfit": "stalker_outfit",
+      "weapon": "wpn_lr300",
+      "weaponAddons": 7
+    },
+    "freshObserver": {
+      "outfit": "stalker_outfit",
+      "weapon": "wpn_lr300",
+      "weaponAddons": 7
+    },
+    "retainedRifleRounds": 4,
+    "webgpuValidationErrors": 0
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      625858
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "testSuites": {
+    "rust": 148,
+    "browser": 133
+  },
+  "screenshots": {
+    "bare": "native-remote-addons-bare.jpg",
+    "mounted": "native-remote-addons-mounted.jpg",
+    "detached": "native-remote-addons-detached.jpg"
+  },
+  "runNotes": [
+    "Observer probes recorded actual native visibility for each stock bone and matched each reliable appearance mask.",
+    "The menu-to-observer times include scripted cursor motion, click delays and polling. They are not network latency measurements.",
+    "The public payload exposed outfit and drawn weapon sections plus the visibility mask. It carried no inventory IDs, ammunition or condition.",
+    "This run covered a drawn rifle, including holster and redraw. Slung weapon models remain open."
+  ]
+}

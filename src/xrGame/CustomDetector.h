@@ -138,6 +138,13 @@ public:
     virtual void UpdateCL();
 
     bool IsWorking();
+#ifdef XRAY_WEB_MULTIPLAYER
+    void PrepareNetworkHud();
+    void ClearNetworkHud();
+    u32 PlayNetworkHudMotion(bool draw, bool fast);
+    bool NetworkHudCompatible(CHudItem* primary) { return CheckCompatibilityInt(primary, nullptr); }
+    CUIArtefactDetectorBase* NetworkHudUI() const { return m_ui; }
+#endif
 
     virtual void OnMoveToSlot(const SInvItemPlace& prev);
     virtual void OnMoveToRuck(const SInvItemPlace& prev);

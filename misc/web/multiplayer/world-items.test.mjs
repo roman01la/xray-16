@@ -60,3 +60,24 @@ test('discovery publishes the owner’s locker with no loose items and clears it
  assert.equal(s.adapter.view.storage,undefined);
  s.adapter.close();
 });
+
+test('private detector cue survives pagination and cannot leak item identities in a hint',async()=>{
+ const detector={tier:2,working:true,period:0.2,pitch:1.3,bearing:-0.5};
+ const s=setup(async after=>after?page([item(2)]):{...page([item(1)],item(1).id),detector});
+ await s.adapter.refresh();
+ assert.deepEqual(s.adapter.view.detector,detector);
+ const radar={tier:4,working:true,points:[[1,2,3]],labels:['af_cristall']};
+ s.client.worldItems=async()=>({...page([]),detector:radar});
+ await s.adapter.refresh();
+ assert.deepEqual(s.adapter.view.detector,radar);
+ for(const labels of [[],[item(1).id + '/invalid']]){
+  s.client.worldItems=async()=>({...page([]),detector:{...radar,labels}});
+  await assert.rejects(s.adapter.refresh(),/Invalid private detector cue/);
+ }
+ s.client.worldItems=async()=>({...page([]),detector:{...detector,id:item(1).id}});
+ await assert.rejects(s.adapter.refresh(),/Invalid private detector cue/);
+ s.client.inventory.view={life:1,alive:false};
+ await s.adapter.refresh();
+ assert.equal(s.adapter.view.detector,undefined);
+ s.adapter.close();
+});

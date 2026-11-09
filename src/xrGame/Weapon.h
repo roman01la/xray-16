@@ -124,6 +124,10 @@ public:
     BOOL CheckForMisfire();
 #ifdef __EMSCRIPTEN__
     void SetPresentationMisfire(bool jammed) { bMisfire = jammed; }
+    void SetPresentationAim(bool aiming);
+    float PresentationAimRotation() const { return m_zoom_params.m_fZoomRotationFactor; }
+    void SetPresentationAimRotation(float rotation) { m_zoom_params.m_fZoomRotationFactor = rotation; }
+    void ClearPresentationAim();
 #endif
 
     BOOL AutoSpawnAmmo() const { return m_bAutoSpawnAmmo; };

@@ -46,6 +46,32 @@ CREATE TRIGGER container_item_delete AFTER DELETE ON inventory_items BEGIN UPDAT
 CREATE TRIGGER container_item_update AFTER UPDATE ON inventory_items BEGIN UPDATE item_containers SET generation=generation+1 WHERE id IN(OLD.container,NEW.container); END;
 PRAGMA user_version=8;";
 
+pub(crate) const ACTIVE_WEAPON_SCHEMA: &str = "
+ALTER TABLE inventory_characters ADD COLUMN active_weapon_slot INTEGER
+    CHECK(active_weapon_slot IN (0,2,3));
+PRAGMA user_version=16;";
+
+pub(crate) const GRENADE_SLOT_SCHEMA: &str = "
+ALTER TABLE inventory_characters ADD COLUMN grenade_drawn INTEGER NOT NULL DEFAULT 0
+    CHECK(grenade_drawn IN (0,1));
+PRAGMA user_version=17;";
+
+pub(crate) const KNIFE_SLOT_SCHEMA: &str = "
+ALTER TABLE inventory_characters ADD COLUMN selected_weapon_slot INTEGER
+    CHECK(selected_weapon_slot IN (0,1,2,3));
+UPDATE inventory_characters SET selected_weapon_slot=active_weapon_slot;
+ALTER TABLE inventory_characters DROP COLUMN active_weapon_slot;
+ALTER TABLE inventory_characters RENAME COLUMN selected_weapon_slot TO active_weapon_slot;
+PRAGMA user_version=18;";
+
+pub(crate) const BOLT_SLOT_SCHEMA: &str = "
+ALTER TABLE inventory_characters ADD COLUMN selected_weapon_slot INTEGER
+    CHECK(selected_weapon_slot IN (0,1,2,3,6));
+UPDATE inventory_characters SET selected_weapon_slot=active_weapon_slot;
+ALTER TABLE inventory_characters DROP COLUMN active_weapon_slot;
+ALTER TABLE inventory_characters RENAME COLUMN selected_weapon_slot TO active_weapon_slot;
+PRAGMA user_version=19;";
+
 /// Per-instance state, never supplied by a browser action. Section names refer to
 /// original configuration sections; no new fixed magazine/ammunition model.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -165,6 +191,7 @@ impl ItemState {
 pub struct Context {
     pub principal: String,
     pub life: u32,
+    pub visit: u32,
     pub auth_epoch: u64,
     pub world: String,
     pub position: [f64; 3],
@@ -172,6 +199,12 @@ pub struct Context {
     pub eye_height: f32,
     pub collision: Option<std::sync::Arc<crate::collision::CollisionMap>>,
     pub expires: Instant,
+}
+
+#[derive(Clone, Default)]
+pub struct DetectorScan {
+    pub radar_zones: Option<std::sync::Arc<crate::environment::RadarZones>>,
+    pub hands_busy: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -418,6 +451,8 @@ pub(crate) fn world_items(
     after: &str,
     context: &Context,
     rules: Option<&SurvivalRules>,
+    catalog: Option<&crate::catalog::Catalog>,
+    detector_scan: &DetectorScan,
 ) -> Result<Value> {
     if !authorized(tx, principal, context)? {
         return Ok(json!({"error":"invalid discovery authority"}));
@@ -427,9 +462,20 @@ pub(crate) fn world_items(
     const RADIUS:f64=32.0;
     let [x,y,z]=context.position;
     let now=crate::survival_rules::unix_millis()?;
-    let mut query=tx.prepare("SELECT i.id,i.revision,i.section,i.state,c.id,c.x,c.y,c.z FROM item_containers c JOIN inventory_items i ON i.container=c.id WHERE c.kind='world' AND c.world=?1 AND i.id>?2 AND (c.expires_at_ms IS NULL OR c.expires_at_ms>?3) AND c.x BETWEEN ?4-32 AND ?4+32 AND c.y BETWEEN ?5-32 AND ?5+32 AND c.z BETWEEN ?6-32 AND ?6+32 AND (c.x-?4)*(c.x-?4)+(c.y-?5)*(c.y-?5)+(c.z-?6)*(c.z-?6)<=?7 ORDER BY i.id LIMIT 33")?;
+    let detector = match catalog {
+        Some(catalog) if after.is_empty() => crate::artefact::scan(tx, context, catalog, now, detector_scan)?,
+        _ => None,
+    };
+    let mut query=tx.prepare_cached("SELECT i.id,i.revision,i.section,i.state,c.id,c.x,c.y,c.z
+        FROM item_containers c JOIN inventory_items i ON i.container=c.id
+        WHERE c.kind='world' AND c.world=?1 AND i.id>?2 AND (c.expires_at_ms IS NULL OR c.expires_at_ms>?3)
+        AND c.x BETWEEN ?4-32 AND ?4+32 AND c.y BETWEEN ?5-32 AND ?5+32 AND c.z BETWEEN ?6-32 AND ?6+32
+        AND (c.x-?4)*(c.x-?4)+(c.y-?5)*(c.y-?5)+(c.z-?6)*(c.z-?6)<=?7
+        AND (NOT EXISTS(SELECT 1 FROM authored_artefact_slots s WHERE s.container=c.id)
+            OR EXISTS(SELECT 1 FROM artefact_reveals r WHERE r.principal=?8 AND r.item=i.id
+                AND r.life=?9 AND r.visit=?10 AND r.visible_until_ms>?3)) ORDER BY i.id LIMIT 33")?;
     let mut items=Vec::new();let mut bytes=0;let mut more=false;
-    for row in query.query_map(params![context.world,after,now,x,y,z,RADIUS*RADIUS],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u32>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,[r.get::<_,f64>(5)?,r.get::<_,f64>(6)?,r.get::<_,f64>(7)?])))? {
+    for row in query.query_map(params![context.world,after,now,x,y,z,RADIUS*RADIUS,principal,life,context.visit],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u32>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,[r.get::<_,f64>(5)?,r.get::<_,f64>(6)?,r.get::<_,f64>(7)?])))? {
         let (id,revision,section,state,source,position)=row?;
         let item=json!({"id":id,"revision":revision,"section":section,"state":presented_state(&state)?,"source":source,"position":position});
         let size=serde_json::to_vec(&item)?.len();
@@ -438,6 +484,7 @@ pub(crate) fn world_items(
     }
     let cursor=if more {items.last().map(|v|v["id"].clone())}else{None};
     let mut page = json!({"life":life,"items":items,"nextCursor":cursor});
+    if let Some(detector) = detector { page["detector"] = detector; }
     if after.is_empty() && let Some(station) = storage_station(context, rules)
         && distance_squared(station.position, context.position) <= RADIUS * RADIUS
     {
@@ -450,7 +497,7 @@ pub(crate) fn world_items(
     Ok(page)
 }
 
-fn alive_context(tx:&Transaction<'_>,principal:&str,context:&Context)->Result<bool>{
+pub(crate) fn alive_context(tx:&Transaction<'_>,principal:&str,context:&Context)->Result<bool>{
     if !authorized(tx,principal,context)? {return Ok(false);}
     Ok(tx.query_row("SELECT alive AND life=?2 FROM inventory_characters WHERE principal=?1",params![principal,context.life],|r|r.get::<_,bool>(0))?)
 }
@@ -520,7 +567,8 @@ fn authorized(tx: &Transaction<'_>, principal: &str, context: &Context) -> Resul
         && context.interaction_radius.is_finite()
         && context.interaction_radius > 0.0
         && context.eye_height.is_finite() && (0.1..=2.0).contains(&context.eye_height)
-        && (context.world!="zaton-static-v1" || context.collision.is_some()))
+        && crate::session::campaign_level(&context.world).is_none_or(|level|
+            context.collision.as_ref().is_some_and(|map| map.manifest.level == level)))
 }
 fn nearby(tx: &Transaction<'_>, container: &str, context: &Context) -> Result<bool> {
     let location: Option<(String, f64, f64, f64)> = tx
@@ -552,7 +600,7 @@ fn distance_squared(a: [f64; 3], b: [f64; 3]) -> f64 {
     a.into_iter().zip(b).map(|(a, b)| (a - b).powi(2)).sum()
 }
 
-fn interaction_near(context: &Context, position: [f64; 3], target_height: f32) -> Result<bool> {
+pub(crate) fn interaction_near(context: &Context, position: [f64; 3], target_height: f32) -> Result<bool> {
     if distance_squared(position, context.position) > context.interaction_radius.powi(2) {
         return Ok(false);
     }
@@ -568,6 +616,103 @@ fn interaction_near(context: &Context, position: [f64; 3], target_height: f32) -
     }
     Ok(true)
 }
+fn move_replay(tx: &Transaction<'_>, principal: &str, command: &Move, request: &str) -> Result<Option<Value>> {
+    let prior: Option<(String, String)> = tx.query_row(
+        "SELECT request,response FROM outcomes WHERE principal=?1 AND request_id=?2",
+        params![principal, command.request_id], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional()?;
+    prior.map(|(original, response)| Ok(if original == request {
+        serde_json::from_str(&response)?
+    } else {
+        json!({"error":"request id reused with different payload"})
+    })).transpose()
+}
+
+pub(crate) fn timed_reload(
+    tx: &Transaction<'_>, context: &Context, command: &Move,
+    catalog: &crate::catalog::Catalog, rules: Option<&SurvivalRules>,
+    timings: Option<&crate::reload_timing::ReloadTimings>,
+) -> Result<Value> {
+    use crate::reload_timing::{ReloadCue, ReloadMotion, ReloadPlan};
+    command.validate()?;
+    ensure!(matches!(command.action, MoveAction::Reload | MoveAction::NextAmmo), "expected reload action");
+    let principal = &context.principal;
+    let request = format!("inventory-move-v1\n{}", serde_json::to_string(command)?);
+    if let Some(response) = move_replay(tx, principal, command, &request)? {
+        return Ok(response);
+    }
+    if !authorized(tx, principal, context)? {
+        return Ok(json!({"error":"live inventory authorization required"}));
+    }
+    let carry = personal_container(tx, principal, "carried")?;
+    let slot = active_weapon_slot(tx, principal)?;
+    let drawn: Option<(String, String)> = tx.query_row(
+        "SELECT section,state FROM inventory_items WHERE id=?1 AND container=?2 AND place=?3",
+        params![command.item, carry, format!("slot:{slot}")],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional()?;
+    let Some((weapon, raw)) = drawn.filter(|_| matches!(slot, 2 | 3)) else {
+        return Ok(json!({"status":"rejected","reason":"weapon_not_drawn"}));
+    };
+    let Some(timings) = timings else {
+        return move_item(tx, principal, command, context, Some(catalog), rules, None);
+    };
+
+    // Run the same move validation and ammo selection as the eventual commit.
+    // Neither the proposed magazine nor its request outcome leaves this savepoint.
+    tx.execute_batch("SAVEPOINT reload_preview")?;
+    let preview = (|| -> Result<_> {
+        let result = move_item(tx, principal, command, context, Some(catalog), rules, None)?;
+        let after = if result["status"] == "committed" {
+            let raw: String = tx.query_row("SELECT state FROM inventory_items WHERE id=?1",
+                [&command.item], |row| row.get(0))?;
+            Some(serde_json::from_str::<ItemState>(&raw)?)
+        } else { None };
+        Ok((result, after))
+    })();
+    tx.execute_batch("ROLLBACK TO reload_preview; RELEASE reload_preview")?;
+    let (result, after) = preview?;
+    let Some(after) = after else { return Ok(result); };
+    let before: ItemState = serde_json::from_str(&raw)?;
+    let ItemPayload::Weapon { cartridges, launcher_mode, jammed, .. } = &before.payload else {
+        anyhow::bail!("reload preview accepted a nonweapon");
+    };
+    let section = catalog.section(&weapon)?;
+    let outfit: Option<String> = tx.query_row(
+        "SELECT section FROM inventory_items WHERE container=?1 AND place='slot:7'",
+        [&carry], |row| row.get(0),
+    ).optional()?;
+    let actor = outfit.as_deref().and_then(|outfit| catalog.section(outfit).ok())
+        .and_then(|section| section.values.get("player_hud_section"))
+        .map_or("actor_hud", String::as_str);
+    use crate::reload_timing::ReloadSound;
+    let cue = |phase, sound| {
+        let (alias, milliseconds) = timings.motion(&weapon, actor, phase)?;
+        Ok::<_, anyhow::Error>(ReloadCue { alias: alias.to_owned(), milliseconds, sound })
+    };
+    let plan = if *launcher_mode {
+        ReloadPlan { open: None, apply: cue(ReloadMotion::Launcher, ReloadSound::Launcher)?, close: None }
+    } else if section.boolean("tri_state_reload", false)? {
+        ReloadPlan { open: Some(cue(ReloadMotion::Open, ReloadSound::Open)?),
+            apply: cue(ReloadMotion::Insert, ReloadSound::Insert)?,
+            close: Some(cue(ReloadMotion::Close, ReloadSound::Close)?) }
+    } else {
+        let (motion, sound) = if section.text("class")? == "WP_BM16" {
+            let ItemPayload::Weapon { cartridges: new, .. } = &after.payload else { unreachable!() };
+            let replaced = cartridges.last().zip(new.last()).is_some_and(|(old, new)| old != new);
+            (ReloadMotion::BreakAction { two: replaced || cartridges.is_empty() && new.len() >= 2 },
+                if cartridges.len() == 1 { ReloadSound::OneShell } else { ReloadSound::Magazine })
+        } else {
+            let empty = cartridges.is_empty();
+            let sound = if *jammed { ReloadSound::Misfire } else if empty { ReloadSound::Empty } else { ReloadSound::Magazine };
+            (ReloadMotion::Magazine { empty, jammed: *jammed,
+                launcher_attached: catalog.launcher_available(&weapon, &before)? }, sound)
+        };
+        ReloadPlan { open: None, apply: cue(motion, sound)?, close: None }
+    };
+    Ok(json!({"plan":plan,"slot":slot}))
+}
+
 pub(crate) fn move_item(
     tx: &Transaction<'_>,
     principal: &str,
@@ -579,19 +724,8 @@ pub(crate) fn move_item(
 ) -> Result<Value> {
     command.validate()?;
     let request = format!("inventory-move-v1\n{}", serde_json::to_string(command)?);
-    let prior: Option<(String, String)> = tx
-        .query_row(
-            "SELECT request,response FROM outcomes WHERE principal=?1 AND request_id=?2",
-            params![principal, command.request_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    if let Some((original, response)) = prior {
-        return Ok(if original == request {
-            serde_json::from_str(&response)?
-        } else {
-            json!({"error":"request id reused with different payload"})
-        });
+    if let Some(response) = move_replay(tx, principal, command, &request)? {
+        return Ok(response);
     }
     // Expired authority is transient; a retry with fresh simulation context may
     // proceed. Committed outcomes above remain recoverable after movement/death.
@@ -628,7 +762,9 @@ pub(crate) fn move_item(
                 source == *expected && if source == personal_container(tx, principal, "storage")? {
                     storage_near(context, rules)?
                 } else {
-                    nearby(tx, &source, context)?
+                    nearby(tx, &source, context)? && crate::artefact::can_pick_up(
+                        tx, context, &source, &command.item, crate::survival_rules::unix_millis()?,
+                    )?
                 }
             }
             MoveAction::Store { destination } => {
@@ -722,7 +858,9 @@ pub(crate) fn move_item(
                     let changed = tx.execute("UPDATE inventory_items SET container=?1,revision=?2,place='rucksack' WHERE id=?3 AND container=?4 AND revision=?5", params![destination,next,command.item,source,revision])?;
                     ensure!(changed == 1, "inventory transaction lost ownership");
                     if matches!(command.action, MoveAction::Pickup { .. }) && let Some(rules) = rules {
-                        crate::loot::record_pickup(tx, &source, rules, crate::survival_rules::unix_millis()?)?;
+                        let now = crate::survival_rules::unix_millis()?;
+                        crate::loot::record_pickup(tx, &source, rules, now)?;
+                        crate::artefact::picked_up(tx, &source, &command.item, crate::loot::deadline(now, rules))?;
                     }
                     response = json!({"status":"committed","item":command.item,"revision":next,"container":destination});
                 }
@@ -797,34 +935,116 @@ fn consume_item(
         "remaining":remaining,"life":command.life,"condition":record}))
 }
 
+pub(crate) fn active_weapon_slot(tx: &Transaction<'_>, principal: &str) -> Result<u8> {
+    // NULL is the existing primary-then-pistol default. Zero is an explicit holster.
+    Ok(tx.prepare_cached("SELECT CAST(substr(i.place,6) AS INTEGER) FROM inventory_items i
+        JOIN item_containers c ON c.id=i.container JOIN inventory_characters a ON a.principal=c.owner
+        WHERE a.principal=?1 AND a.alive=1 AND c.kind='carried' AND (
+            (a.grenade_drawn=1 AND i.place='slot:4') OR
+            (i.place IN('slot:1','slot:2','slot:3','slot:6') AND (i.place='slot:'||a.active_weapon_slot
+                OR a.active_weapon_slot IS NULL AND i.place IN('slot:2','slot:3'))))
+        ORDER BY i.place='slot:4' DESC, i.place DESC LIMIT 1")?.query_row([principal], |row| row.get(0)).optional()?.unwrap_or(0))
+}
+
+pub(crate) fn select_weapon(tx: &Transaction<'_>, context: &Context, life: u32, slot: u8, catalog: &crate::catalog::Catalog) -> Result<Value> {
+    if life != context.life { return Ok(json!({"status":"rejected","reason":"stale_or_dead_life"})); }
+    if slot == 4 {
+        let alive: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM inventory_characters WHERE principal=?1 AND life=?2 AND alive=1)",
+            params![context.principal, life], |row| row.get(0))?;
+        if !alive { return Ok(json!({"status":"rejected","reason":"stale_or_dead_life"})); }
+        let carry = personal_container(tx, &context.principal, "carried")?;
+        let equipped: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM inventory_items WHERE container=?1 AND place='slot:4')",
+            [&carry], |row| row.get(0))?;
+        if !equipped && !crate::hand_grenade::slot_next(tx, catalog, &carry, "")? {
+            return Ok(json!({"status":"rejected","reason":"weapon_slot_unavailable"}));
+        }
+        tx.execute("UPDATE inventory_characters SET grenade_drawn=1 WHERE principal=?1", [&context.principal])?;
+        return Ok(json!({"status":"selected","slot":slot}));
+    }
+    let changed = tx.execute("UPDATE inventory_characters SET active_weapon_slot=?1,grenade_drawn=0
+        WHERE principal=?2 AND life=?3 AND alive=1 AND (?1=0 OR EXISTS(
+            SELECT 1 FROM inventory_items i JOIN item_containers c ON c.id=i.container
+            WHERE c.owner=?2 AND c.kind='carried' AND i.place='slot:'||?1))",
+        params![slot, context.principal, life])?;
+    Ok(if changed == 1 { json!({"status":"selected","slot":slot}) }
+        else { json!({"status":"rejected","reason":"weapon_slot_unavailable"}) })
+}
+
+fn allows_sprint(catalog: &crate::catalog::Catalog, section: &str, state: &ItemState) -> Result<bool> {
+    Ok(match catalog.effective_text(section, state, "sprint_allowed")?.as_deref() {
+        None | Some("true" | "on" | "1" | "yes") => true,
+        Some("false" | "off" | "0" | "no") => false,
+        _ => anyhow::bail!("invalid item sprint setting"),
+    })
+}
+
 /// Recompute after a carried-item transaction. Movement ticks use this snapshot.
-pub(crate) fn loadout(tx: &Transaction<'_>, principal: &str, catalog: &crate::catalog::Catalog) -> Result<crate::survival::Loadout> {
+pub(crate) fn carried_equipment(tx: &Transaction<'_>, principal: &str, catalog: &crate::catalog::Catalog) -> Result<(crate::survival::Loadout, crate::lifecycle::Appearance)> {
     use crate::catalog::Kind;
     let carry = personal_container(tx, principal, "carried")?;
-    let mut query = tx.prepare_cached("SELECT section,state,place FROM inventory_items WHERE container=?1")?;
+    let mut query = tx.prepare_cached("SELECT section,state,place,revision,id FROM inventory_items WHERE container=?1")?;
     let mut rows = query.query([carry])?;
-    let mut result = crate::survival::Loadout::default();
+    let mut result = crate::survival::Loadout { active_weapon_slot: active_weapon_slot(tx, principal)?, ..Default::default() };
+    let mut appearance = crate::lifecycle::Appearance::default();
+    let active_place = match result.active_weapon_slot { 1 => Some("slot:1"), 2 => Some("slot:2"), 3 => Some("slot:3"), 4 => Some("slot:4"), 6 => Some("slot:6"), _ => None };
     while let Some(row) = rows.next()? {
         let section: String = row.get(0)?;
         let state: ItemState = serde_json::from_str(&row.get::<_, String>(1)?)?;
         let place: String = row.get(2)?;
-        let (_, kind) = catalog.item(&section)?;
+        let (definition, kind) = catalog.item(&section)?;
         result.mass += catalog.weight(&section, &state)?;
+        result.fields.armour.add(catalog, &section, &state, &place)?;
+        if Some(place.as_str()) == active_place {
+            result.active_item_blocks_sprint = !allows_sprint(catalog, &section, &state)?;
+            if kind == Kind::Weapon || matches!(place.as_str(), "slot:1" | "slot:4" | "slot:6") { appearance.weapon = Some(section.clone()); }
+            if matches!(place.as_str(), "slot:1" | "slot:4") {
+                let id: String = row.get(4)?;
+                result.active_item = Some(u128::from_str_radix(&id, 16)?.to_le_bytes());
+            }
+            if kind == Kind::Weapon {
+                result.ballistics = crate::weapon_inventory::round_profile(catalog, &section, &state, row.get(3)?)?;
+                if let ItemPayload::Weapon { attachments, .. } = &state.payload {
+                    // Match X-Ray's scope, launcher and silencer flag values.
+                    let mask = catalog.addons(&section, &state)?.into_iter().zip([1, 4, 2])
+                        .filter(|((status, names), _)| {
+                            *status == 1 || (*status == 2 && attachments.iter().any(|name| names.contains(name)))
+                        })
+                        .fold(0, |mask, (_, flag)| mask | flag);
+                    appearance.weapon_addons = (mask != 0).then_some(mask);
+                }
+                if definition.boolean("zoom_enabled", false)?
+                    && let ItemPayload::Weapon { launcher_mode, .. } = &state.payload
+                {
+                    let weapon: String = row.get(4)?;
+                    let seconds = catalog.effective_number(&section, &state, "zoom_rotate_time", 0.25)?;
+                    let raise_ticks = (seconds * f64::from(crate::world::TICK_HZ)).ceil() as u16;
+                    result.aim = Some(crate::survival::AimProfile {
+                        weapon: u128::from_str_radix(&weapon, 16)?.to_le_bytes(),
+                        raise_ticks,
+                        launcher: *launcher_mode,
+                    });
+                }
+            }
+        }
         if kind == Kind::Outfit && place == "slot:7" {
+            appearance.outfit = Some(section.clone());
             result.capacity_bonus += catalog.effective_number(&section, &state, "additional_inventory_weight", 0.0)?;
             result.power_loss = catalog.effective_number(&section, &state, "power_loss", 1.0)?;
-            result.outfit_allows_sprint = match catalog.effective_text(&section, &state, "sprint_allowed")?.as_deref() {
-                None | Some("true" | "on" | "1" | "yes") => true,
-                Some("false" | "off" | "0" | "no") => false,
-                _ => anyhow::bail!("invalid outfit sprint setting"),
-            };
+            result.outfit_allows_sprint = allows_sprint(catalog, &section, &state)?;
+            result.restoration.add(catalog, &section, &state, 1.0)?;
+        } else if kind == Kind::Helmet && place == "slot:12" {
+            appearance.helmet = Some(section.clone());
         } else if kind == Kind::Artefact && place.starts_with("belt:") {
             result.capacity_bonus += catalog.effective_number(&section, &state, "additional_inventory_weight", 0.0)?
                 * f64::from(state.condition);
+            result.restoration.add(catalog, &section, &state, state.condition)?;
+            result.fields.add_artefact(catalog, definition)?;
         }
     }
-    ensure!(result.mass.is_finite() && result.capacity_bonus.is_finite() && result.power_loss >= 0.0 && result.power_loss.is_finite(), "invalid carried load");
-    Ok(result)
+    result.fields.armour.stamp(tx, principal)?;
+    ensure!(result.mass.is_finite() && result.capacity_bonus.is_finite() && result.power_loss >= 0.0
+        && result.power_loss.is_finite(), "invalid carried load");
+    Ok((result, appearance))
 }
 
 /// Only the authoritative simulation may request death. Life number is the
@@ -857,11 +1077,11 @@ pub(crate) fn die(
     // One UPDATE moves rucksack, every slot and belt together. State is untouched.
     // Revision overflow aborts/rolls back the entire transaction, including corpse.
     tx.execute("UPDATE inventory_items SET container=?1,place='rucksack',revision=revision+1 WHERE container=?2", params![corpse,carry])?;
-    tx.execute("UPDATE inventory_characters SET alive=0,corpse=?1,generation=generation+1,dead_at_ms=?3,location=NULL WHERE principal=?2", params![corpse,principal,crate::survival_rules::unix_millis()?])?;
+    tx.execute("UPDATE inventory_characters SET alive=0,corpse=?1,generation=generation+1,dead_at_ms=?3,location=NULL,active_weapon_slot=0,grenade_drawn=0 WHERE principal=?2", params![corpse,principal,crate::survival_rules::unix_millis()?])?;
     Ok(json!({"status":"committed","life":life,"corpse":corpse}))
 }
 
-fn set_expiry(tx: &Transaction<'_>, container: &str, seconds: u32) -> Result<()> {
+pub(crate) fn set_expiry(tx: &Transaction<'_>, container: &str, seconds: u32) -> Result<()> {
     tx.execute(
         "UPDATE item_containers SET expires_at_ms=?1 WHERE id=?2",
         params![
@@ -907,11 +1127,12 @@ fn respawn_once(tx:&Transaction<'_>,principal:&str,command:&Respawn,context:&Con
         return Ok(json!({"status":"rejected","reason":"respawn_delay","readyAt":ready}));
     }
     let next = life.checked_add(1).context("life counter exhausted")?;
-    tx.execute("UPDATE inventory_characters SET life=?1,alive=1,corpse=NULL,dead_at_ms=NULL,condition='{}',condition_revision=0,location=NULL,generation=generation+1 WHERE principal=?2",params![next,principal])?;
+    tx.execute("UPDATE inventory_characters SET life=?1,alive=1,corpse=NULL,dead_at_ms=NULL,condition='{}',condition_revision=0,location=NULL,generation=generation+1,active_weapon_slot=NULL,grenade_drawn=0 WHERE principal=?2",params![next,principal])?;
     grant_starter(tx, principal, next, catalog, rules)?;
     Ok(json!({"status":"respawned","life":next,"alive":true}))
 }
 pub(crate) fn expire(tx: &Transaction<'_>, now: i64) -> Result<usize> {
+    tx.execute("DELETE FROM artefact_reveals WHERE visible_until_ms<=?1", [now])?;
     let mut query=tx.prepare("SELECT id FROM item_containers WHERE expires_at_ms<=?1 AND kind IN('world','corpse') ORDER BY expires_at_ms LIMIT 100")?;
     let containers: Vec<String> = query
         .query_map([now], |r| r.get(0))?
@@ -937,7 +1158,9 @@ mod visibility_tests {
         let mut db=Database::open(Path::new(":memory:")).unwrap();
         let secret="a".repeat(64);
         let principal=db.execute(&secret,Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
-        let mut context=Context{principal,life:0,auth_epoch:0,world:"zaton-static-v1".into(),position:[1.5,0.0,0.0],interaction_radius:2.0,eye_height:1.55,collision:Some(Arc::new(crate::collision::tests::actor_fixture(0))),expires:Instant::now()+Duration::from_secs(30)};
+        let mut collision = crate::collision::tests::actor_fixture(0);
+        collision.manifest.level = "jupiter".into();
+        let mut context=Context{principal,life:0,visit:0,auth_epoch:0,world:"jupiter-static-v1".into(),position:[1.5,0.0,0.0],interaction_radius:2.0,eye_height:1.55,collision:Some(Arc::new(collision)),expires:Instant::now()+Duration::from_secs(30)};
         let container=db.provision_world_container(&context.world,[2.5,0.0,0.0]).unwrap();
         let item=db.provision_inventory_item(&container,"bandage",&ItemState{condition:1.0,upgrades:vec![],payload:ItemPayload::Consumable{uses:1}},"rucksack").unwrap();
         let command=|request:&str|Move{request_id:request.into(),life:0,item:item.clone(),revision:0,action:MoveAction::Pickup{source:container.clone()}};
@@ -950,6 +1173,10 @@ mod visibility_tests {
         let mut missing=context.clone();missing.collision=None;
         let denied=db.execute(&secret,Operation::MoveInventory(command("missing-map"),missing)).unwrap();
         assert_ne!(denied["status"],"committed");
+        let mut wrong = context.clone();
+        wrong.world = "pripyat-static-v1".into();
+        let denied = db.execute(&secret, Operation::MoveInventory(command("wrong-map"), wrong)).unwrap();
+        assert_ne!(denied["status"], "committed");
         assert!(db.execute(&secret,Operation::ListInventory(String::new(),None)).unwrap()["items"].as_array().unwrap().is_empty());
         // On the same side of the wall, the floor endpoint remains reachable.
         context.position=[2.4,0.0,0.0];

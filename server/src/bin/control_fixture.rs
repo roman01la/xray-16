@@ -13,7 +13,7 @@ fn main() {
         json!({"type":"welcome","version":3,"contract":zone_server::contract::current(),"playerId":7,"principalId":"a".repeat(32),"tickHz":30,"safeZones":[{"x":-1.25,"z":2.0,"radius":10.5}]}),
         json!({"type":"ownership_dirty"}),
         json!({"type":"inventory_dirty"}),
-        json!({"type":"vitals","state":[9,900,800,700,300,200,3,12345,50000,60000,1000]}),
+        json!({"type":"vitals","state":[9,900,800,700,300,200,3,12345,50000,60000,1000,2,864,0x4052]}),
         json!({"type":"weapon","state":{"ammo":29,"reserve":90,"reloadReadyTick":null}}),
         json!({"type":"lifecycle","revision":4294967295u32,"tick":100,"upsert":[{"id":7,"kind":1,"model":"stalker","persistentId":"b".repeat(32)}],"remove":[8,9]}),
         json!({"type":"action_result","sequence":1,"result":{"status":"hit","target":7,"damage":25,"killed":false}}),
@@ -22,6 +22,14 @@ fn main() {
         json!({"type":"action_result","sequence":4,"result":{"status":"rejected","reason":"cooldown"}}),
         json!({"type":"weapon_shot","sequence":5,"tick":100,"result":{"status":"blocked","ammo":6}}),
         json!({"type":"detonations","effects":[["wpn_fake_missile2",-15.5,3.25,7.0]]}),
+        json!({"type":"travel","world":"jupiter-static-v1"}),
+        json!({"type":"grenades","tick":102,"entries":[[3,"grenade_gd-05",4.0,1.5,-7.0]]}),
+        json!({"type":"weapon_fired","life":9,"item":"e".repeat(32),"ammo":0,"launcher":true}),
+        json!({"type":"gunshots","effects":[[9,"wpn_ak74",0,-15.5,3.25,7.0],[9,"wpn_pb",1,-15.5,3.25,7.0],[9,"wpn_groza",2,-15.5,3.25,7.0],[9,"wpn_knife",3,-15.5,3.25,7.0],[10,"wpn_knife",4,-16.5,3.25,7.0]]}),
+        json!({"type":"knife_swing","life":9,"item":"e".repeat(32),"stab":true}),
+        json!({"type":"grenade_hud","life":9,"item":"e".repeat(32),"phase":"release"}),
+        json!({"type":"weapon_reload","life":9,"item":"e".repeat(32),"alias":"anm_reload","milliseconds":3035,"sound":2,"cancelled":false}),
+        json!({"type":"weapon_reload","life":9,"item":"e".repeat(32),"alias":"","milliseconds":0,"sound":0,"cancelled":true}),
     ];
     let encoded: Vec<Vec<u8>> = events
         .iter()

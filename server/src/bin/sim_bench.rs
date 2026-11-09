@@ -36,9 +36,12 @@ fn main() {
                         x: 0.,
                         z: 0.,
                         yaw: 0.,
+                        pitch: 0.0,
                         sprint: false,
                         jump: false,
                         crouch: false,
+                        walk: false,
+                        aiming: false,
                     },
                 );
             }

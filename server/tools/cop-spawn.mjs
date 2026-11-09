@@ -13,6 +13,11 @@ class Reader {
  u8() { return this.take(1)[0]; }
  u16() { return this.take(2).readUInt16LE(); }
  u32() { return this.take(4).readUInt32LE(); }
+ f32() {
+  const value = this.take(4).readFloatLE();
+  if (!Number.isFinite(value)) throw Error('Nonfinite CoP spawn scalar');
+  return value;
+ }
  vector() {
   const bytes = this.take(12);
   const values = [bytes.readFloatLE(0), bytes.readFloatLE(4), bytes.readFloatLE(8)];
@@ -105,7 +110,7 @@ function entity(bytes, updateBytes, levels, spawnId) {
 
 }
 
-export function readCopSpawns(bytes) {
+export function readCopSpawnGraph(bytes) {
  const root = chunks(bytes), header = new Reader(required(root, 0));
  if (header.u32() !== 10) throw Error('Unsupported CoP ALife graph version');
  header.take(16); // ALife GUID.
@@ -129,7 +134,150 @@ export function readCopSpawns(bytes) {
   const wrapper = chunks(required(vertex, 1));
   entities.push(entity(required(wrapper, 0), required(wrapper, 1), levels, spawnId));
  }
- return entities.sort((a, b) => a.spawnId - b.spawnId);
+ return {entities: entities.sort((a, b) => a.spawnId - b.spawnId), vertexLevels: levels};
+}
+
+export function readCopSpawns(bytes) {
+ return readCopSpawnGraph(bytes).entities;
+}
+
+// CPatrolPathStorage stores each named path as a serialized CAbstractGraph.
+export function readCopPatrolPoints(bytes, names, vertexLevels) {
+ const storage = chunks(required(chunks(bytes), 3));
+ const count = new Reader(required(storage, 0));
+ const paths = chunks(required(storage, 1));
+ if (count.u32() !== paths.size) throw Error('CoP patrol path count mismatch');
+ count.end();
+ const selected = new Map();
+ for (const path of paths.values()) {
+  const record = chunks(path), nameReader = new Reader(required(record, 0));
+  const name = nameReader.string();
+  nameReader.end();
+  if (!names.has(name)) continue;
+  if (selected.has(name)) throw Error('Duplicate CoP patrol path ' + name);
+  const graph = chunks(required(record, 1)), pointCount = new Reader(required(graph, 0));
+  const vertices = chunks(required(graph, 1));
+  if (!vertices.size || pointCount.u32() !== vertices.size) throw Error('Invalid CoP patrol point count');
+  pointCount.end();
+  const points = [];
+  for (const vertex of vertices.values()) {
+   const entry = chunks(vertex), id = new Reader(required(entry, 0));
+   const index = id.u32();
+   id.end();
+   if (index >= vertices.size || points[index]) throw Error('Invalid CoP patrol point index');
+   const point = new Reader(required(entry, 1));
+   const pointName = point.string(), position = point.vector();
+   point.u32(); // Flags.
+   const levelVertex = point.u32();
+   const level = vertexLevels[point.u16()];
+   point.end();
+   // Some artefact paths float off the AI mesh. The stock binder places them
+   // with its own graph vertices, so those points can omit graph membership.
+   if (!level && levelVertex !== 0xffffffff) throw Error('CoP patrol point has unknown level: ' + name);
+   points[index] = {name: pointName, position, level};
+  }
+  selected.set(name, points);
+ }
+ if (selected.size !== names.size) throw Error('Missing CoP patrol paths: ' + [...names].filter(name => !selected.has(name)).join(', '));
+ return selected;
+}
+
+function readShape(state) {
+ const type = state.u8();
+ if (type === 0) {
+  const center = state.vector(), radius = state.f32();
+  if (radius <= 0) throw Error('Invalid authored sphere radius');
+  return {kind: 'sphere', center, radius};
+ }
+ if (type === 1) {
+  const axes = [state.vector(), state.vector(), state.vector()];
+  return {kind: 'box', axes, center: state.vector()};
+ }
+ throw Error('Unknown authored collision shape');
+}
+
+export function readCopSpaceRestrictor(entity) {
+ if (entity.section !== 'space_restrictor' || entity.itemUpdateBytes.length) {
+  throw Error('Invalid CoP space restrictor state');
+ }
+ const state = new Reader(entity.itemStateBytes), count = state.u8();
+ if (count < 1 || count > 16) throw Error('Invalid CoP space restrictor shape count');
+ const shapes = Array.from({length: count}, () => readShape(state));
+ const restrictorType = state.u8();
+ if (restrictorType > 5) throw Error('Invalid CoP space restrictor type');
+ state.end();
+ return {shapes, restrictorType};
+}
+
+// CClimableObject::net_Spawn uses the diagonal of this local box as half-extents.
+export function readCopLadder(entity) {
+ if (entity.section !== 'climable_object' || entity.itemUpdateBytes.length) {
+  throw Error('Invalid CoP ladder state');
+ }
+ const state = new Reader(entity.itemStateBytes);
+ if (state.u8() !== 1) throw Error('Expected one authored ladder shape');
+ const shape = readShape(state);
+ if (shape.kind !== 'box' || shape.center.some(value => value !== 0)
+  || shape.axes.some((axis, i) => axis.some((value, j) => i === j ? value < 0 : value !== 0))) {
+  throw Error('Unsupported authored ladder box');
+ }
+ const halfExtents = shape.axes.map((axis, i) => axis[i]);
+ // A zero thickness is valid. X-Ray gives the ladder a minimum shell width.
+ if (halfExtents.filter(value => value > 0).length < 2) throw Error('Degenerate authored ladder box');
+ const material = state.string();
+ if (!['materials\\fake_ladders', 'materials\\fake_ladders_woods'].includes(material)) {
+  throw Error('Unknown authored ladder material');
+ }
+ state.end();
+ return {halfExtents, material};
+}
+
+// CSE_ALifeAnomalousZone v128, restricted to unowned, always-enabled fields.
+export function readCopStaticField(entity, factory, multiple = false) {
+ const state = new Reader(entity.itemStateBytes);
+ const count = state.u8();
+ if (multiple ? count < 1 || count > 16 : count !== 1) throw Error('Invalid authored field shape count');
+ const shapes = Array.from({length: count}, () => readShape(state));
+ if (count > 1 && shapes[0].kind !== 'sphere') throw Error('Unsupported composite field falloff');
+ state.u8(); // Space restrictor type.
+ const startPower = state.f32();
+ if (startPower < 0 || entity.itemUpdateBytes?.length) throw Error('Invalid static field state');
+ if (state.u32() !== 0xffffffff || state.u32() || state.u32() || state.u32()) {
+  throw Error('Authored field is owned or has a timed schedule');
+ }
+ state.f32(); // Offline interactive radius.
+ state.take(6); // ALife artefact spawn count and position offset.
+ // se_zones.se_zone_anom appends a flag for the campaign's last artefact spawn.
+ if (['ZS_RADIO', 'ZS_MBALD', 'ZS_GALAN', 'ZS_MINCE'].includes(factory) && state.u8() !== 0) {
+  throw Error('Field contains campaign artefact spawn history');
+ }
+ state.end();
+ return multiple ? {shapes, startPower} : {shape: shapes[0], startPower};
+}
+
+// CSE_ALifeLevelChanger v128 plus the stock se_level_changer Lua state.
+export function readCopLevelChanger(entity, vertexLevels) {
+ const state = new Reader(entity.itemStateBytes);
+ const count = state.u8();
+ if (!count || entity.itemUpdateBytes.length) throw Error('Invalid CoP level changer state');
+ const shapes = Array.from({length: count}, () => readShape(state));
+ const restrictorType = state.u8();
+ const graphVertex = state.u16(), levelVertex = state.u32();
+ const position = state.vector(), rotation = state.vector();
+ const level = state.string(), graphPoint = state.string();
+ if (level !== vertexLevels[graphVertex] || level === entity.level || !graphPoint) {
+  throw Error('Invalid CoP level changer destination');
+ }
+ const silent = state.u8();
+ const scriptStart = state.at;
+ const enabled = state.u8(), hint = state.string();
+ const scriptSize = state.at - scriptStart;
+ if (silent > 1 || enabled > 1 || state.u16() !== scriptSize) throw Error('Invalid CoP level changer flags or script marker');
+ state.end();
+ return {
+  shapes, restrictorType, silent: Boolean(silent), enabled: Boolean(enabled), hint,
+  destination: {level, graphPoint, graphVertex, levelVertex, position, rotation},
+ };
 }
 
 // The approved loose Zaton items use these CoP object factories. Require the

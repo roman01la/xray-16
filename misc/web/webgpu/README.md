@@ -7,21 +7,16 @@ The production package contains only the native renderer. The desktop renderer i
 
 ## Run
 
-From the enclosing workspace:
+The hosted game uses the same native WebGPU engine for single player and
+multiplayer. The game centers in the browser viewport and preserves the aspect
+ratio of the render resolution selected in video settings. Add `diagnostics=1`
+to the query for the GPU adapter, FPS, resolution, and CPU/GPU timing.
+[Build and run from the repository](../README.md)
 
-```sh
-bash build-browser.sh          # when rebuilding the engine
-zsh build-webgpu.sh            # stage dist/webgpu
-zsh serve-browser.sh           # localhost:8081, if not already running
-```
-
-Open http://localhost:8081/webgpu/?save=browser-fresh-start for the clean checkpoint
-created on this installation, or http://localhost:8081/webgpu/ for the menu. Press a key when loading
-finishes. Both pages share the original game's OPFS storage. The root page `/` redirects to `/webgpu/`, preserving query parameters.
-
-Requirements: a desktop browser supporting wasm64, pthreads, worker WebGPU, BC
-texture compression (including sliced 3D), and sufficient memory/storage for the
-original Call of Pripyat 1.6.02 files. The engine starts with 2 GB WASM memory.
+The guide also covers the separate local developer launcher. In that launcher,
+`?debug=1&autostart=0` shows manual launch, save backup, and renderer tools.
+`?save=<name>` loads an existing local checkpoint and requires that save in the
+current browser origin.
 
 The normal build includes **537 same-origin WGSL/reflection JSON artifacts** in
 `shaders/`, plus a page-owned shader compiler worker. The worker starts and initializes
@@ -29,9 +24,9 @@ shaderc 2026.1 and Naga 26 WASM before engine startup, then parks in its event l
 All engine pthreads connect through transferred message ports; only a pthread waits
 for shader replies, so the page remains responsive. No local compiler server is needed.
 
-A single cache path handles both compilation times: in-memory lookup, persistent
-Cache Storage lookup, packaged JSON fetch, then WASM compilation on a miss. Both
-producers use `compiler-core.mjs`, reflection and uniform packing, the same v3
+A single cache path serves both offline and runtime shaders. It checks memory
+and Cache Storage, fetches indexed packaged files, and compiles misses in WASM.
+Both producers use `compiler-core.mjs`, reflection and uniform packing, the same v3
 source SHA-256 key and JSON schema. Both are persisted at the same shader URL in
 `SHADER_CACHE_VERSION`. No origin marker is stored in the artifact. Updating the
 compiler/reflection/uniform ABI requires a cache namespace bump. A failed cache write
@@ -44,15 +39,6 @@ loading. The worker does not poll or do per-frame work. Browser GPU pipeline com
 still happens after WGSL translation. This fallback removes dependency on exhaustive
 prepackaging, but does not certify arbitrary mods or untested rendering features.
 
-The default view shows only the game, fitted to the viewport at its original aspect
-ratio. Add `&debug=1` to a save URL to show the launcher and diagnostics.
-`?autostart=0` opens the launcher without starting the engine. First-time visitors
-without imported game data also see the setup controls. The Saves dialog
-can prepare/download a backup, import a backup before launch, and request browser
-storage persistence. Imports preserve existing filenames. If the browser declines
-persistence, keep a downloaded backup. Moving to another origin requires importing
-game files and the save backup again. Fullscreen and Restart are in the toolbar.
-
 Engine assets are SHA-256 verified, including same-size updates. Failed or corrupt
 HTTP responses are rejected before writing. Game imports check the required archive
 folders and available space, and compare existing files in chunks before skipping.
@@ -61,31 +47,176 @@ These structural checks do not certify every game edition or modified installati
 ### Building and validating the compiler
 
 The checked-in sidecar artifacts are staged automatically. To rebuild them from pinned
-sources (Emscripten and Rust with `wasm32-unknown-unknown` required):
+sources, run from the repository root with Rust
+`wasm32-unknown-unknown` and the Emscripten SDK installed at
+`../.tools/emsdk` as expected by the rebuild script.
 
 ```sh
-bash xray-16-wasm/misc/web/webgpu/compiler-wasm/build.sh
-node xray-16-wasm/misc/web/webgpu/verify-sidecar.mjs
+bash misc/web/webgpu/compiler-wasm/build.sh
+node misc/web/webgpu/verify-sidecar.mjs
 ```
 
-The second command uses the workspace's captured shader inputs. It checks the actual
-WASM chain against all packaged offline artifacts and reports separately when old
-request envelopes must be reconstructed. `compiler-wasm/LICENSES.txt` bundles licenses.
+The second command checks the actual WASM chain against packaged offline
+artifacts. Pass private capture JSON files as positional arguments for the
+current corpus. Older artifacts use `.cache/webgpu-shaders` by default or the
+directory selected with `--legacy-cache`. The verifier reports separately when
+it reconstructs old request envelopes. `compiler-wasm/LICENSES.txt` bundles licenses.
 The modules are approximately 4.23 MiB (shaderc) and 0.61 MiB (Naga), uncompressed.
 
-For the browser regression page, stage with `XRAY_SIDECAR_TEST=1 zsh build-webgpu.sh`
-and open `/webgpu/sidecar-test.html`. Run the cold test, reload, then run the persistence
-test. It exercises the real parked compiler, pthread-style synchronous reply, common
+For the browser regression page, build the standalone developer launcher, then
+restage with `XRAY_SIDECAR_TEST=1 node misc/web/webgpu/stage.mjs`. Open
+`/webgpu/sidecar-test.html` on the local server. Run the cold test, reload, then run
+the persistence test. It exercises the real parked compiler, pthread-style synchronous reply, common
 persistent cache and browser WGSL compilation using the renderer's shader flags. Normal
 staging removes these test-only files. Debug game pages expose `#webgpu-compiler` counters.
 
 The optional Node offline compiler still requires `glslc` and naga-cli 26 at
 `.tools/naga/bin/naga`; `package-shaders.mjs` promotes its outputs to `shaders/`.
-`XRAY_SHADER_CAPTURE=1` stages a separate `/webgpu-dev/` page, but it now uses the same
-portable worker instead of a localhost service. Serve the release with HTTPS (or
-localhost), COOP `same-origin`, COEP `require-corp`, and WASM MIME `application/wasm`.
+Serve the release with HTTPS (or localhost), COOP `same-origin`, COEP
+`require-corp`, and WASM MIME `application/wasm`.
 Include `engine/` as actual files when packaging the staging symlink. Game archives
 and user saves are not part of the distribution.
+
+## Offline shader coverage
+
+The shader key represents a complete native vertex/fragment request, including
+expanded source and ordered engine defines. Use the stock asset inventory to
+choose scenarios, then capture the exact requests from the renderer. The
+inventory includes all five campaign material tables, model and embedded
+visual material references, particle materials, texture metadata, graphics
+presets, environment configs, and renderer source entry points.
+
+```sh
+mkdir -p "$private"
+node misc/web/webgpu/shader-inventory.mjs "$owned_game" --output "$private/inventory.json"
+XRAY_SHADER_CAPTURE=1 node misc/web/multiplayer/stage-game.mjs "$engine" "$private/stage" "$pack"
+node misc/web/webgpu/shader-sweep.mjs "$private/stage" "$campaign_config" "$private/sweep"
+node misc/web/webgpu/shader-sweep.mjs "$private/stage" "$campaign_config" "$private/stock" --singleplayer
+node misc/web/webgpu/shader-coverage.mjs "$private/sweep/captures/"*.json "$private/stock/captures/"*.json \
+  --report "$private/coverage.json" --replay "$private/replayed"
+```
+
+The sweep uses optimized unified artifacts, a separate Chrome profile and local
+preview and Rust server ports. Build `server/target/release/zone-server` first.
+The campaign config supplies each region's collision manifest and spawn anchor.
+Use `--maps zaton,jupiter` or `--presets Default,Extreme` for shorter runs.
+`--port` sets the preview port, the Rust HTTP port follows it, and `--udp`
+sets the Rust UDP port. Set `XRAY_CHROME` or `XRAY_ZONE_SERVER` to use alternate
+local binaries. `--singleplayer` starts the original Zaton campaign, lets
+A-Life initialize, and opens the inventory and PDA. It defaults to the Default
+preset and does not start the Rust server. The runner retains failed startup
+rows and partial traces alongside successful rows. Check the captured options
+to confirm what each preset actually enabled.
+
+Use `--scenario` with a private stock route to seed renderer settings, load a
+checkpoint, or run game-console and Lua phases with exact log assertions. The
+config argument is unused for these single-player runs. The example Jupiter
+route expects a compatible `online-stash.scop` next to a local copy of the
+JSON. Each phase uses an isolated profile and the normal engine script loader.
+
+```sh
+node misc/web/webgpu/shader-sweep.mjs "$private/stage" unused "$private/compact" \
+  --scenario misc/web/webgpu/scenarios/zaton-compact.json --pipeline-probe --fresh-shader-cache
+node misc/web/webgpu/shader-sweep.mjs "$private/stage" unused "$private/ssr" \
+  --scenario misc/web/webgpu/scenarios/zaton-ssr.json --pipeline-probe --fresh-shader-cache
+```
+
+`--fresh-shader-cache` clears the shader cache at the start of the run, keeping
+the isolated profile's installed game data. `--pipeline-probe` adds counts to
+the staged developer backend. It measures draw-pipeline cache entries, unique
+program keys used by those entries, and vertex conversion module creations.
+Presentation and the separate ImGui backend have their own pipeline paths.
+
+For a manual route, open a capture-enabled stage with
+`?shaderCapture=unique-run-id&shaderMap=zaton&shaderPreset=default&shaderScenario=inventory`
+alongside the usual launcher query options. After the route, export the run in
+the browser console using the local capture module.
+
+```js
+const trace = await (await import('./shader-capture.mjs')).readShaderCapture('unique-run-id');
+const link = document.createElement('a');
+link.download = 'unique-run-id.json';
+link.href = URL.createObjectURL(new Blob([JSON.stringify(trace)], {type:'application/json'}));
+link.click();
+```
+
+The capture records package membership even when an exact request is fulfilled
+from cache. Capture files contain expanded shader sources and stay local.
+`--report` omits the source text. `--replay` compiles successful missing requests
+using the shipped shaderc/Naga WASM and writes validated artifacts to a separate
+directory. Merge reviewed artifacts with the current package in a scratch
+directory. Restage with `XRAY_SHADER_CAPTURE=1 XRAY_SHADER_PACKAGE="$merged"`,
+repeat the corresponding rows with a new browser profile, and use
+`--package "$merged" --check` to verify package coverage. Ordinary staging uses
+the checked-in artifacts and omits the capture module.
+
+The first sweep exercised every combination of the five campaign maps and
+five built-in presets, plus the stock Default Zaton A-Life, inventory and PDA
+route. It recorded 505 distinct native program requests. The original pack
+was missing 348 map-preview keys and another 41 from the stock route. The
+first expanded pack contained 926 programs. Its retest reached gameplay in
+all 26 scenarios with zero runtime compiles and zero WebGPU validation errors.
+Minimum and Low exposed a shaderc preprocessing failure when quality settings
+were disabled. The shared compiler now treats the diagnosed numeric quality
+tests as zero while preserving GLSL ES preprocessing and the original request
+key.
+
+The second sweep added 318 exact programs to bring the package to 1,244.
+All four single-player routes retested from an empty shader cache with zero
+runtime compiles and zero WebGPU validation errors.
+
+| Route | Offline programs requested | Draw pipelines | Programs used by those pipelines | Vertex conversion modules |
+| --- | ---: | ---: | ---: | ---: |
+| Zaton 1024 shadows, Ultra SSAO, low reflections, soft effects off | 148 | 75 | 62 | 23 |
+| Zaton 3072 shadows, Ultra reflections with half depth and jitter | 148 | 73 | 61 | 23 |
+| Jupiter checkpoint, late-game gear, weather and effects | 177 | 109 | 89 | 30 |
+| Stock Zaton to Pripyat transition | 154 | 85 | 78 | 32 |
+
+The Jupiter script confirmed the Gauss, G36, RPG-7 and elite detector visuals,
+three active stock particle effects, thunder at 23:00, clear weather at noon,
+and an active emission. The Pripyat route confirmed the map asset load and
+stock synchronization. Two runs from its transition-generated autosave counted
+1,512–1,513 online objects, 537–538 visual references and 157 distinct model
+names, including a Monolith visual. Both runs loaded the same 148 programs
+from the 1,244-program pack with an empty shader cache and zero WebGPU
+validation errors. This census covers the models online around the checkpoint.
+
+To reproduce it, run `scenarios/pripyat-travel.json` and open the same private
+browser profile on the same preview origin to export the transition autosave.
+The browser stores it under `stream-cop/_appdata_/savedgames`. In the browser
+console, export it under the filename expected by the census fixture.
+
+```js
+let saves = await navigator.storage.getDirectory();
+for (const part of ['stream-cop', '_appdata_', 'savedgames'])
+  saves = await saves.getDirectoryHandle(part);
+const name = (await Array.fromAsync(saves.keys())).find(key => / - autosave\.scop$/i.test(key));
+const link = document.createElement('a');
+link.download = 'pripyat-transition.scop';
+link.href = URL.createObjectURL(await (await saves.getFileHandle(name)).getFile());
+link.click();
+```
+
+Copy `scenarios/pripyat-model-census.json` next to the exported checkpoint and
+run it in a separate capture stage and private profile.
+
+```sh
+node misc/web/webgpu/shader-sweep.mjs "$private/census-stage" unused "$private/census" \
+  --scenario "$private/pripyat-model-census.json" --stock-game "$owned_game" \
+  --pipeline-probe --fresh-shader-cache
+```
+
+The census attaches a one-shot Lua probe to the private stage's copy of the
+original actor update script. It reads the visual names after the stock scene
+starts and avoids the console input restriction in this checkpoint. Keep the
+instrumented stage and browser profile separate from regular gameplay.
+
+Map preview constructs static level materials and initializes renderer and
+particle programs. The stock route covers the models loaded at the start of
+Zaton under Default settings. Individual assets, weather and effect
+combinations, and custom settings beyond these routes remain potential runtime
+compiler requests. WebGPU pipelines also depend on draw state and attachment
+formats. The probe reports the pipelines encountered during the run.
 
 ## Implementation
 
@@ -102,7 +233,9 @@ The toolbar reports FPS, submitted frames, draws and validation errors. Its
 “Benchmark 30 s” button measures presentation intervals with per-call profiling
 disabled. Unsupported operations fail explicitly.
 
-## Strict native build (2026-11-07)
+## Historical validation
+
+### Strict native build (2026-11-07)
 
 The browser renderer now requires native WebGPU entry points. Missing native
 initialization fails explicitly instead of taking a GLES fallback. Debug render
@@ -141,7 +274,7 @@ above the saved charged 104.56 FPS sample, subject to scene/run variation.
 No feature-disabled control was rerun. Raw evidence is in the workspace's
 `strict-webgpu-benchmark.json` and `strict-webgpu-artifact-audit.json`.
 
-## Runtime naming cleanup (2026-11-07)
+### Runtime naming cleanup (2026-11-07)
 
 `engine-formats.js` exports `EngineFormat`, a reduced table of numeric package
 identifiers. Shader reflection uses `shaderValueType`. The staged SDK canvas
@@ -162,7 +295,7 @@ measured rendering at 6.4–7.6 ms and simulation at 2.4–2.9 ms. The workspace
 code locations, evidence and measurement caveats; those optimizations are not
 part of the naming cleanup.
 
-## Parked shader compiler verification (2026-11-07)
+### Parked shader compiler verification (2026-11-07)
 
 - All 537 programs reproduce their offline packed WGSL/reflection with the WASM
   compiler. 361 retain exact original request envelopes/keys; 176 older captures

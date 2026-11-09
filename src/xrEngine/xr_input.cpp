@@ -133,11 +133,16 @@ CInput::CInput(const bool exclusive)
                 event.preventDefault();
         }, {capture: true});
         const accumulate = (event) => {
-            const scaleX = canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : 1;
-            const scaleY = canvas.clientHeight > 0 ? canvas.height / canvas.clientHeight : 1;
+            const bounds = canvas.getBoundingClientRect();
+            if (!bounds.width || !bounds.height) return;
             growMemViews();
-            Atomics.add(HEAP32, index, Math.round(event.movementX * scaleX * fixedPoint));
-            Atomics.add(HEAP32, index + 1, Math.round(event.movementY * scaleY * fixedPoint));
+            // Emscripten keeps the actual backing size in shared memory after
+            // transfer. The placeholder's width and height attributes can lag.
+            const sizeIndex = Number(canvas.canvasSharedPtr || 0) / 4;
+            const width = sizeIndex ? HEAP32[sizeIndex] : canvas.width;
+            const height = sizeIndex ? HEAP32[sizeIndex + 1] : canvas.height;
+            Atomics.add(HEAP32, index, Math.round(event.movementX * width / bounds.width * fixedPoint));
+            Atomics.add(HEAP32, index + 1, Math.round(event.movementY * height / bounds.height * fixedPoint));
         };
         canvas.addEventListener('onpointerrawupdate' in canvas ? 'pointerrawupdate' : 'mousemove', accumulate);
     }, double(uintptr_t(webMouseDelta)), WebMouseFixedPoint);

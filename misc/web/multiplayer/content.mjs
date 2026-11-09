@@ -1,11 +1,18 @@
 import {validateContract} from './contract.mjs';
 const hashPattern=/^[a-f0-9]{64}$/;
+const campaignLevels=['zaton','jupiter','pripyat','jupiter_underground','labx8'];
+export function levelForWorld(world){
+ return campaignLevels.find(level=>world===level+'-static-v1')??null;
+}
 export async function sha256(bytes){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');}
 export async function validateWorld(value){
  const contract=validateContract(value?.contract),content=value.content;
  if(contract.world==='synthetic-flat-v1'){if(content!==null)throw Error('Unexpected synthetic content');return {contract,content};}
- if(contract.world!=='zaton-static-v1'||!content||Object.keys(content).sort().join(',')!=='geometry,materials,movement'||content.movement!=='capsule-motor-v4'||!hashPattern.test(content.geometry)||!hashPattern.test(content.materials))throw Error('Unsupported world content');
- const revision=await sha256(new TextEncoder().encode(`zaton-static-v1\n${content.geometry}\n${content.materials}\n${content.movement}`));
+ if(!levelForWorld(contract.world)||!content||!hashPattern.test(content.geometry)||!hashPattern.test(content.materials))throw Error('Unsupported world content');
+ const fields=Object.keys(content).sort().join(',');
+ const ladders=fields==='geometry,ladders,materials,movement'&&content.movement==='capsule-motor-v5'&&typeof content.ladders==='string'&&content.ladders.length<=24*1024;
+ if(!ladders&&(fields!=='geometry,materials,movement'||content.movement!=='capsule-motor-v4'))throw Error('Unsupported world content');
+ const revision=await sha256(new TextEncoder().encode(`${contract.world}\n${content.geometry}\n${content.materials}\n${content.movement}${ladders?'\n'+content.ladders:''}`));
  if(revision!==contract.contentRevision)throw Error('World content identity mismatch');
  return {contract,content:Object.freeze({...content})};
 }

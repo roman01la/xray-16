@@ -124,7 +124,8 @@ void CRenderDevice::UpdateWindowProps()
     SDL_SetWindowSize(m_sdlWnd, dwWidth, dwHeight);
     emscripten_set_canvas_element_size("#canvas", dwWidth, dwHeight);
     MAIN_THREAD_EM_ASM({
-        document.documentElement.style.setProperty('--game-aspect', String($0 / $1));
+        // The DOM canvas is a placeholder for the worker's render canvas.
+        Module['canvas'].style.setProperty('--game-aspect', String($0 / $1));
     }, dwWidth, dwHeight);
 #else
     const bool windowed = psDeviceMode.WindowStyle != rsFullscreen;
@@ -218,7 +219,7 @@ void CRenderDevice::SelectResolution(const bool windowed)
 
     // Dedicated server hardcoded resolution
     // XXX: to be removed
-    if (GEnv.isDedicatedServer)
+    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
     {
         psDeviceMode.Width = 640;
         psDeviceMode.Height = 480;
@@ -281,8 +282,10 @@ void CRenderDevice::OnErrorDialog(bool beforeDialog)
 
     if (restore)
         UpdateWindowProps();
+#ifndef XR_PLATFORM_WEB
     else
         SDL_SetWindowFullscreen(m_sdlWnd, SDL_FALSE);
+#endif
 
     if (needUpdateInput)
         pInput->GrabInput(restore);

@@ -1,0 +1,73 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized local Rust with schema 4 and two Chrome WebGPU clients in stock Zaton. Detector gear and nearby nonoverlapping positions were seeded at the original dredge station waypoint. Draw and stow used O.",
+  "engineWasmSha256": "9a855716e6be21513a034e8bf01e7152bee66938b16a280d45e0536f5e25cc93",
+  "serverSha256": "ed95728993ec0dd0ea0562494aef4de296e4d233617562f39185645b8d481b50",
+  "manifestStartup": {
+    "zaton": {
+      "fields": 98,
+      "electra": 19,
+      "dormant": 0,
+      "detectorZones": 216,
+      "detectorDormant": 92,
+      "sha256": "a73341100f2788854a63e8a1818a553cfe917bee50a8f555b639f679fa8be99d"
+    },
+    "jupiter": {
+      "fields": 173,
+      "electra": 39,
+      "dormant": 0,
+      "detectorZones": 210,
+      "detectorDormant": 88,
+      "sha256": "1311058895cd49fffac3ee92f61a4c73521f47cc3626cffe6fbadd116c44a04a"
+    },
+    "pripyat": {
+      "fields": 105,
+      "electra": 29,
+      "dormant": 4,
+      "detectorZones": 67,
+      "detectorDormant": 9,
+      "sha256": "80a0198014a8f69e50fc08918efa380e4369cda77c7de2b1ec553f7d1eb9f48e"
+    },
+    "jupiter_underground": {
+      "fields": 23,
+      "electra": 0,
+      "dormant": 0,
+      "detectorZones": 17,
+      "detectorDormant": 0,
+      "sha256": "dac97c711ec2f53df55353fb80e35e8bc769d2d7d2563e29c5abc754d7f53849"
+    },
+    "labx8": {
+      "fields": 6,
+      "electra": 0,
+      "dormant": 0,
+      "detectorZones": 11,
+      "detectorDormant": 0,
+      "sha256": "6eea93caf648d0cb3ab01eb30d09126d01870f42279c3e71a1b8f29cbf371ccc"
+    }
+  },
+  "repeatedExportsIdentical": true,
+  "stockPaletteSections": 17,
+  "radar": {
+    "activeMarker": 357,
+    "edgeMarker": 358,
+    "edgeDistance": 30.60718961214894,
+    "dormantMarker": 384,
+    "dormantDistance": 7.702599825415544,
+    "artefact": "af_night_star",
+    "markerCount": 13,
+    "artefactCount": 1,
+    "velesPrivate": true,
+    "stowedCleared": true,
+    "nativeDraw": "* Zone detector draw: detector_scientific 1701 ms"
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "saveAndReload": true,
+    "multiplayerRequests": 0,
+    "validationErrors": 0
+  },
+  "screenshots": {
+    "svarogLeftVelesRight": "native-svarog-anomalies.jpg"
+  },
+  "scope": "All five maps passed manifest load. The rendered comparison covered Zaton. Marker availability uses the original layer 1. Emission changes and contact effects beyond the implemented families are separate work."
+}

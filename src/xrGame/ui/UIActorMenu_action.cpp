@@ -140,6 +140,14 @@ bool CUIActorMenu::OnItemDrop(CUICellItem* itm)
 
     if (old_owner == new_owner)
     {
+#ifdef XRAY_WEB_MULTIPLAYER
+        if (zone::mapPreviewEnabled() && t_old == iActorBelt)
+        {
+            // The generic list would move the icon without changing its server-owned belt cell.
+            ToBelt(itm, true);
+            return true;
+        }
+#endif
         DropItemOnAnotherItem(t_old, t_new, old_owner, new_owner);
         return false;
     }

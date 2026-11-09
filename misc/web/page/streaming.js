@@ -16,8 +16,10 @@ export function streamingConfig(source) {
   text=text.replace(/^(\$arch_dir_patches\$)/m,'$arch_dir_stream_patches$ = false| false| /stream/patches/\n$1');
   return text;
 }
-export async function prepareStreaming(manifestURL, root='stream-cop') {
-  const report=detail=>window.dispatchEvent(new CustomEvent('xray-stream-progress',{detail:{phase:'install',...detail}}));
+// Called by the ingest worker. Only progress and the completed mount cross
+// back to the page, so pack verification and CacheStorage stay off the UI thread.
+export async function installStreaming(manifestURL, root, onProgress) {
+  const report=detail=>onProgress({phase:'install',...detail});
   report({});
   try {
     const url=new URL(manifestURL,location.href);

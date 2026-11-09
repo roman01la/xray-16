@@ -16,3 +16,27 @@ test('compiler errors are reported and do not poison the parked WASM compiler',a
   assert.equal(result.key,shaderKey(request));
   assert.equal(result.uniformPacking,1);
 });
+test('stock disabled quality options evaluate as zero while remaining undefined',async()=>{
+  const request={attributes:[],sources:{
+    vert:`#version 300 es
+void main(){ gl_Position=vec4(0.0); }`,
+    frag:`#version 300 es
+precision highp float;
+#if SUN_QUALITY > 0 || SSAO_QUALITY > 0
+#error Off settings must evaluate as zero
+#endif
+#if defined(SUN_QUALITY) || defined(SSAO_QUALITY)
+#error Off settings must remain undefined
+#endif
+#if !defined(GL_ES) || __VERSION__ != 310
+#error Keep the ES profile during recovery
+#endif
+out vec4 color;
+void main(){ color=vec4(1.0); }`,
+  }};
+  const result=await compileProgram(request,toolchain);
+  assert.equal(result.key,shaderKey(request));
+  assert.match(result.stages.frag,/@fragment/);
+  const unrelated={...request,sources:{...request.sources,frag:request.sources.frag.replaceAll('SUN_QUALITY','UNEXPECTED_QUALITY')}};
+  await assert.rejects(compileProgram(unrelated,toolchain),/undefined macro.*UNEXPECTED_QUALITY/);
+});

@@ -295,7 +295,8 @@ float CVisualMemoryManager::object_luminocity(const CGameObject* game_object) co
 {
     if (!smart_cast<CEntityAlive const*>(game_object)) //Alundaio
         return (1.f);
-    float luminocity = const_cast<CGameObject*>(game_object)->ROS()->get_luminocity();
+    auto* object = const_cast<CGameObject*>(game_object);
+    float luminocity = object->ROS()->get_luminocity(Device.IsHeadlessAlifeHost() ? object : nullptr);
     float power = log(luminocity > .001f ? luminocity : .001f) * current_state().m_luminocity_factor;
     return (exp(power));
 }

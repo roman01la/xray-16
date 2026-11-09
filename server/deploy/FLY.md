@@ -1,6 +1,6 @@
 # Fly.io public game deployment
 
-Public URL: **https://roman-stalker-wan.fly.dev/**. One authoritative Rust server
+Public URL is **https://stalker-online.xyz/**. One authoritative Rust server
 runs in Frankfurt (`fra`), with a Node 24 HTTP gateway serving the browser build
 and the game pack, with verified bulk chunks served from Tigris.
 The volume stages uploads; verified bulk chunks are removed after CDN cutover. The user explicitly approved
@@ -25,7 +25,7 @@ public access and confirmed permission to distribute the game assets.
   to the active release, with no-store caching.
 - This build uses browser-held portable save keys. Copy save key and Open save
   allow another browser to resume the same identity. Keep a copy before clearing
-  browser storage; there is intentionally no email/password recovery. The existing combat/NPC behavior is a development fixture.
+  browser storage. The public Zaton alpha uses the development NPC simulation.
 
 ## Persistent data
 
@@ -38,6 +38,13 @@ Rust and forwards SIGTERM; Fly allows 25 seconds for shutdown.
 - `/data/web/blobs`: immutable decoded file bytes keyed by SHA-256.
 - `/data/web/manifests`: release history; `/data/web/active.json` is atomically
   replaced only after every referenced blob has been verified as present.
+
+The unified browser release uses one campaign asset pack. Its level archives
+contain Zaton, Jupiter, Pripyat, Jupiter Underground and Lab X8. The private
+`ZONE_COLLISION_MANIFEST` points to the geometry the Rust server simulates.
+The public multiplayer world is currently `zaton-static-v1`. Playing the
+other maps in multiplayer requires authoritative world instances and travel
+that carries the player's character state and inventory across maps.
 
 The initial game payload is approximately 4.44 GiB, including the engine and
 all pack chunks. The browser installs the full pack at startup before opening
@@ -70,19 +77,28 @@ Only one Machine may own this world/database. Do not enable HA cloning casually.
 
 Before deploying the survival configuration, take and verify an online SQLite
 backup. Install the stock-derived item catalog, authored stash export and
-approved loose-loot export under the private `/data/zone/game` directory, with
-the filenames in `fly.toml`. Make the files readable by uid 10001 and verify
-their hashes after transfer. The export commands and classification rules are
-in [MECHANICS.md](../MECHANICS.md). These inputs stay off the public CDN and
-outside the source-only build context.
+approved loose-loot export under the private `/data/zone/game` directory. Use the
+filenames in `fly.toml` for those files and the reload timings, ladders,
+continuous fields and artefact sites. Make the files readable by uid 10001
+and verify their hashes after transfer. These inputs stay off the public CDN
+and outside the source-only build context. [Export commands](../MECHANICS.md)
+
+Upload the matching browser files before switching the server image. After the
+new gateway and Rust process pass health checks, activate the prepared frontend
+manifest. Use the manual test plan for the hosted Zaton alpha and the separate
+local campaign and native A-Life checks. [Manual test plan](../MECHANICS_TEST_PLAN.md)
 
 ## Publish frontend/assets
 
-Stage the optimized multiplayer engine using `misc/web/multiplayer/stage.mjs`.
-Keep the existing single-player dist separate. Then:
+Build the optimized engine and refresh its data before staging.
+[Unified web build commands](../../misc/web/README.md)
 
 ```sh
+node misc/web/multiplayer/stage-game.mjs \
+  build/web-multiplayer-release/artifacts ../multiplayer-preview \
+  ../streaming-preview/pack-v2
 python3 server/tools/publish-web.py \
+  --unified \
   --frontend ../multiplayer-preview/engine-preview \
   --pack ../streaming-preview/pack-v2 \
   --output ../public-web-release \
@@ -181,7 +197,9 @@ The root website `/` opens the original game menu and the unified engine release
 The retired `/singleplayer/` and `/multiplayer/` routes return 404. New Game and Load Game use single player;
 the network-game menu item connects to the Rust/WebRTC server. Switching modes
 restarts the same engine with different runtime flags; cached game assets remain
-shared. Multiplayer's controls menu offers Main menu to return.
+shared. Multiplayer's controls menu offers Main menu to return. The canvas fits
+the browser viewport at the aspect ratio of the render resolution selected
+in the game's video settings.
 
 Stage the unified artifact without overwriting the old local SP distribution:
 

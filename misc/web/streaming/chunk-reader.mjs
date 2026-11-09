@@ -1,9 +1,11 @@
 // Read-only coarse archive chunks shared by the startup installer and WasmFS.
-// CacheStorage persists verified chunks; the hot RAM cache has a hard byte budget.
+// CacheStorage persists verified chunks; installed reads use disk-backed Blob slices.
 export const CHUNK_BYTES = 16 * 1024 * 1024;
 const HASH = /^[a-f0-9]{64}$/;
 export const GAME_CHUNK_CACHE = 'xray-game-chunks-v1';
 const ARCHIVE_CACHE = 'xray-game-archives-v1';
+const INSTALLED_BLOB_LIMIT = 64;
+const BOOTSTRAP_MEMORY_LIMIT = 256 * 1024;
 export function gameStorageError(error) {
   return new Error(error?.name === 'QuotaExceededError'
     ? 'There is not enough browser storage for the complete game. Free disk space or clear data from other sites, then retry.'
@@ -25,6 +27,7 @@ export class ChunkReader {
   constructor({onProgress=()=>{},fetcher=(...args)=>fetch(...args), cacheStorage=globalThis.caches, budget=64*1024*1024, mode='stream', digest=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('')}={}) {
     this.fetcher=fetcher;this.cacheStorage=cacheStorage;this.budget=budget;this.digest=digest;this.mode=mode;
     this.descriptors=new Map();this.hot=new Map();this.pending=new Map();this.bytes=0;
+    this.installedBlobs=new Map();
     this.stats={downloadedBytes:0,networkChunks:0,cachedChunks:0,cachedBytes:0};
     this.onProgress=onProgress;this.transfers=new Map();this.lastReport=0;
   }
@@ -101,8 +104,51 @@ export class ChunkReader {
     for(const {url,d} of descriptors)await this.persist(metadata,url+'.json',Response.json(d));
     this.report(true);
   }
+  async readChunkRange(url,hash,size,offset,length,bootstrap=false) {
+    if(this.mode!=='installed'){
+      const bytes=await this.chunk(url,hash,size);
+      return bytes.subarray(offset,offset+length);
+    }
+    const key=chunkCacheKey(url,hash),missing='Installed game data is missing or damaged. Reload to repair it.';
+    let entry=this.installedBlobs.get(key);
+    if(!entry){
+      this.installedCache ??= this.storage(GAME_CHUNK_CACHE);
+      const blob=this.installedCache.then(async cache=>{
+        const response=await cache.match(key);
+        if(!response)throw Error(missing);
+        return response.blob();
+      });
+      entry={blob};
+    }
+    this.installedBlobs.delete(key);
+    this.installedBlobs.set(key,entry);
+    if(this.installedBlobs.size>INSTALLED_BLOB_LIMIT)
+      this.installedBlobs.delete(this.installedBlobs.keys().next().value);
+    try {
+      const file=await entry.blob;
+      if(file.size!==size)throw Error(missing);
+      // The installer verifies every chunk before publishing the descriptor.
+      // Chromium can read this slice directly from the CacheStorage disk entry.
+      if(bootstrap && size<=BOOTSTRAP_MEMORY_LIMIT){
+        // Texture metadata contains thousands of tiny reads of the same bundle.
+        // At most 64 compact bundles (16 MiB) can be retained with their handles.
+        entry.bootstrap ??= file.arrayBuffer().then(bytes=>{
+          if(bytes.byteLength!==size)throw Error(missing);
+          return new Uint8Array(bytes);
+        });
+        return (await entry.bootstrap).subarray(offset,offset+length);
+      }
+      const bytes=await file.slice(offset,offset+length).arrayBuffer();
+      if(bytes.byteLength!==length)throw Error(missing);
+      return new Uint8Array(bytes);
+    } catch(error) {
+      if(this.installedBlobs.get(key)===entry)this.installedBlobs.delete(key);
+      throw Error(missing,{cause:error});
+    }
+  }
   async chunk(url,hash,size) {
     if(!HASH.test(hash)||!Number.isSafeInteger(size)||size<1||size>32*1024*1024)throw Error('Invalid chunk identity');
+    if(this.mode==='installed')return this.readChunkRange(url,hash,size,0,size);
     const networkURL=new URL('../chunks/'+hash+'.bin',url).href;
     const key=chunkCacheKey(url,hash);
     if(this.hot.has(key)){
@@ -125,7 +171,7 @@ export class ChunkReader {
           }catch{return null;}
         };
         bytes=await cached(key);
-        if(!bytes && this.mode!=='installed'){
+        if(!bytes){
           // Index legacy URL keys once, lazily. No game bytes are fetched while
           // building this migration index; each candidate is still verified.
           this.legacyKeys ||= Promise.resolve().then(async()=>{
@@ -145,7 +191,6 @@ export class ChunkReader {
         if(bytes){this.stats.cachedChunks++;this.stats.cachedBytes+=bytes.length;this.report();}
       }
       if(!bytes){
-        if(this.mode==='installed')throw Error('Installed game data is missing or damaged. Reload to repair it.');
         const transfer={received:0,total:size};this.transfers.set(key,transfer);this.report(true);
         try {
           const response=await this.fetcher(networkURL);
@@ -176,12 +221,15 @@ export class ChunkReader {
     if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(length)||length<0)throw Error('Invalid archive range');
     const d=await this.descriptor(url);length=Math.max(0,Math.min(length,d.size-offset));
     const index=(d.bootstrap||[]).find(s=>offset>=s.offset && offset+length<=s.offset+s.size);
-    if(length && index){const bytes=await this.chunk(url,index.hash,index.chunkSize??index.size);const start=(index.chunkOffset??0)+offset-index.offset;write(bytes.subarray(start,start+length),0);return length;}
+    if(length && index){
+      const start=(index.chunkOffset??0)+offset-index.offset;
+      write(await this.readChunkRange(url,index.hash,index.chunkSize??index.size,start,length,true),0);
+      return length;
+    }
     for(let at=offset;at<offset+length;){
-      const index=Math.floor(at/d.chunkBytes),start=index*d.chunkBytes;
-      const bytes=await this.chunk(url,d.chunks[index],Math.min(d.chunkBytes,d.size-start));
-      const count=Math.min(bytes.length-(at-start),offset+length-at);
-      write(bytes.subarray(at-start,at-start+count),at-offset);at+=count;
+      const index=Math.floor(at/d.chunkBytes),start=index*d.chunkBytes,size=Math.min(d.chunkBytes,d.size-start);
+      const count=Math.min(size-(at-start),offset+length-at);
+      write(await this.readChunkRange(url,d.chunks[index],size,at-start,count),at-offset);at+=count;
     }
     return length;
   }

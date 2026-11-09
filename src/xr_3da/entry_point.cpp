@@ -49,25 +49,21 @@ struct tracy_raii
     }
 };
 
-#if defined(XR_PLATFORM_WEB)
 static bool has_flag(pcstr commandLine, pcstr flag)
 {
-    const char* found = strstr(commandLine, flag);
-    if (!found)
-        return false;
-    const char next = found[strlen(flag)];
-    return next == '\0' || next == ' ';
+    const auto length = strlen(flag);
+    for (auto* found = strstr(commandLine, flag); found; found = strstr(found + length, flag))
+    {
+        if ((found == commandLine || found[-1] == ' ') && (found[length] == '\0' || found[length] == ' '))
+            return true;
+    }
+    return false;
 }
-#endif
 
 int entry_point(pcstr commandLine)
 {
     tracy_raii raii;
-#if defined(XR_PLATFORM_WEB)
     auto* game = has_flag(commandLine, "-nogame") ? nullptr : &xrGame;
-#else
-    auto* game = strstr(commandLine, "-nogame") ? nullptr : &xrGame;
-#endif
 
 #if defined(XR_PLATFORM_WEB)
     auto* app = xr_new<CApplication>(commandLine, game, s_render_modules);

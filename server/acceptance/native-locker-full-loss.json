@@ -1,0 +1,237 @@
+{
+  "schema": 1,
+  "scope": "Optimized unified Chrome WASM64 and release Rust over loopback WebRTC on original Zaton geometry. Initial saves were seeded on the lower deck. Directional movement and relative camera motion were scripted. The native menu, transfer, firearm and respawn bindings issued the gameplay actions.",
+  "engineWasmSha256": "f742bd4b84acc81af4a910adfc527b82f74f8083c728067e16bf452a42ec24ed",
+  "serverSha256": "9fd918daf74e4d7ee4889e0ee18ebeb3473ca81f4059a4a30736cbf27aebc161",
+  "collisionManifestSha256": "525800fb07878b1d583ba50181ce03c87d64bfda68ba8e505b387aec72290c4a",
+  "locker": {
+    "spawnId": 51,
+    "openedInThirdPersonWithUse": true,
+    "originalDragDeposit": "cd751e45465f9a675517d404fc6ed6b8",
+    "ctrlXStoredRemainingRucksack": true,
+    "foreignAccess": {
+      "error": "corpse unavailable"
+    },
+    "storedIds": [
+      "1fa45ea109f404cc5b0c543de039041b",
+      "2d10bb797b99c3399b51e38698c1d748",
+      "487d2546200779dfbfd6b889f6379076",
+      "8748a940d077381998c9c8d0525a5c8e",
+      "cd751e45465f9a675517d404fc6ed6b8"
+    ],
+    "withdrawnIds": [
+      "1fa45ea109f404cc5b0c543de039041b",
+      "2d10bb797b99c3399b51e38698c1d748",
+      "487d2546200779dfbfd6b889f6379076",
+      "8748a940d077381998c9c8d0525a5c8e",
+      "cd751e45465f9a675517d404fc6ed6b8"
+    ],
+    "withdrawnWithTakeAll": true,
+    "emptyAfterWithdrawal": true,
+    "groza": {
+      "id": "cd751e45465f9a675517d404fc6ed6b8",
+      "storedRevision": 1,
+      "withdrawnRevision": 2,
+      "state": {
+        "condition": 0.7300000190734863,
+        "upgrades": [
+          "up_fiftha_groza"
+        ],
+        "payload": {
+          "kind": "weapon",
+          "cartridges": [
+            "ammo_9x39_ap",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9",
+            "ammo_9x39_pab9"
+          ],
+          "launcher_cartridges": [
+            "ammo_vog-25"
+          ],
+          "selected_ammunition": "ammo_9x39_pab9",
+          "attachments": [],
+          "fire_mode": 0,
+          "launcher_mode": false
+        }
+      }
+    }
+  },
+  "death": {
+    "safeZoneRadiusMetres": 10,
+    "distanceFromSafeZoneCenterMetres": {
+      "victim": 12.0653099439732,
+      "shooter": 11.114286022457398
+    },
+    "shooterAmmoBefore": 10,
+    "shooterAmmoAfter": 8,
+    "corpseId": "e74c0043c13fdb494094b50c39aa9da5",
+    "carriedIds": [
+      "3a63ec3ba62e6ef11cfc3de7e6ec75cc",
+      "3cca1b6ffe129da44fde2749416e3cd7",
+      "766ae92052c69312aa7bc70441c0dc1f",
+      "9f6be917a7ac40aca71e65ca17eb8018",
+      "d7a1d56bec6b7ec55576b4cd0cf5ce6b",
+      "f0e5ad47297c8746d613aaee5e8c443a"
+    ],
+    "restoredFromSqliteBackup": true,
+    "rejoinedDead": true,
+    "rejoinedCarriedCount": 0,
+    "deadLife": 0,
+    "singleNativeDoubleClickItem": {
+      "id": "9f6be917a7ac40aca71e65ca17eb8018",
+      "place": "rucksack",
+      "revision": 1,
+      "section": "wpn_pm",
+      "state": {
+        "condition": 0.6399999856948853,
+        "payload": {
+          "attachments": [],
+          "cartridges": [
+            "ammo_9x18_fmj",
+            "ammo_9x18_fmj"
+          ],
+          "fire_mode": 0,
+          "kind": "weapon",
+          "launcher_cartridges": [],
+          "launcher_mode": false,
+          "selected_ammunition": "ammo_9x18_fmj"
+        },
+        "upgrades": []
+      }
+    },
+    "takeAllRecoveredRemainingCount": 5,
+    "corpseEmptyAfterTakeAll": true,
+    "recoveredIds": [
+      "3a63ec3ba62e6ef11cfc3de7e6ec75cc",
+      "3cca1b6ffe129da44fde2749416e3cd7",
+      "766ae92052c69312aa7bc70441c0dc1f",
+      "9f6be917a7ac40aca71e65ca17eb8018",
+      "d7a1d56bec6b7ec55576b4cd0cf5ce6b",
+      "f0e5ad47297c8746d613aaee5e8c443a"
+    ],
+    "respawnInput": "Enter",
+    "respawnLife": 1,
+    "respawnKit": [
+      {
+        "id": "4be705ba639dc67e95e8f00342bcf517",
+        "section": "wpn_knife",
+        "place": "slot:1"
+      },
+      {
+        "id": "6db7a5771d8b4a42c40327d1c05f0144",
+        "section": "device_pda",
+        "place": "slot:8"
+      },
+      {
+        "id": "7305ab936dc54a5eb64d044f26777a4d",
+        "section": "device_torch",
+        "place": "slot:10"
+      },
+      {
+        "id": "8a2bc5dd3604b9d14a9c7deed103c22f",
+        "section": "bandage",
+        "place": "rucksack"
+      },
+      {
+        "id": "b2936ff22de8fbd118760281810475a5",
+        "section": "bread",
+        "place": "rucksack"
+      },
+      {
+        "id": "bf9c7025b57bdf5bc48e5886ee9c4854",
+        "section": "bolt",
+        "place": "slot:6"
+      }
+    ]
+  },
+  "browserWebgpuValidationErrors": [
+    0,
+    0
+  ],
+  "observations": [
+    "A reconnect opened in a third tab reached the correct authoritative dead state but stalled before rendering in the first headless session. A fresh Chrome process rendered the same dead save after Rust restarted on a SQLite backup.",
+    "The rendered single-item transfer used a calibrated cursor hotspot. Initial automated cursor attempts did not hit the item.",
+    "A separate Rust expiry regression reopens SQLite before advancing the expiry clock deterministically."
+  ],
+  "singlePlayer": {
+    "saveBinding": "F5",
+    "reloadBinding": "F9",
+    "quickSaveBytes": 626862,
+    "archiveChunkRequests": 0,
+    "webgpuValidationErrors": 0
+  },
+  "expiry": {
+    "before": [
+      {
+        "id": "1d11fd90042e9f8725596c3336628840",
+        "kind": "world",
+        "deadline": 1794187080734
+      },
+      {
+        "id": "f4bec469aa163edde8bd3df95c5943c8",
+        "kind": "corpse",
+        "deadline": 1794187068385
+      }
+    ],
+    "corpseItems": 10,
+    "dropItems": 1,
+    "seenAfterRestartAt": 1794187012282,
+    "removedAt": 1794187081815,
+    "lockerItemsPreserved": 1,
+    "expiredCorpseRejected": {
+      "error": "corpse unavailable"
+    },
+    "webgpuValidationErrors": 0,
+    "scope": "Two rendered Chrome clients on original Zaton geometry. Saves were seeded beyond Skadovsk protection. The browser sent the ordinary drop command directly over WebRTC, then the other player fired with the original mouse binding. Both Chrome and Rust restarted before expiry.",
+    "settings": {
+      "corpseLifetimeSeconds": 75,
+      "droppedItemLifetimeSeconds": 90,
+      "logoutVulnerabilitySeconds": 0
+    },
+    "observedDeletions": [
+      {
+        "id": "f4bec469aa163edde8bd3df95c5943c8",
+        "kind": "corpse",
+        "deadline": 1794187068385,
+        "observedDeletedAt": 1794187069159,
+        "afterDeadlineMs": 774
+      },
+      {
+        "id": "1d11fd90042e9f8725596c3336628840",
+        "kind": "world",
+        "deadline": 1794187080734,
+        "observedDeletedAt": 1794187081855,
+        "afterDeadlineMs": 1121
+      }
+    ],
+    "nativeLooseItemCountAfterRestart": 1,
+    "nativeLooseItemCountAfterExpiry": 0,
+    "corpseModelAndUsePromptBeforeExpiry": true,
+    "corpseModelAndUsePromptRemovedAfterExpiry": true,
+    "screenshotsSha256": {
+      "before-expiry": "5dbf9de07f7592a7eb65c62fb62f6b2132a24f1e3a516d3d6edcabfeec5c5060",
+      "after-expiry": "474ac9876fe1cebd9e8cd1fe0d9f67c6c515087db4f7f18885964493ed30e411"
+    }
+  }
+}

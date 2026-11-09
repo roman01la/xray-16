@@ -1,0 +1,44 @@
+{
+  "world": "zaton-static-v1",
+  "server": "optimized local build",
+  "clients": "three WebRTC peers using the production binary codec",
+  "health": {
+    "initial": 100,
+    "duringWindup": 100,
+    "afterSlash": 40,
+    "afterStab": 0,
+    "afterRestart": 0
+  },
+  "slash": {
+    "serverContactTick": 8,
+    "resultAfterAimTicks": 10,
+    "turnedDuringWindup": true,
+    "outfitCondition": 0.9800000190734863,
+    "staminaPermille": 942,
+    "bleedingPermille": 600
+  },
+  "stab": {
+    "serverContactTick": 9,
+    "resultAfterAimTicks": 10,
+    "aimOffsetRadians": 0.95
+  },
+  "checks": {
+    "sheathRejected": true,
+    "overlapRejected": true,
+    "otherPlayersKnifeRejected": true,
+    "safeZoneRejected": true,
+    "missOutsideReach": true,
+    "carriedItemsUnchanged": true,
+    "knifeSelectionRestored": true,
+    "nearbyAppearanceReceived": true,
+    "grenadeRegressionPassed": true
+  },
+  "recovery": {
+    "fromSchema": 17,
+    "toSchema": 18,
+    "integrity": "ok",
+    "corpseCount": 1,
+    "originalItemInstancesInCorpse": 7,
+    "outfitCondition": 0.95000005
+  }
+}

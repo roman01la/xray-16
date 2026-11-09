@@ -20,6 +20,10 @@
 
 using namespace ACTOR_DEFS;
 
+#ifdef XRAY_WEB_MULTIPLAYER
+namespace zone { class InventoryPresentation; }
+#endif
+
 class CInfoPortion;
 struct GAME_NEWS_DATA;
 class CActorCondition;
@@ -80,6 +84,18 @@ private:
 public:
     CActor();
     virtual ~CActor();
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+private:
+    bool m_zoneAlifeTarget = false;
+    u32 m_zoneAlifeHits = 0;
+
+public:
+    void applyZoneAlifePose(const Fvector& position, float yaw, bool crouched);
+    u32 zoneAlifeHits() const { return m_zoneAlifeHits; }
+    bool zoneAlifeTarget() const { return m_zoneAlifeTarget; }
+#else
+    bool zoneAlifeTarget() const { return false; }
+#endif
 
 public:
     virtual bool AlwaysTheCrow() { return true; }
@@ -490,6 +506,9 @@ public:
 protected:
     CFireDispertionController m_fdisp_controller;
     //если актер целится в прицел
+#ifdef XRAY_WEB_MULTIPLAYER
+    friend class zone::InventoryPresentation;
+#endif
     void SetZoomAimingMode(bool val) { m_bZoomAimingMode = val; }
     bool m_bZoomAimingMode;
 

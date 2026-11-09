@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-08",
+  "environment": "Optimized macOS ARM64 CoP host and Rust release server with disposable stock Zaton and SQLite",
+  "setup": "A disposable Lua fixture spawned a stock generic stalker and delivered a controlled native hit. A private pose feed kept the encounter online and captured the outgoing death event before any Rust database received it.",
+  "results": {
+    "nativeHostKilledBeforeRustReceivedTheEvent": true,
+    "pendingRecordSurvivedNativeProcessExit": true,
+    "replacementReclaimedSameStaleSocket": true,
+    "originalDeathIdCommitted": true,
+    "outboxRecordRetiredAfterRustAcknowledged": true,
+    "rustCorpses": 1,
+    "items": 11,
+    "weapons": [
+      { "section": "wpn_lr300", "condition": 0.73, "loadedRounds": 30 },
+      { "section": "wpn_fort", "condition": 0.52, "loadedRounds": 12 }
+    ]
+  },
+  "lostAcknowledgementSimulation": "Restored the exact pending record after the first Rust commit and restarted both processes. The same corpse and all eleven item IDs and states survived with one durable death record.",
+  "transportRegression": {
+    "secondHostRejected": true,
+    "pendingRecordForAnotherWorldHeld": true,
+    "wrongAcknowledgementIgnored": true,
+    "incompleteTemporaryWriteDiscarded": true,
+    "corruptPublishedRecordRejected": true
+  },
+  "earlierRuns": "Immediate replacement during the isolated crash test was refused while the first native process still held the socket lock. The verified recovery waited for process exit and lock release and reused the stale pathname.",
+  "remaining": "Recovery from an older native world save, production headless startup, and a Linux deployment restart remain open."
+}

@@ -23,7 +23,7 @@ impl Descriptor {
             "invalid scene identity/model"
         );
         ensure!(
-            ["synthetic-flat-v1", "zaton-static-v1"].contains(&self.world.as_str()),
+            self.world == "synthetic-flat-v1" || crate::session::campaign_level(&self.world).is_some(),
             "unsupported scene world"
         );
         ensure!(

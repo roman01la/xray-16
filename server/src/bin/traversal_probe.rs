@@ -31,8 +31,9 @@ fn main() -> Result<()> {
                 let sprint = tick % 120 < 30;
                 let jump = tick % 90 == 45;
                 let crouch = (30..60).contains(&(tick % 120));
+                let walk = (60..90).contains(&(tick % 120));
                 let previous = motor.feet;
-                motor.step_command(&map, direction.0, direction.1, sprint, jump, crouch)?;
+                motor.step_command(&map, direction.0, direction.1, sprint, jump, crouch, walk)?;
                 ensure!(
                     motor.feet.is_finite() && motor.feet.y >= map.manifest.bounds.min[1] - 2.,
                     "invalid/fallen traversal state"
@@ -44,7 +45,7 @@ fn main() -> Result<()> {
                 grounded += u32::from(motor.grounded);
                 crouched += u32::from(motor.crouched);
                 airborne += u32::from(!motor.grounded);
-                commands.push(serde_json::json!({"x":direction.0,"z":direction.1,"sprint":sprint,"jump":jump,"crouch":crouch}));
+                commands.push(serde_json::json!({"x":direction.0,"z":direction.1,"sprint":sprint,"jump":jump,"crouch":crouch,"walk":walk}));
                 if tick % 15 == 14 {
                     checkpoints.push(serde_json::json!({"tick":tick,"feet":motor.feet.to_array(),"grounded":motor.grounded,"crouched":motor.crouched}));
                 }

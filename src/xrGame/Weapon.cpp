@@ -1403,6 +1403,22 @@ float CWeapon::CurrentZoomFactor()
 {
     return IsScopeAttached() ? m_zoom_params.m_fScopeZoomFactor : m_zoom_params.m_fIronSightZoomFactor;
 };
+#ifdef __EMSCRIPTEN__
+void CWeapon::SetPresentationAim(bool aiming)
+{
+    if (IsZoomed() == aiming)
+        return;
+    m_zoom_params.m_bIsZoomModeNow = aiming;
+    SetZoomFactor(aiming ? CurrentZoomFactor() : g_fov);
+}
+
+void CWeapon::ClearPresentationAim()
+{
+    SetPresentationAim(false);
+    m_zoom_params.m_fZoomRotationFactor = 0.f;
+}
+#endif
+
 void GetZoomData(const float scope_factor, float& delta, float& min_zoom_factor);
 void CWeapon::OnZoomIn()
 {

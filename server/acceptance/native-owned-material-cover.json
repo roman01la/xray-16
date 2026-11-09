@@ -1,0 +1,196 @@
+{
+  "schema": 1,
+  "scope": "Optimized Rust and the unchanged unified browser WASM on original Zaton collision. Two isolated Chrome processes. The harness seeded grounded positions and scripted relative camera motion. The original Mouse1 input fired the shots.",
+  "engineWasmSha256": "f742bd4b84acc81af4a910adfc527b82f74f8083c728067e16bf452a42ec24ed",
+  "serverSha256": "d9c3d2b2ad4fe8913f99c526bae23e7291fc669f855b9216bb9729a3d588316f",
+  "catalogSha256": "f1a21f313ae7b0a80e86c4e6fdb805b914cb5b8a78e331ae0cf80d29adde8d60",
+  "collisionManifestSha256": "525800fb07878b1d583ba50181ce03c87d64bfda68ba8e505b387aec72290c4a",
+  "materialLibrarySha256": "72d2d37c29116c672b5f9865e5c523664f7961ea17bd0c45aba848fc17d366c2",
+  "penetration": {
+    "cover": {
+      "coverCandidate": {
+        "center": [
+          326.9743139831543,
+          43.099588245010374,
+          -390.9628601074219
+        ],
+        "density": 0,
+        "face": 1167741,
+        "factor": 0.10000000149011612,
+        "materialId": 6,
+        "name": "materials\\glass",
+        "normal": [
+          0,
+          0,
+          -1
+        ]
+      },
+      "distanceMetres": 5.005852699279785,
+      "positions": [
+        [
+          326.97430419921875,
+          41.75980758666992,
+          -393.4628601074219
+        ],
+        [
+          326.97430419921875,
+          41.70780944824219,
+          -388.4628601074219
+        ]
+      ],
+      "straightSurfaceCrossings": [
+        {
+          "allowsRicochet": true,
+          "density": 0,
+          "distance": 2.5029263496398926,
+          "factor": 0.10000000149011612,
+          "normal": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "allowsRicochet": true,
+          "density": 0,
+          "distance": 2.697206497192383,
+          "factor": 0.10000000149011612,
+          "normal": [
+            0,
+            0,
+            1
+          ]
+        }
+      ]
+    },
+    "aim": {
+      "desired": {
+        "yaw": 0,
+        "pitch": -0.04836188828546165
+      },
+      "actual": {
+        "yaw": 0,
+        "pitch": -0.04800000041723251
+      }
+    },
+    "buckshot": {
+      "cartridge": "ammo_12x70_buck",
+      "penetration": 0.0,
+      "outcome": {
+        "ammo": 1,
+        "status": "blocked"
+      },
+      "victimHealth": 100
+    },
+    "slug": {
+      "cartridge": "ammo_12x76_zhekan",
+      "penetration": 0.55,
+      "outcome": {
+        "ammo": 0,
+        "health": 67,
+        "status": "hit",
+        "target": 2
+      },
+      "victimHealth": 67
+    },
+    "finalWeaponRevision": 2,
+    "persistedVictimConditionRevision": 1,
+    "persistedVictimHealth": 0.66237396,
+    "nativeShotLogs": [
+      "* Zone weapon HUD shot: wpn_toz34 anm_shot_2 rounds=1",
+      "* Zone weapon HUD shot: wpn_toz34 anm_shot_1 rounds=0"
+    ],
+    "webgpuValidationErrors": [
+      0,
+      0
+    ],
+    "screenshotsSha256": {
+      "cover-from-shooter": "9b33471aed1eb767fa91772ec7817940bf34c0a430587c3a7ffdef4c1666a4ef",
+      "cover-from-victim": "45c8b137437b7c808667ce7376406d028e2e91e858c2011a9a787551691f7812"
+    }
+  },
+  "rustTestsPassed": 143,
+  "singlePlayer": {
+    "sameBinaryAsVerifiedF5F9Build": true,
+    "evidence": "native-locker-full-loss.json"
+  },
+  "ricochet": {
+    "fixture": {
+      "aimPoint": [
+        -458.2924499511719,
+        45.061553955078125,
+        -425.508544921875
+      ],
+      "bankedSamples": 24,
+      "coverCandidate": {
+        "center": [
+          -458.2924397766113,
+          44.52487450485229,
+          -425.50853171997073
+        ],
+        "density": 0,
+        "face": 2035,
+        "factor": 0.10000000149011612,
+        "materialId": 6,
+        "name": "materials\\glass",
+        "normal": [
+          0.9999999999993942,
+          0,
+          1.1007021378930956e-06
+        ]
+      },
+      "disabledRicochetSamples": 0,
+      "incidence": 0.22941544651985168,
+      "positions": [
+        [
+          -457.6324462890625,
+          43.54155349731445,
+          -428.30853271484375
+        ],
+        [
+          -457.7924499511719,
+          43.59528732299805,
+          -423.4085388183594
+        ]
+      ],
+      "samples": 24,
+      "stationaryGroundedTicks": 35
+    },
+    "aim": {
+      "desired": {
+        "yaw": -0.23149096894981433,
+        "pitch": -0.010427994818315299
+      },
+      "actual": {
+        "yaw": -0.23200000822544098,
+        "pitch": -0.012000000104308128
+      }
+    },
+    "cartridge": "ammo_12x70_buck",
+    "outcome": {
+      "ammo": 0,
+      "health": 0,
+      "status": "hit",
+      "target": 2
+    },
+    "victimHealth": 0,
+    "persistedVictimAlive": false,
+    "persistedVictimHealth": 0.0,
+    "persistedVictimConditionRevision": 1,
+    "persistedCorpseItems": 7,
+    "persistedWeaponRevision": 1,
+    "persistedRounds": 0,
+    "nativeShotLogs": [
+      "* Zone weapon HUD shot: wpn_toz34 anm_shot_1 rounds=0"
+    ],
+    "webgpuValidationErrors": [
+      0,
+      0
+    ],
+    "screenshotsSha256": {
+      "ricochet-aim": "b60c6d1ec857ef9858bcdfdf7a0a1bbc7c04e2b9d696ad592f3a10e531fcd9ad",
+      "ricochet-victim": "2275ca8a76f3756f7da8729e2d9e6bd0aeae08f2f9c8684b2714626e9c2bbbfa"
+    },
+    "replayNote": "The initial grounded replay observed a fatal hit on both clients but timed out because the poll treated numeric zero as pending. A fresh replay accepted the victim state object and completed."
+  }
+}

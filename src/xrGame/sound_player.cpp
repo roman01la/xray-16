@@ -251,6 +251,21 @@ CSoundPlayer::CSoundCollection::CSoundCollection(const CSoundCollectionParams& p
             if (temp)
                 m_sounds.push_back(temp);
         }
+#ifdef XR_PLATFORM_WEB
+        xr_vector<u32> numbers;
+        if (xr_strlen(S) + 10 < sizeof(string256) &&
+            FS.list_numbered_files(numbers, "$game_sounds$", S, ".ogg", params.m_max_count))
+        {
+            for (const u32 i : numbers)
+            {
+                string256 name;
+                xr_sprintf(name, "%s%d", S, i);
+                if (ref_sound* sound = add(params.m_type, name))
+                    m_sounds.push_back(sound);
+            }
+            continue;
+        }
+#endif
         for (u32 i = 0; i < params.m_max_count; ++i)
         {
             string256 name;

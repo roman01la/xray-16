@@ -1,0 +1,87 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized Rust and unified Chrome WebGPU on stock Zaton, with seeded stock items and surveyed starting positions. A scripted native inventory cursor used the original context menu for all three fits and removals. Reload, Aim, launcher mode and Fire used the original gameplay bindings.",
+  "engineWasmSha256": "bbe7c01723e7500a8b2667ebbee91d23aa9ad6f423f028c57f3505fea1f5dbf4",
+  "serverSha256": "96f0fa261acac3420047131c432f64c587db4df69d9772ce969b8ee6ce1c5326",
+  "lr300": {
+    "attachments": [
+      "wpn_addon_scope_susat_x1.6",
+      "wpn_addon_silencer",
+      "wpn_addon_grenade_launcher_m203"
+    ],
+    "scopeReturned": "wpn_addon_scope_susat_x1.6",
+    "suppressorReturned": "wpn_addon_silencer",
+    "launcherReturned": "wpn_addon_grenade_launcher_m203",
+    "rifleRounds": 4,
+    "returnedGrenades": 1,
+    "projectile": "* Zone projectile drawn: 1",
+    "blast": [
+      "wpn_fake_missile2",
+      397.72210693359375,
+      -7.197514533996582,
+      202.1408233642578
+    ],
+    "impact": "* Zone detonation: wpn_fake_missile2 particles=explosions\\explosion_01 positional_sound=1 light=0 at [397.722,-7.198,202.141]",
+    "rejected": {
+      "wrong": "incompatible_addon",
+      "duplicate": "addon_slot_occupied"
+    },
+    "webgpuValidationErrors": 0
+  },
+  "abakan": {
+    "attachments": [],
+    "webgpuValidationErrors": 0
+  },
+  "detachedCondition": {
+    "scope": 0.625,
+    "suppressor": 0.75,
+    "launcher": 0.875
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      625486
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "testSuites": {
+    "rust": 148,
+    "browser": 133
+  },
+  "screenshots": {
+    "mounted": "native-lr300-mounted.jpg",
+    "fittedSUSAT": "native-lr300-susat.jpg",
+    "detached": "native-lr300-detached.jpg",
+    "bareAbakan": "native-abakan-bare.jpg",
+    "M203Impact": "native-m203-impact.jpg"
+  },
+  "runNotes": [
+    "The fixture first used an invalid two-round M209 box. The final fixture used two stock single-round boxes.",
+    "The first native inventory run committed the attachments but rendered a bare LR300. Recognizing the CoP WP_* addon classes restored native flags and the fitted scope variant. The old Abakan ghost scope also disappeared after applying the addon bones on rebind.",
+    "The next run fired the launcher but the replication view filtered out impact projectiles. The final run drew the M209 and recorded the original impact particles and scheduled positional sound. A separate reload and detach returned the still-loaded grenade.",
+    "The incompatible and occupied-slot requests used the same binary WebRTC inventory action directly. The successful fits and detaches used the native menu.",
+    "Fitted and fixed scopes have rendered evidence. Adjustable magnification, special vision effects, observer addon models and explosive lighting remain separate gaps."
+  ]
+}

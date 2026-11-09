@@ -143,6 +143,8 @@ using namespace xray;
 
 bool CRenderDevice::RenderBegin()
 {
+    if (IsHeadlessAlifeHost())
+        return false;
     if (GEnv.isDedicatedServer)
         return true;
 
@@ -219,7 +221,7 @@ void CRenderDevice::RenderEnd(void)
 
 void CRenderDevice::PreCache(u32 amount, bool wait_user_input)
 {
-    if (GEnv.isDedicatedServer)
+    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
         amount = 0;
     else if (GEnv.Render->GetForceGPU_REF())
         amount = 0;
@@ -335,7 +337,7 @@ static void UpdateViewports()
 
 void CRenderDevice::DoRender()
 {
-    if (GEnv.isDedicatedServer)
+    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
         return;
 
     ZoneScoped;
@@ -410,7 +412,7 @@ void CRenderDevice::ProcessFrame()
 
     u32 updateDelta = 1000 / ps_fps_limit;
 
-    if (GEnv.isDedicatedServer)
+    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
         updateDelta = 1000 / g_svDedicateServerUpdateReate;
 
     else if (Paused() || g_pGameLevel == nullptr)
@@ -556,6 +558,13 @@ void CRenderDevice::Run()
         Timer_MM_Delta = time_system - time_local;
     }
 
+    if (IsHeadlessAlifeHost())
+    {
+        b_is_Active = true;
+        Msg("* A-Life headless host: SDL %s, frame presentation disabled", SDL_GetCurrentVideoDriver());
+        return;
+    }
+
     SDL_HideWindow(m_sdlWnd); // workaround for SDL bug
     UpdateWindowProps();
     SDL_ShowWindow(m_sdlWnd);
@@ -638,7 +647,7 @@ ENGINE_API bool bShowPauseString = true;
 void CRenderDevice::Pause(bool bOn, bool bTimer, bool bSound, [[maybe_unused]] pcstr reason)
 {
     static int snd_emitters_ = -1;
-    if (g_bBenchmark || GEnv.isDedicatedServer)
+    if (g_bBenchmark || GEnv.isDedicatedServer || IsHeadlessAlifeHost())
         return;
 
     if (bOn)
@@ -690,6 +699,9 @@ bool CRenderDevice::Paused() { return g_pauseMngr().Paused(); }
 
 void CRenderDevice::OnWindowActivate(SDL_Window* window, bool activated)
 {
+    if (IsHeadlessAlifeHost())
+        return;
+
     ZoneScoped;
 
     if (editor().GetState() == editor::ide::visible_state::full)

@@ -24,6 +24,13 @@ const SCHEMAS: &[(u8, &str, &[&str])] = &[
     (22, "vitals", &["state"]),
     (23, "weapon_shot", &["sequence", "tick", "result"]),
     (24, "detonations", &["effects"]),
+    (25, "travel", &["world"]),
+    (26, "grenades", &["tick", "entries"]),
+    (29, "weapon_fired", &["life", "item", "ammo", "launcher"]),
+    (30, "weapon_reload", &["life", "item", "alias", "milliseconds", "sound", "cancelled"]),
+    (31, "gunshots", &["effects"]),
+    (32, "knife_swing", &["life", "item", "stab"]),
+    (33, "grenade_hud", &["life", "item", "phase"]),
 ];
 pub fn decode_command(bytes: &[u8]) -> Result<Value, &'static str> {
     if bytes.len() < 8 || bytes[..3] != [0x58, 0x5a, crate::protocol::VERSION] {
@@ -81,18 +88,33 @@ pub fn decode_command(bytes: &[u8]) -> Result<Value, &'static str> {
         (3, 28) => Ok(json!({"type":"respawn","sequence":sequence,"request_id":id_at(8),"life":u32_at(24)})),
         (5, 8) => Ok(json!({"type":"leave","sequence":sequence})),
         (12, 8) => Ok(json!({"type":"trigger_stop","sequence":sequence})),
-        (4 | 11, 36) => {
+        (13, 8) => Ok(json!({"type":"use_travel","sequence":sequence})),
+        (14, 13) if matches!(bytes[8], 0..=4 | 6) => {
+            Ok(json!({"type":"select_weapon","sequence":sequence,"slot":bytes[8],"life":u32_at(9)}))
+        }
+        (28, 13) if bytes[8] <= 1 => {
+            Ok(json!({"type":"select_detector","sequence":sequence,"active":bytes[8]==1,"life":u32_at(9)}))
+        }
+        (4 | 11, 36) | (15 | 27, 37) => {
             let yaw = f32::from_le_bytes(bytes[12..16].try_into().unwrap());
             let pitch = f32::from_le_bytes(bytes[16..20].try_into().unwrap());
             if !yaw.is_finite() || !pitch.is_finite() {
                 return Err("nonfinite aim");
             }
             let item = bytes[20..36].iter().any(|&b| b != 0).then(|| id_at(20));
-            if bytes[3] == 11 && item.is_none() {
+            if bytes[3] != 4 && item.is_none() {
                 return Err("weapon id");
             }
-            Ok(json!({"type":if bytes[3] == 4 {"fire"} else {"trigger_start"},"sequence":sequence,
-                "item":item,"aim":{"tick":u32_at(8),"yaw":yaw,"pitch":pitch}}))
+            let aim = json!({"tick":u32_at(8),"yaw":yaw,"pitch":pitch});
+            if bytes[3] == 15 {
+                let phase = match bytes[36] { 0 => "prime", 1 => "release", 2 => "cancel", _ => return Err("grenade phase") };
+                Ok(json!({"type":"grenade","sequence":sequence,"item":item,"aim":aim,"phase":phase}))
+            } else if bytes[3] == 27 {
+                let mode = match bytes[36] { 0 => "slash", 1 => "stab", _ => return Err("knife mode") };
+                Ok(json!({"type":"knife","sequence":sequence,"item":item,"aim":aim,"mode":mode}))
+            } else {
+                Ok(json!({"type":if bytes[3] == 4 {"fire"} else {"trigger_start"},"sequence":sequence,"item":item,"aim":aim}))
+            }
         }
         _ => Err("command or length"),
     }

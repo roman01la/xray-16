@@ -45,6 +45,7 @@ private:
     void i_decompress(OggVorbis_File* ovf, float* dest, u32 size) const; // this overload clamps denormalized sounds
 
     bool LoadWave(pcstr name);
+    bool set_metadata(u32 rate, u16 channels, s64 frames, const void* comment, size_t commentSize);
 
 public:
     CSoundRender_Source() noexcept = default;
@@ -58,6 +59,9 @@ public:
 
     bool load(pcstr name);
     void unload();
+#ifdef XR_PLATFORM_WEB
+    static void InitializePackedMetadata();
+#endif
 
     OggVorbis_File* open() const;
     void close(OggVorbis_File*& ovf) const;

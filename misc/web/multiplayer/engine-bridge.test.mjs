@@ -19,6 +19,36 @@ test('detonation effects stay bounded and expired effects return their credit',a
  await wait();assert.equal(b.detonations.inflight,null);
  assert.equal(e.consumeDetonations(),null);
 });
+test('confirmed firearm cues stay bounded and stale cues cannot replay',async t=>{
+ const {c,b,e}=setup(t);await wait();
+ const cue=ammo=>({type:'weapon_fired',life:9,item:'e'.repeat(32),ammo,launcher:false});
+ for(let ammo=30;ammo>=0;ammo--)c.dispatchEvent(new CustomEvent('weapon-fired',{detail:cue(ammo)}));
+ await wait();assert.deepEqual(e.weaponFire.cue,cue(30));
+ assert.deepEqual(b.weaponFire.pending.cue,cue(0));
+ assert.equal(e.consumeWeaponFire(e.weaponFire.receivedAt+301),null);
+ await wait();assert.deepEqual(e.consumeWeaponFire(e.weaponFire.receivedAt),cue(0));
+ await wait();assert.equal(b.weaponFire.inflight,null);
+ assert.equal(e.consumeWeaponFire(),null);
+});
+test('observer gunshot batches coalesce and return credit when stale',async t=>{
+ const {c,b,e}=setup(t);await wait();
+ const effects=n=>[[9,'wpn_ak74',0,n,3,-1]];
+ for(let n=1;n<=100;n++)c.dispatchEvent(new CustomEvent('gunshots',{detail:effects(n)}));
+ await wait();assert.deepEqual(e.gunshots.effects,effects(1));
+ assert.deepEqual(b.gunshots.pending.effects,effects(100));
+ assert.equal(e.consumeGunshots(e.gunshots.receivedAt+301),null);
+ await wait();assert.deepEqual(e.consumeGunshots(e.gunshots.receivedAt),effects(100));
+ await wait();assert.equal(b.gunshots.inflight,null);
+});
+test('an expired reload animation returns credit for its cancellation',async t=>{
+ const {c,b,e}=setup(t);await wait();
+ const cue={type:'weapon_reload',life:9,item:'e'.repeat(32),alias:'anm_open',milliseconds:434,sound:6,cancelled:false};
+ const cancel={...cue,alias:'',milliseconds:0,sound:0,cancelled:true};
+ for(const detail of [cue,cancel])c.dispatchEvent(new CustomEvent('weapon-reload',{detail}));
+ await wait();assert.equal(e.consumeWeaponReload(e.weaponReload.receivedAt+434),null);
+ await wait();assert.deepEqual(e.consumeWeaponReload(e.weaponReload.receivedAt+500),cancel);
+ await wait();assert.equal(b.weaponReload.inflight,null);
+});
 test('inputs coalesce under backpressure and actions return reliable results',async t=>{const {c,e}=setup(t);await wait();for(let i=0;i<1000;i++)e.setInput({x:i/1000,z:0,yaw:0,sprint:false});await wait();await wait();assert.equal(c.input.x,.999);assert.deepEqual(await e.attack(2),{applied:{health:75}});assert.equal(c.attacks,1);});
 test('old-session messages cannot affect new session',async t=>{const {c,b,e}=setup(t);await wait();b.receive({epoch:'old',type:'input',sequence:1,input:{x:1,z:0,yaw:0,sprint:true}});e.receive({epoch:'old',type:'closed'});assert.deepEqual(c.input,{});assert.equal(e.closed,false);});
 test('world mismatch closes bridge before snapshots or inputs',async t=>{const c=new Client(),{port1,port2}=new MessageChannel();const b=new BrowserEngineBridge(c,port1,{epoch:'test'});const e=new EngineBridgeEndpoint(port2,{epoch:'test',contract:{...contract,world:'zaton'}});t.after(()=>{b.close();e.close();});await wait();assert.equal(c.closed,true);assert.equal(b.ready,false);});
@@ -33,11 +63,33 @@ test('fire intent crosses the worker boundary without client hit claims',async t
  await assert.rejects(e.fire({tick:13,yaw:NaN,pitch:0}),/Invalid aim/);
  assert.equal(e.closed,false);
 });
-test('reload and respawn remain bounded reliable worker actions',async t=>{
+test('reload, respawn and travel Use cross the reliable worker bridge',async t=>{
  const {c,e}=setup(t);await wait();c.reload=async()=>({status:'started',ready_tick:90});c.respawn=async()=>({status:'rejected',reason:'alive'});
+ c.useTravel=async()=>({status:'rejected',reason:'access_card_required'});
  assert.deepEqual(await e.reload(),{status:'started',ready_tick:90});
  assert.deepEqual(await e.respawn(),{status:'rejected',reason:'alive'});
+ assert.deepEqual(await e.useTravel(),{status:'rejected',reason:'access_card_required'});
  assert.equal(e.requests.size,0);e.close();await assert.rejects(e.reload(),/unavailable/);
+});
+test('weapon selection carries the life and requested slot from the engine',async t=>{
+ const {c,e}=setup(t);await wait();
+ c.selectWeapon=async(life,slot)=>({life,slot});
+ assert.deepEqual(await e.selectWeapon(3,2),{life:3,slot:2});
+ assert.deepEqual(await e.selectWeapon(3,0),{life:3,slot:0});
+});
+test('a paused engine receives the first appearance update and then the latest cleared view',async t=>{
+ const {c,e,b}=setup(t);await wait();
+ c.lifecycle={entries:new Map()};
+ const publish=appearance=>{
+   if(appearance)c.lifecycle.entries.set(2,{id:2,appearance});else c.lifecycle.entries.clear();
+   c.dispatchEvent(new CustomEvent('lifecycle'));
+ };
+ publish({weapon:'wpn_lr300'});publish({weapon:'wpn_lr300',weaponAddons:1});publish({weapon:'wpn_lr300',weaponAddons:7});
+ await wait();assert.deepEqual(e.appearances.entries,[[2,{weapon:'wpn_lr300'}]]);
+ assert.deepEqual(b.appearances.pending,[[2,{weapon:'wpn_lr300',weaponAddons:7}]]);e.consumeAppearances();
+ await wait();assert.deepEqual(e.appearances.entries,[[2,{weapon:'wpn_lr300',weaponAddons:7}]]);e.consumeAppearances();
+ publish(null);await wait();assert.deepEqual(e.appearances.entries,[]);e.consumeAppearances();
+ await wait();assert.equal(e.appearances,null);
 });
 const inventoryView=(generation=1,life=0)=>({generation,life,alive:true,corpse:null,items:[{id:'a'.repeat(32),revision:generation,section:'wpn_ak74',place:'rucksack',state:{condition:.75,upgrades:[],payload:{kind:'equipment'}}}]});
 test('inventory delivers the initial coherent view and coalesces while engine is paused',async t=>{

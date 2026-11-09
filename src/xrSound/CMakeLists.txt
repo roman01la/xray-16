@@ -13,27 +13,9 @@ target_sources_grouped(
 
 target_sources_grouped(
     TARGET xrSound
-    NAME "Core\\OpenAL"
-    FILES
-    OpenALDeviceList.cpp
-    OpenALDeviceList.h
-    SoundRender_CoreA.cpp
-    SoundRender_CoreA.h
-)
-
-target_sources_grouped(
-    TARGET xrSound
     NAME "Effects"
     FILES
     SoundRender_Effects.h
-)
-
-target_sources_grouped(
-    TARGET xrSound
-    NAME "Effects\\OpenAL"
-    FILES
-    SoundRender_EffectsA_EAX.cpp
-    SoundRender_EffectsA_EAX.h
 )
 
 target_sources_grouped(
@@ -92,13 +74,40 @@ target_sources_grouped(
     SoundRender_Target.h
 )
 
-target_sources_grouped(
-    TARGET xrSound
-    NAME "Target\\OpenAL"
-    FILES
-    SoundRender_TargetA.cpp
-    SoundRender_TargetA.h
-)
+if(EMSCRIPTEN)
+    target_sources_grouped(
+        TARGET xrSound
+        NAME "AudioWorklet"
+        FILES
+        SoundRender_Web.cpp
+        SoundRender_Web.h
+    )
+else()
+    target_sources_grouped(
+        TARGET xrSound
+        NAME "Core\\OpenAL"
+        FILES
+        OpenALDeviceList.cpp
+        OpenALDeviceList.h
+        SoundRender_CoreA.cpp
+        SoundRender_CoreA.h
+    )
+    target_sources_grouped(
+        TARGET xrSound
+        NAME "Effects\\OpenAL"
+        FILES
+        SoundRender_EffectsA_EAX.cpp
+        SoundRender_EffectsA_EAX.h
+    )
+    target_sources_grouped(
+        TARGET xrSound
+        NAME "Target\\OpenAL"
+        FILES
+        SoundRender_TargetA.cpp
+        SoundRender_TargetA.h
+    )
+    target_link_libraries(xrSound PRIVATE OpenAL::OpenAL)
+endif()
 
 #target_sources_grouped(
 #    TARGET xrSound
@@ -131,7 +140,6 @@ target_link_libraries(xrSound
     xrAPI
     xrCDB
     xrMaterialSystem
-    OpenAL::OpenAL
     Ogg::Ogg
     Vorbis::Vorbis
     Vorbis::VorbisFile

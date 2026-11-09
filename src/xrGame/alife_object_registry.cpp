@@ -24,11 +24,11 @@ CALifeObjectRegistry::~CALifeObjectRegistry()
         xr_delete((*I).second);
 }
 
-void CALifeObjectRegistry::save(IWriter& memory_stream, CSE_ALifeDynamicObject* object, u32& object_count)
+void CALifeObjectRegistry::save(IWriter& memory_stream, CSE_ALifeDynamicObject* object, u32& object_count,
+    NET_Packet& tNetPacket)
 {
     ++object_count;
 
-    NET_Packet tNetPacket;
     // Spawn
     object->Spawn_Write(tNetPacket, TRUE);
     memory_stream.w_u16(u16(tNetPacket.B.count));
@@ -52,7 +52,7 @@ void CALifeObjectRegistry::save(IWriter& memory_stream, CSE_ALifeDynamicObject* 
         if (!child->can_save())
             continue;
 
-        save(memory_stream, child, object_count);
+        save(memory_stream, child, object_count, tNetPacket);
     }
 }
 
@@ -65,6 +65,9 @@ void CALifeObjectRegistry::save(IWriter& memory_stream)
     memory_stream.w_u32(u32(-1));
 
     u32 object_count = 0;
+    // Spawn_Write and w_begin reset the length. Each record is copied to the
+    // writer before visiting its children, so the 16 KiB buffer can be reused.
+    NET_Packet packet;
     OBJECT_REGISTRY::iterator I = m_objects.begin();
     OBJECT_REGISTRY::iterator E = m_objects.end();
     for (; I != E; ++I)
@@ -78,7 +81,7 @@ void CALifeObjectRegistry::save(IWriter& memory_stream)
         if ((*I).second->ID_Parent != 0xffff)
             continue;
 
-        save(memory_stream, (*I).second, object_count);
+        save(memory_stream, (*I).second, object_count, packet);
     }
 
     u32 last_position = memory_stream.tell();

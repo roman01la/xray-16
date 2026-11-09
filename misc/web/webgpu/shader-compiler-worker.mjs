@@ -10,11 +10,15 @@ function report(event) {
 }
 // Initialize once at page startup, then sleep in the event loop between jobs.
 // Catch startup failure immediately so every connecting client receives it.
+const captureOptions = new URL(import.meta.url).searchParams;
 const ready = createWasmToolchain().then(async toolchain => {
   const store=createShaderStore({fetchManifest:fetch, compile:request => compileProgram(request, toolchain), report});
   await store.preload();
+  const capture = captureOptions.has('shaderCapture')
+    ? await (await import('./shader-capture.mjs')).openShaderCapture(captureOptions)
+    : null;
   stats.ready = true;
-  return {store};
+  return {store,capture};
 }).catch(error => ({error:String(error.stack || error)}));
 let jobs = Promise.resolve();
 ready.then(({error}) => self.postMessage({type:error ? 'error' : 'ready',error,...stats}));
@@ -31,9 +35,11 @@ self.onmessage = ({data}) => {
     jobs = jobs.then(async () => {
       const state = new Int32Array(data.response, 0, 4);
       try {
-        const {store, error} = await ready;
+        const {store, capture, error} = await ready;
         if (error) throw Error(error);
-        const result = await store.load(data.request);
+        const result = capture
+          ? await capture.load(store, data.request)
+          : await store.load(data.request);
         finish(1, JSON.stringify(result));
       } catch (error) {
         stats.errors++;

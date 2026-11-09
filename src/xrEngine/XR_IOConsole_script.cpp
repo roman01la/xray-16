@@ -16,6 +16,10 @@ void CConsole::script_register(lua_State* luaState)
             return Console;
         }),
 
+#ifdef XR_PLATFORM_WEB
+        def("is_browser_build", +[]() { return true; }),
+#endif
+
         class_<CConsole>("CConsole")
             .def("execute", &CConsole::Execute)
             .def("execute_script", &CConsole::ExecuteScript)

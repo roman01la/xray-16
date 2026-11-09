@@ -1750,7 +1750,24 @@ export class GPUFrontend {
     }
     this.lastPresented = src;
     if (!this.presentPipeline) {
-      const code = `@group(0) @binding(0) var image:texture_2d<f32>; @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4f{let p=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(p[i],0,1);} @fragment fn fs(@builtin(position) p:vec4f)->@location(0) vec4f{let size=textureDimensions(image);return textureLoad(image,vec2i(i32(p.x),i32(size.y)-1-i32(p.y)),0);}`;
+      // The engine target and canvas can have different pixel dimensions.
+      // NDC Y points up, so the interpolated UV also flips the engine image.
+      const code = `
+        @group(0) @binding(0) var image: texture_2d<f32>;
+        struct PresentVertex {
+          @builtin(position) position: vec4f,
+          @location(0) uv: vec2f,
+        }
+        @vertex fn vs(@builtin(vertex_index) index: u32) -> PresentVertex {
+          let positions = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));
+          let p = positions[index];
+          return PresentVertex(vec4f(p, 0, 1), p * 0.5 + vec2f(0.5));
+        }
+        @fragment fn fs(vertex: PresentVertex) -> @location(0) vec4f {
+          let size = textureDimensions(image);
+          let pixel = clamp(vec2i(vertex.uv * vec2f(size)), vec2i(0), vec2i(size) - vec2i(1));
+          return textureLoad(image, pixel, 0);
+        }`;
       const mod = this.device.createShaderModule({ code });
       this.presentPipeline = this.device.createRenderPipeline({
         layout: "auto",

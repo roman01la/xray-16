@@ -1,0 +1,329 @@
+{
+  "date": "2026-11-09",
+  "setup": "Three isolated Chrome WebGPU processes on local stock Zaton, using the same optimized unified browser build. Player poses and carried items were seeded. Outfit and helmet used the production binary inventory actions. Weapon draw and holster, fire and walk used the original browser controls. Camera aim used scripted relative pointer input.",
+  "nearbyMetres": 4.5,
+  "distantObserverPlanarMetres": {
+    "initial": 101.71801018157683,
+    "crossed": 97.59988416309702,
+    "back": 101.71306800276206,
+    "reentered": 97.59678063628971
+  },
+  "results": {
+    "actor": {
+      "id": 1,
+      "x": 88.88200378417969,
+      "y": -6.991441249847412,
+      "z": 189,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 3.75,
+      "health": 100,
+      "kind": 1,
+      "flags": 2
+    },
+    "nearby": {
+      "id": 2,
+      "x": 84.38200378417969,
+      "y": -6.990001678466797,
+      "z": 189,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 0,
+      "health": 100,
+      "kind": 1,
+      "flags": 2
+    },
+    "distant": {
+      "id": 3,
+      "x": 190.60000610351562,
+      "y": -7.286681175231934,
+      "z": 188.9600067138672,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 0,
+      "health": 100,
+      "kind": 1,
+      "flags": 2
+    },
+    "initial": {
+      "entry": {
+        "id": 1,
+        "kind": 1,
+        "model": "stalker"
+      },
+      "present": true,
+      "tick": 1240
+    },
+    "far": {
+      "entry": null,
+      "present": false,
+      "tick": 1240
+    },
+    "changes": [
+      {
+        "name": "outfit",
+        "entry": {
+          "appearance": {
+            "outfit": "stalker_outfit"
+          },
+          "id": 1,
+          "kind": 1,
+          "model": "stalker"
+        },
+        "tick": 1260,
+        "previousSnapshotTick": 1258,
+        "elapsedMs": 62
+      },
+      {
+        "name": "helmet",
+        "entry": {
+          "appearance": {
+            "helmet": "helm_tactic",
+            "outfit": "stalker_outfit"
+          },
+          "id": 1,
+          "kind": 1,
+          "model": "stalker"
+        },
+        "tick": 1286,
+        "previousSnapshotTick": 1284,
+        "elapsedMs": 39
+      },
+      {
+        "name": "drawn-rifle",
+        "entry": {
+          "appearance": {
+            "helmet": "helm_tactic",
+            "outfit": "stalker_outfit",
+            "weapon": "wpn_ak74"
+          },
+          "id": 1,
+          "kind": 1,
+          "model": "stalker"
+        },
+        "tick": 1316,
+        "previousSnapshotTick": 1312,
+        "elapsedMs": 112
+      },
+      {
+        "name": "holstered",
+        "entry": {
+          "appearance": {
+            "helmet": "helm_tactic",
+            "outfit": "stalker_outfit"
+          },
+          "id": 1,
+          "kind": 1,
+          "model": "stalker"
+        },
+        "tick": 1458,
+        "previousSnapshotTick": 1456,
+        "elapsedMs": 39
+      },
+      {
+        "name": "helmet-stowed",
+        "entry": {
+          "appearance": {
+            "outfit": "stalker_outfit"
+          },
+          "id": 1,
+          "kind": 1,
+          "model": "stalker"
+        },
+        "tick": 1482,
+        "previousSnapshotTick": 1480,
+        "elapsedMs": 47
+      }
+    ],
+    "range": {
+      "crossed": {
+        "id": 1,
+        "x": 93.0001220703125,
+        "y": -6.994592666625977,
+        "z": 188.9650421142578,
+        "vx": 0,
+        "vy": 0,
+        "vz": 0,
+        "yaw": 1.570000171661377,
+        "health": 100,
+        "kind": 1,
+        "flags": 3
+      },
+      "atC": {
+        "entry": {
+          "id": 1,
+          "kind": 1,
+          "model": "stalker",
+          "appearance": {
+            "helmet": "helm_tactic",
+            "outfit": "stalker_outfit",
+            "weapon": "wpn_ak74"
+          }
+        },
+        "present": true,
+        "tick": 1400
+      },
+      "back": {
+        "id": 1,
+        "x": 88.8869400024414,
+        "y": -7.000302314758301,
+        "z": 188.94033813476562,
+        "vx": 0,
+        "vy": 0,
+        "vz": 0,
+        "yaw": 4.7131853103637695,
+        "health": 100,
+        "kind": 1,
+        "flags": 2
+      },
+      "leftC": {
+        "entry": null,
+        "present": false,
+        "tick": 1448
+      },
+      "reentered": {
+        "id": 1,
+        "x": 93.00324249267578,
+        "y": -6.994582176208496,
+        "z": 188.90235900878906,
+        "vx": 0,
+        "vy": 0,
+        "vz": 0,
+        "yaw": 1.569185733795166,
+        "health": 100,
+        "kind": 1,
+        "flags": 3
+      },
+      "again": {
+        "entry": {
+          "id": 1,
+          "kind": 1,
+          "model": "stalker",
+          "appearance": {
+            "outfit": "stalker_outfit"
+          }
+        },
+        "present": true,
+        "tick": 1550
+      }
+    },
+    "nativeB": [
+      "* Zone proxy spawned: 1"
+    ],
+    "nativeC": [
+      "* Zone proxy spawned: 1",
+      "* Zone proxy removed: 1",
+      "* Zone proxy spawned: 1"
+    ],
+    "forwardCheck": {
+      "actor": {
+        "id": 1,
+        "x": 88.88200378417969,
+        "y": -6.991441249847412,
+        "z": 189,
+        "vx": 0,
+        "vy": 0,
+        "vz": 0,
+        "yaw": 1.570000171661377,
+        "health": 100,
+        "kind": 1,
+        "flags": 2
+      },
+      "muzzle": {
+        "mark": "* Zone observer muzzle: shooter=1 wpn_ak74 mode=0 pos=(89.692,-5.734,188.772) flame=weapons\\generic_weapon05 smoke=weapons\\generic_shoot_00",
+        "torso": "* Zone observer torso: wpn_ak74 norm_torso_2_attack_1"
+      },
+      "muzzleOffset": [
+        0.8099962158203056,
+        1.2574412498474121,
+        -0.22800000000000864
+      ]
+    },
+    "metadataPrivacy": true,
+    "validationErrors": [
+      0,
+      0,
+      0
+    ]
+  },
+  "durableEquipment": {
+    "activeWeaponSlot": 0,
+    "weapon": {
+      "section": "wpn_ak74",
+      "place": "slot:3",
+      "revision": 1,
+      "rounds": 11
+    },
+    "outfit": {
+      "section": "stalker_outfit",
+      "place": "slot:7",
+      "revision": 1
+    },
+    "helmet": {
+      "section": "helm_tactic",
+      "place": "rucksack",
+      "revision": 2
+    }
+  },
+  "notes": [
+    "The first fixture used the automatic rifle selection and was replaced with an explicitly holstered setup.",
+    "The pre-fix walking frame showed the actor facing the observer while moving away. The fixed frame shows the actor from behind, and the stock muzzle appears 0.81 m in front at an east-facing heading.",
+    "The headless browser emitted a pointer-lock warning during a focus change. The original fire input and all acceptance checks completed."
+  ],
+  "sha256": {
+    "server": "528dc9f7edd896fd5dc518a590999ed977cb963655692bea6f6b11e0efe8ec5c",
+    "browserWasm": "23ab92b0e4e838cf3560f863e2b724887b06817a1153dd89772b800c22078ebd",
+    "nativeGame": "5696c5b1ae5e29ea47e459cda1a1c2510681d88163e75c1d57c0a31dfd215eb1",
+    "walkingBeforeFix": "2ba2504a8ede2eaae19dd1cf238884fe8ae51b1e45bdc54db3bf763ef75b0689",
+    "screenshots": {
+      "baseline": "f430b2cb5b3bd67b101f7f61804250f12775aea51a079a77d464f5b909e558ec",
+      "drawn-rifle": "63a61738fab1ca5fb4ab001a5ea2fde8dad94222766ff0908d82f1a89c8d2f3c",
+      "helmet-stowed": "88623297b224906585766795eaaec780c8cd49079c6196cf8d5c490b592955e6",
+      "helmet": "43b0f124be71ae7a5672d55ed508caa00ac85f4e6f5e199f5d27ccccd8f4c2aa",
+      "holstered": "3ba9f3f7a9e22c38fd55723a291e1fd6deb998c53ec82e09cefa6b978ec3a205",
+      "outfit": "4a49553363af43d911bd68abdc637d54ba0de18c38f26573a707afade060ec91",
+      "walking-rifle": "32ead7b9041e14e3eaf742971c69b0c2441b7527aedd1817087094b53a02ac39"
+    }
+  },
+  "sameBinarySinglePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      625700
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "nativeHostSmoke": {
+    "build": "Optimized macOS ARM64",
+    "level": "zaton",
+    "admittedCheckpoint": 0,
+    "nativeTargetsWithPeers": 2,
+    "nativeTargetsAfterRustShutdown": 0,
+    "livingOnlineNpcsWithPeers": 7,
+    "livingOfflineNpcsWithPeers": 452
+  }
+}

@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 use parry3d::{
     math::{Pose, Vector},
     query::{Ray, RayCast, ShapeCastHit, ShapeCastOptions, cast_shapes},
-    shape::{Capsule, TriMesh},
+    shape::{Ball, Capsule, TriMesh},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,6 +27,8 @@ pub struct Source {
 pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub materials: Option<MaterialAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ladders: Option<String>,
     pub format: String,
     pub level: String,
     pub coordinates: String,
@@ -52,7 +54,38 @@ pub struct CollisionMap {
     /// Original packed material/shadow/sector metadata, indexed by triangle ID.
     pub triangle_metadata: Vec<u32>,
     materials: BTreeMap<u32, crate::materials::Material>,
+    pub(crate) ladders: Vec<crate::ladder::Ladder>,
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct BulletSurface {
+    pub distance: f32,
+    pub normal: Vector,
+    pub shoot_factor: f32,
+    pub density: f32,
+    pub allows_ricochet: bool,
+}
+
+pub(crate) fn rotation_basis([x, y, z]: [f32; 3]) -> [Vector; 3] {
+    let (sp, cp) = x.sin_cos();
+    let (sh, ch) = y.sin_cos();
+    let (sb, cb) = z.sin_cos();
+    // CGameObject::net_Spawn applies Fmatrix::setXYZ to the authored rotation.
+    [
+        Vector::new(ch * cb - sp * sh * sb, -cp * sb, sp * ch * sb + sh * cb),
+        Vector::new(sp * sh * cb + ch * sb, cp * cb, sh * sb - sp * ch * cb),
+        Vector::new(-cp * sh, sp, cp * ch),
+    ]
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LadderExport {
+    schema: u32,
+    spawn_sha256: String,
+    levels: BTreeMap<String, Vec<crate::ladder::Placement>>,
+}
+
 impl CollisionMap {
     pub fn load(path: &Path) -> Result<Self> {
         ensure!(
@@ -182,6 +215,7 @@ impl CollisionMap {
         // Preserve face order: no merge/delete/cleanup flags, so query IDs
         // continue to address original material and sector metadata.
         let mesh = TriMesh::new(vertices, indices).context("build collision BVH")?;
+        let ladders = crate::ladder::decode(manifest.ladders.as_deref(), &manifest.bounds)?;
         Ok(Self {
             manifest,
             mesh,
@@ -189,7 +223,32 @@ impl CollisionMap {
             actor_triangle_ids: Vec::new(),
             triangle_metadata: metadata,
             materials: BTreeMap::new(),
+            ladders,
         })
+    }
+    pub fn attach_ladder_export(&mut self, path: &Path) -> Result<()> {
+        ensure!(
+            self.manifest.ladders.is_none() && fs::metadata(path)?.len() <= 256 * 1024,
+            "duplicate or oversized ladder geometry"
+        );
+        let mut export: LadderExport = serde_json::from_slice(&fs::read(path)?)?;
+        ensure!(
+            export.schema == 1
+                && export.spawn_sha256.len() == 64
+                && export
+                    .spawn_sha256
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+            "invalid ladder export provenance"
+        );
+        let placements = export
+            .levels
+            .remove(&self.manifest.level)
+            .context("no ladders for map")?;
+        let raw = serde_json::to_string(&placements)?;
+        self.ladders = crate::ladder::decode(Some(&raw), &self.manifest.bounds)?;
+        self.manifest.ladders = Some(raw);
+        Ok(())
     }
     pub fn attach_materials(&mut self, bytes: &[u8]) -> Result<()> {
         let asset = self
@@ -260,11 +319,22 @@ impl CollisionMap {
     pub fn spawn_feet_near(&self, x: f32, y: f32, z: f32) -> Result<Vector> {
         let start = Vector::new(x, y, z);
         let bounds = &self.manifest.bounds;
-        ensure!(start.to_array().into_iter().zip(bounds.min.into_iter().zip(bounds.max))
-            .all(|(value, (min, max))| (min..=max).contains(&value)), "spawn outside map bounds");
+        ensure!(
+            start
+                .to_array()
+                .into_iter()
+                .zip(bounds.min.into_iter().zip(bounds.max))
+                .all(|(value, (min, max))| (min..=max).contains(&value)),
+            "spawn outside map bounds"
+        );
         let down = -Vector::Y * 1.5;
-        let hit = self.sweep_actor(start, down)?.context("no actor support near spawn height")?;
-        ensure!(hit.time_of_impact > 0.0 && self.walkable_contact(&hit), "spawn anchor lacks clear walkable support");
+        let hit = self
+            .sweep_actor(start, down)?
+            .context("no actor support near spawn height")?;
+        ensure!(
+            hit.time_of_impact > 0.0 && self.walkable_contact(&hit),
+            "spawn anchor lacks clear walkable support"
+        );
         Ok(start + down * hit.time_of_impact + Vector::Y * 0.005)
     }
     pub fn actor_ready(&self) -> bool {
@@ -328,12 +398,48 @@ impl CollisionMap {
         let ray = checked_ray(origin, direction, distance)?;
         Ok(self.mesh.cast_local_ray(&ray, distance, true))
     }
+
+    pub fn bullet_surface(&self, origin: Vector, direction: Vector, distance: f32) -> Result<Option<BulletSurface>> {
+        let ray = checked_ray(origin, direction, distance)?;
+        let Some(hit) = self.mesh.cast_local_ray_and_get_normal(&ray, distance, true) else { return Ok(None); };
+        let material = self.triangle_metadata[hit.subshape as usize] & 0x3fff;
+        let material = self.materials.get(&material);
+        // The ray intersection normal may face the ray. CoP uses the authored
+        // winding to distinguish entering a material from leaving it.
+        let normal = self.mesh.triangle(hit.subshape).scaled_normal().normalize_or_zero();
+        Ok(Some(BulletSurface {
+            distance: hit.time_of_impact,
+            normal,
+            shoot_factor: material.map_or(1.0, |material| material.shoot_factor),
+            density: material.map_or(0.0, |material| material.density),
+            allows_ricochet: material.is_some_and(|material| material.flags & crate::materials::NO_RICOCHET == 0),
+        }))
+    }
+
+    pub(crate) fn sweep_projectile(&self, origin: Vector, displacement: Vector, radius: f32) -> Result<Option<ShapeCastHit>> {
+        ensure!(origin.is_finite() && displacement.is_finite(), "invalid projectile sweep");
+        Ok(cast_shapes(
+            &Pose::IDENTITY, Vector::ZERO, self.actor_mesh.as_ref().unwrap_or(&self.mesh),
+            &Pose::translation(origin.x, origin.y, origin.z), displacement, &Ball::new(radius),
+            ShapeCastOptions { max_time_of_impact: 1.0, target_distance: 0.002,
+                stop_at_penetration: false, ..Default::default() },
+        )?)
+    }
     /// CoP explosion cover uses OPT_CULL and the original single-player
     /// material factor for every intersected static surface.
-    pub fn blast_transmission(&self, origin: Vector, direction: Vector, distance: f32) -> Result<f32> {
+    pub fn blast_transmission(
+        &self,
+        origin: Vector,
+        direction: Vector,
+        distance: f32,
+    ) -> Result<f32> {
         let ray = checked_ray(origin, direction, distance)?;
         let mut transmission = 1.0;
-        for id in self.mesh.bvh().leaves(|node| node.cast_ray(&ray, distance) <= distance) {
+        for id in self
+            .mesh
+            .bvh()
+            .leaves(|node| node.cast_ray(&ray, distance) <= distance)
+        {
             let triangle = self.mesh.triangle(id);
             if triangle.scaled_normal().dot(direction) >= 0.0
                 || triangle.cast_local_ray(&ray, distance, true).is_none()
@@ -341,7 +447,11 @@ impl CollisionMap {
                 continue;
             }
             let material = self.triangle_metadata[id as usize] & 0x3fff;
-            transmission *= 1.0 - self.materials.get(&material).map_or(1.0, |m| m.shoot_factor);
+            transmission *= 1.0
+                - self
+                    .materials
+                    .get(&material)
+                    .map_or(1.0, |m| m.shoot_factor);
             if transmission == 0.0 {
                 break;
             }
@@ -436,6 +546,7 @@ pub(crate) mod tests {
         }
         let m = Manifest {
             materials: None,
+            ladders: None,
             format: "xray-collision-v1".into(),
             level: "test".into(),
             coordinates: "metres-y-up".into(),
@@ -472,11 +583,24 @@ pub(crate) mod tests {
     fn blast_transmission_combines_front_faces_without_changing_solid_rays() {
         let map = cover_fixture([(7, 0, 0.25), (9, 0, 0.5), (11, 0, 1.0)]);
         let origin = Vector::new(0.0, 4.0, 0.0);
-        assert_eq!(map.blast_transmission(origin, -Vector::Y, 5.0).unwrap(), 0.375);
-        assert_eq!(map.blast_transmission(origin, -Vector::Y, 2.0).unwrap(), 0.5);
-        assert_eq!(map.blast_transmission(Vector::new(0.0, -1.0, 0.0), Vector::Y, 5.0).unwrap(), 1.0);
+        assert_eq!(
+            map.blast_transmission(origin, -Vector::Y, 5.0).unwrap(),
+            0.375
+        );
+        assert_eq!(
+            map.blast_transmission(origin, -Vector::Y, 2.0).unwrap(),
+            0.5
+        );
+        assert_eq!(
+            map.blast_transmission(Vector::new(0.0, -1.0, 0.0), Vector::Y, 5.0)
+                .unwrap(),
+            1.0
+        );
         assert_eq!(map.ray(origin, -Vector::Y, 5.0).unwrap(), Some(1.0));
-        assert_eq!(map.blast_transmission(Vector::Y, Vector::X, 3.0).unwrap(), 0.0);
+        assert_eq!(
+            map.blast_transmission(Vector::Y, Vector::X, 3.0).unwrap(),
+            0.0
+        );
     }
     #[test]
     fn material_filtering_preserves_actor_obstacles() {
@@ -654,6 +778,16 @@ pub(crate) mod tests {
         assert!(map.spawn_feet(f32::NAN, 0.).is_err());
     }
     #[test]
+    fn walk_overrides_sprint_without_changing_the_capsule_height() {
+        let map = step_fixture(0.8, false);
+        let mut c = crate::movement::Character::new(Vector::new(0., 0.01, 0.));
+        for _ in 0..10 {
+            c.step_command(&map, -1., 0., true, false, false, true).unwrap();
+        }
+        assert!((c.feet.x + 2.0 / 3.0).abs() < 0.03, "{c:?}");
+        assert!(!c.crouched);
+    }
+    #[test]
     fn jump_requires_ground_and_new_press() {
         let map = step_fixture(0.8, false);
         let mut c = crate::movement::Character::new(Vector::new(0., 0.01, 0.));
@@ -663,13 +797,13 @@ pub(crate) mod tests {
         assert!(c.grounded);
         let mut peak = 0f32;
         for _ in 0..90 {
-            c.step_command(&map, 0., 0., false, true, false).unwrap();
+            c.step_command(&map, 0., 0., false, true, false, false).unwrap();
             peak = peak.max(c.feet.y);
         }
         assert!(peak > 1. && peak < 1.5, "peak {peak}");
         assert!(c.grounded && c.feet.y < 0.02, "{c:?}");
-        c.step_command(&map, 0., 0., false, false, false).unwrap();
-        c.step_command(&map, 0., 0., false, true, false).unwrap();
+        c.step_command(&map, 0., 0., false, false, false, false).unwrap();
+        c.step_command(&map, 0., 0., false, true, false, false).unwrap();
         assert!(c.vertical_speed > 0. && !c.grounded);
     }
     #[test]
@@ -677,15 +811,15 @@ pub(crate) mod tests {
         let map = step_fixture(0.2, true);
         let mut c = crate::movement::Character::new(Vector::new(0., 0.01, 0.));
         for _ in 0..30 {
-            c.step_command(&map, 1., 0., true, false, true).unwrap();
+            c.step_command(&map, 1., 0., true, false, true, false).unwrap();
         }
         assert!(c.feet.x > 1.5 && c.feet.x <= 2.01 && c.crouched, "{c:?}");
         for _ in 0..3 {
-            c.step_command(&map, 0., 0., false, false, false).unwrap();
+            c.step_command(&map, 0., 0., false, false, false, false).unwrap();
         }
         assert!(c.crouched, "stood through ceiling: {c:?}");
         for _ in 0..30 {
-            c.step_command(&map, -1., 0., false, false, false).unwrap();
+            c.step_command(&map, -1., 0., false, false, false, false).unwrap();
         }
         assert!(!c.crouched, "failed to stand when clear: {c:?}");
     }

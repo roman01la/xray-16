@@ -17,7 +17,7 @@ pub struct TriggerSample {
 }
 
 pub fn decode_player_input(data: &[u8]) -> Option<(Input, Option<TriggerSample>)> {
-    if !matches!(data.len(), 20 | 32)
+    if !matches!(data.len(), 20 | 28)
         || u16::from_le_bytes(data[0..2].try_into().ok()?) != MAGIC
         || data[2] != VERSION
         || data[3] != 1
@@ -29,15 +29,13 @@ pub fn decode_player_input(data: &[u8]) -> Option<(Input, Option<TriggerSample>)
     let z = i16::from_le_bytes(data[10..12].try_into().ok()?) as f32 / 32767.0;
     let yaw = f32::from_le_bytes(data[12..16].try_into().ok()?);
     let flags = u16::from_le_bytes(data[16..18].try_into().ok()?);
-    if !yaw.is_finite() || flags & !7 != 0 || data[18..20] != [0, 0] {
+    let pitch = i16::from_le_bytes(data[18..20].try_into().ok()?);
+    if !yaw.is_finite() || flags & !31 != 0 || pitch == i16::MIN {
         return None;
     }
-    let trigger = if data.len() == 32 {
+    let pitch = f32::from(pitch) / 32767.0 * 1.55;
+    let trigger = if data.len() == 28 {
         let read = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap());
-        let pitch = f32::from_bits(read(28));
-        if !pitch.is_finite() || pitch.abs() > 1.55 {
-            return None;
-        }
         Some(TriggerSample {
             sequence: read(20),
             aim: crate::combat::Aim { tick: read(24), yaw, pitch },
@@ -50,9 +48,12 @@ pub fn decode_player_input(data: &[u8]) -> Option<(Input, Option<TriggerSample>)
         x,
         z,
         yaw,
+        pitch,
         sprint: flags & 1 != 0,
         jump: flags & 2 != 0,
         crouch: flags & 4 != 0,
+        walk: flags & 8 != 0,
+        aiming: flags & 16 != 0,
     }, trigger))
 }
 pub fn encode_snapshots(

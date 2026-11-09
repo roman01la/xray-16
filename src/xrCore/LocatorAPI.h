@@ -266,6 +266,10 @@ public:
     pcstr update_path(string_path& dest, pcstr initial, pcstr src, bool crashOnNotFound = true);
 
     size_t file_list(FS_FileSet& dest, pcstr path, u32 flags = FS_ListFiles, pcstr mask = nullptr);
+#ifdef XR_PLATFORM_WEB
+    bool list_numbered_files(xr_vector<u32>& numbers, pcstr path, pcstr prefix, pcstr extension, u32 max_count,
+        bool* unnumbered = nullptr);
+#endif
 
     void unload_archive(archive& A);
 

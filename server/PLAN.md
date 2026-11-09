@@ -719,11 +719,13 @@ not the current implementation.
   disconnects the current session and reloads into the recovered save. Invalid
   keys and network failure leave the previous identity untouched. Switching does
   not delete either server-side save; keep the old key to return to it.
-- Eight identity tests pass, including fresh-browser storage recovery, invalid /
-  interrupted imports and serialization with enrollment. Public release is queued
-  after the initial upload/CDN cutover; rendered cross-browser recovery remains
-  to be verified. A lost key without any surviving browser copy has no recovery
-  path in this intentionally simple model. Account portals are not a plan gate.
+- The browser can copy an enrolled key from local storage with Rust stopped.
+  The panel fits short viewports, releases pointer lock while open and allows
+  the canvas to recapture the mouse after closing. In local Zaton, an independent
+  Chrome profile recovered the same life and all seven item records, and reopened
+  them after a Rust restart. The identity tests cover enrollment retries and
+  unknown keys. Keep the portable key to recover from lost browser storage.
+  [Save key acceptance](acceptance/multiplayer-save-key.json)
 
 
 ### Binary-only WebRTC control — 2026-11-07

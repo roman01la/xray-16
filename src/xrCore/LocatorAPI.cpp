@@ -24,9 +24,41 @@
 #include "xrCore/Threading/Lock.hpp"
 #include "Crypto/trivial_encryptor.h"
 
+#ifdef XR_PLATFORM_WEB
+#include <array>
+#include <charconv>
+#include <cstring>
+#include <mutex>
+#include <string_view>
+#endif
+
 constexpr size_t VFS_STANDARD_FILE = std::numeric_limits<size_t>::max();
 
 const u32 BIG_FILE_READER_WINDOW_SIZE = 1024 * 1024;
+
+#ifdef XR_PLATFORM_WEB
+namespace
+{
+struct CachedArchiveText
+{
+    const CLocatorAPI* owner{};
+    size_t archive{};
+    u32 offset{}, crc{}, size{}, packed_size{};
+    std::array<u8, 16 * 1024> bytes;
+
+    bool matches(const CLocatorAPI* locator, const CLocatorAPI::file& file) const
+    {
+        return owner == locator && archive == file.vfs && offset == file.ptr && crc == file.crc &&
+            size == file.size_real && packed_size == file.size_compressed;
+    }
+};
+
+// Installed archives are immutable for the engine's lifetime. Keep at most
+// 1 MiB of small decoded INI data and give each caller a private reader copy.
+std::array<CachedArchiveText, 64> archive_text_cache;
+std::mutex archive_text_mutex;
+}
+#endif
 
 xr_unique_ptr<CLocatorAPI> xr_FS;
 
@@ -1123,6 +1155,15 @@ void CLocatorAPI::_destroy()
 {
     ZoneScoped;
 
+#ifdef XR_PLATFORM_WEB
+    {
+        std::lock_guard lock(archive_text_mutex);
+        for (auto& entry : archive_text_cache)
+            if (entry.owner == this)
+                entry.owner = nullptr;
+    }
+#endif
+
     for (auto& it : m_files)
     {
         auto str = pstr(it.name);
@@ -1269,6 +1310,62 @@ void CLocatorAPI::file_list_close(xr_vector<pstr>*& lst)
         xr_delete(lst);
     }
 }
+
+#ifdef XR_PLATFORM_WEB
+bool CLocatorAPI::list_numbered_files(xr_vector<u32>& numbers, pcstr path, pcstr prefix, pcstr extension, u32 max_count,
+    bool* unnumbered)
+{
+    if (max_count > std::numeric_limits<s32>::max() ||
+        !std::all_of(prefix, prefix + xr_strlen(prefix), [](unsigned char c)
+            { return c < 0x80 && (c < 'A' || c > 'Z'); }))
+        return false;
+    if (!max_count && !unnumbered)
+        return true;
+
+    string_path start;
+    update_path(start, path, prefix);
+    const size_t prefix_length = xr_strlen(start);
+    // A leading dot sorts before decimal digits, so the same lower bound
+    // can find the optional unnumbered file and the numbered family.
+    if (unnumbered && *extension != '.')
+        return false;
+    const pcstr suffix_start = unnumbered ? extension : "0";
+    if (prefix_length + xr_strlen(suffix_start) >= sizeof(start))
+        return false;
+    // The mounted table contains both archive members and registered loose files.
+    xr_strcat(start, suffix_start);
+
+    check_pathes();
+    file first{};
+    first.name = start;
+    auto it = m_files.lower_bound(first);
+    if (unnumbered)
+    {
+        *unnumbered = it != m_files.end() && xr_strcmp(it->name, start) == 0;
+        if (*unnumbered || !max_count)
+            return true;
+    }
+    for (; it != m_files.end(); ++it)
+    {
+        if (std::strncmp(it->name, start, prefix_length) != 0)
+            break;
+        const char* suffix = it->name + prefix_length;
+        const auto first_digit = static_cast<unsigned char>(*suffix);
+        if (first_digit > '9')
+            break;
+        if (first_digit < '0')
+            continue;
+        if (suffix[0] == '0' && suffix[1] >= '0' && suffix[1] <= '9')
+            continue;
+        u32 number{};
+        const auto parsed = std::from_chars(suffix, suffix + xr_strlen(suffix), number);
+        if (parsed.ec == std::errc{} && number < max_count && xr_strcmp(parsed.ptr, extension) == 0)
+            numbers.push_back(number);
+    }
+    std::sort(numbers.begin(), numbers.end()); // Match the stock numeric probe order.
+    return true;
+}
+#endif
 
 size_t CLocatorAPI::file_list(FS_FileSet& dest, pcstr path, u32 flags /*= FS_ListFiles*/, pcstr mask /*= nullptr*/)
 {
@@ -1456,18 +1553,46 @@ void CLocatorAPI::file_from_archive(IReader*& R, pcstr fname, const file& desc)
     // Archived one
     archive& A = m_archives[desc.vfs];
 #ifdef XR_PLATFORM_WEB
+    const std::string_view archive_path(A.path.c_str());
+    const bool streamed = archive_path.compare(0, 8, "\\stream\\") == 0 || archive_path.compare(0, 8, "/stream/") == 0;
+    auto& cached = archive_text_cache[(desc.crc ^ desc.ptr) % archive_text_cache.size()];
+    const pcstr extension = strext(fname);
+    const bool cache_text = streamed && desc.size_real && desc.size_real <= cached.bytes.size() &&
+        extension && xr_strcmp(extension, ".ltx") == 0;
+    if (cache_text)
+    {
+        std::lock_guard lock(archive_text_mutex);
+        if (cached.matches(this, desc))
+        {
+            u8* bytes = xr_alloc<u8>(desc.size_real);
+            std::memcpy(bytes, cached.bytes.data(), desc.size_real);
+            R = xr_new<CTempReader>(bytes, desc.size_real, 0);
+            return;
+        }
+    }
+
     u8* compressed = xr_alloc<u8>(desc.size_compressed);
     const ssize_t bytesRead = pread(A.hSrcFile, compressed, desc.size_compressed, desc.ptr);
     R_ASSERT3(bytesRead == static_cast<ssize_t>(desc.size_compressed), "cannot read archive entry", fname);
-    if (desc.size_real == desc.size_compressed)
+    u8* bytes = compressed;
+    if (desc.size_real != desc.size_compressed)
     {
-        R = xr_new<CTempReader>(compressed, desc.size_real, 0);
-        return;
+        bytes = xr_alloc<u8>(desc.size_real);
+        rtc_decompress(bytes, desc.size_real, compressed, desc.size_compressed);
+        xr_free(compressed);
     }
-    u8* decompressed = xr_alloc<u8>(desc.size_real);
-    rtc_decompress(decompressed, desc.size_real, compressed, desc.size_compressed);
-    xr_free(compressed);
-    R = xr_new<CTempReader>(decompressed, desc.size_real, 0);
+    if (cache_text)
+    {
+        std::lock_guard lock(archive_text_mutex);
+        cached.owner = this;
+        cached.archive = desc.vfs;
+        cached.offset = desc.ptr;
+        cached.crc = desc.crc;
+        cached.size = desc.size_real;
+        cached.packed_size = desc.size_compressed;
+        std::memcpy(cached.bytes.data(), bytes, desc.size_real);
+    }
+    R = xr_new<CTempReader>(bytes, desc.size_real, 0);
     return;
 #endif
     size_t start = desc.ptr / dwAllocGranularity * dwAllocGranularity;

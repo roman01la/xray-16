@@ -15,6 +15,9 @@
 #include "script_game_object.h"
 #include "GameObject.h"
 #include "Level.h"
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+#include "Actor.h"
+#endif
 #ifdef XRAY_WEB_MULTIPLAYER
 #include "multiplayer/EngineAdapter.h"
 #endif
@@ -60,6 +63,10 @@ void CScriptBinder::reinit()
 
 void CScriptBinder::reload(LPCSTR section)
 {
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    if (const auto* actor = owner->cast_actor(); actor && actor->zoneAlifeTarget())
+        return;
+#endif
 #ifdef XRAY_WEB_MULTIPLAYER
     // Rust-owned multiplayer objects use native item/UI presentation only.
     // Never attach the single-player actor/quest/ALife binders to them.

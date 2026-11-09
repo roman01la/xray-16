@@ -163,7 +163,7 @@ fn v1_migration_preserves_identity_records_and_outcomes_and_lists_are_bounded() 
         .unwrap();
     drop(db);
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE authored_loose_slots; DROP TABLE authored_loot_slots; DROP TABLE authored_loot_worlds; DROP TABLE inventory_grants; DROP TABLE inventory_items; DROP TABLE inventory_characters; DROP TABLE item_containers; DROP TABLE scene_entities; DROP TRIGGER principal_revocation; DROP TABLE runtime_meta; ALTER TABLE principals DROP COLUMN revoked; DROP TRIGGER ownership_principal_insert; DROP TABLE ownership_versions; DROP TABLE owned_entities; PRAGMA user_version=1;")
+    conn.execute_batch("DROP TABLE alife_world_fences; DROP TABLE alife_corpse_deaths; DROP TABLE artefact_reveals; DROP TABLE authored_artefact_slots; DROP TABLE authored_artefact_worlds; DROP TABLE authored_loose_slots; DROP TABLE authored_loot_slots; DROP TABLE authored_loot_worlds; DROP TABLE inventory_grants; DROP TABLE inventory_items; DROP TABLE inventory_characters; DROP TABLE item_containers; DROP TABLE scene_entities; DROP TRIGGER principal_revocation; DROP TABLE runtime_meta; ALTER TABLE principals DROP COLUMN revoked; DROP TRIGGER ownership_principal_insert; DROP TABLE ownership_versions; DROP TABLE owned_entities; PRAGMA user_version=1;")
         .unwrap();
     drop(conn);
     let mut db = Database::open(&path).unwrap();
@@ -289,7 +289,7 @@ fn v2_migration_preserves_existing_entities_then_versions_every_mutation() {
     let id = db.provision_entity(&a, &json!("before")).unwrap();
     drop(db);
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE authored_loose_slots; DROP TABLE authored_loot_slots; DROP TABLE authored_loot_worlds; DROP TABLE inventory_grants; DROP TABLE inventory_items; DROP TABLE inventory_characters; DROP TABLE item_containers; DROP TABLE scene_entities; DROP TRIGGER principal_revocation; DROP TABLE runtime_meta; ALTER TABLE principals DROP COLUMN revoked; DROP TRIGGER ownership_principal_insert; DROP TRIGGER ownership_entity_insert; DROP TRIGGER ownership_entity_update; DROP TRIGGER ownership_entity_delete; DROP TABLE ownership_versions; PRAGMA user_version=2;").unwrap();
+    conn.execute_batch("DROP TABLE alife_world_fences; DROP TABLE alife_corpse_deaths; DROP TABLE artefact_reveals; DROP TABLE authored_artefact_slots; DROP TABLE authored_artefact_worlds; DROP TABLE authored_loose_slots; DROP TABLE authored_loot_slots; DROP TABLE authored_loot_worlds; DROP TABLE inventory_grants; DROP TABLE inventory_items; DROP TABLE inventory_characters; DROP TABLE item_containers; DROP TABLE scene_entities; DROP TRIGGER principal_revocation; DROP TABLE runtime_meta; ALTER TABLE principals DROP COLUMN revoked; DROP TRIGGER ownership_principal_insert; DROP TRIGGER ownership_entity_insert; DROP TRIGGER ownership_entity_update; DROP TRIGGER ownership_entity_delete; DROP TABLE ownership_versions; PRAGMA user_version=2;").unwrap();
     drop(conn);
     let mut db = Database::open(&path).unwrap();
     let before = list(&mut db, 'a');

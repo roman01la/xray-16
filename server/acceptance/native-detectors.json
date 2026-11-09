@@ -1,0 +1,214 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized unified WASM64 and optimized local Rust, Chrome WebGPU, stock Zaton with seeded gear and poses at authored sites. Used O to draw and stow, F to pick up and verified the server\u2019s exact belt placement in the original inventory after restart.",
+  "engineWasmSha256": "b83ed747b6870804728bbcf4d04159b9390a5c888f4a46eba3441ec4a04b3a15",
+  "serverSha256": "0b909615ea6b2ba3f55d61f41109aa527862fcee53fcf8d01b51f8aa9db65b9b",
+  "unequipped": {
+    "refused": {
+      "reason": "detector_unavailable",
+      "status": "rejected"
+    },
+    "hidden": true
+  },
+  "rankFilter": {
+    "detector": "Echo",
+    "hiddenSection": "af_night_star"
+  },
+  "handheldCues": {
+    "echo": {
+      "cue": {
+        "period": 0.05035830162721323,
+        "pitch": 1.3932223819779381,
+        "tier": 1,
+        "working": true
+      },
+      "draw": "* Zone detector draw: detector_simple 1701 ms",
+      "webgpuValidationErrors": 0
+    },
+    "bear": {
+      "cue": {
+        "bearing": -1.5707963267948966,
+        "period": 0.05035830162721323,
+        "pitch": 1.3932223819779381,
+        "tier": 2,
+        "working": true
+      },
+      "draw": "* Zone detector draw: detector_advanced 1701 ms",
+      "webgpuValidationErrors": 0
+    },
+    "veles": {
+      "cue": {
+        "points": [
+          [
+            405.99786376953125,
+            -7.200079917907715,
+            201.07012939453125
+          ]
+        ],
+        "tier": 3,
+        "working": true
+      },
+      "draw": "* Zone detector draw: detector_elite 1701 ms",
+      "webgpuValidationErrors": 0
+    },
+    "svarog": {
+      "cue": {
+        "labels": [
+          "af_night_star"
+        ],
+        "points": [
+          [
+            405.99786376953125,
+            -7.200079917907715,
+            201.07012939453125
+          ]
+        ],
+        "tier": 4,
+        "working": true
+      },
+      "draw": "* Zone detector draw: detector_scientific 1701 ms",
+      "webgpuValidationErrors": 0
+    }
+  },
+  "configuredCondition": {
+    "broken": {
+      "condition": 0.009999999776482582,
+      "refused": {
+        "reason": "detector_unavailable",
+        "status": "rejected"
+      }
+    },
+    "above": {
+      "condition": 0.010099999606609344,
+      "working": true,
+      "section": "af_cristall"
+    }
+  },
+  "revealAfterStow": {
+    "stow": "* Zone detector stow: detector_simple 767 ms",
+    "seenOnStow": true,
+    "revealExpiredMs": 6279,
+    "otherPlayerStillRevealed": true
+  },
+  "contest": {
+    "winner": "echo",
+    "section": "af_cristall",
+    "attemptSkewMs": 98.520263671875,
+    "sameItem": true,
+    "loserHasNoCopy": true
+  },
+  "restartAndBelt": {
+    "restarted": true,
+    "section": "af_cristall",
+    "placement": "belt:0",
+    "condition": 1
+  },
+  "followupWasmSha256": "d5ffba13542d642807f469a8ff720414f24ecf548ae3446e32e78fce08e6682a",
+  "followup": {
+    "singlePlayer": {
+      "singlePlayer": true,
+      "saveAndReload": true,
+      "multiplayerRequests": 0,
+      "validationErrors": 0
+    },
+    "geometry": "The first two-saves fixture reproduced stretched geometry while Night Star was revealed. A solo run at the exact waypoint drew the stock artefact cleanly.",
+    "soloEffects": "At the original waypoint, the complete Night Star mesh, particles and light rendered cleanly with one player. Separate isolated mesh, particle and light probes also ran."
+  },
+  "limitations": [
+    "The reveal boundary fixtures used surveyed spawn positions inside and outside each stock radius.",
+    "The condition check used a disposable stock-catalog copy with use_condition enabled for Echo.",
+    "Rust expires the reveal after five seconds. The browser discovery refresh observed removal after 6.279 seconds.",
+    "The Crystal belt placement used the normal inventory protocol and was observed in the original UI.",
+    "The native menu retry used relative pointer motion after the first scripted absolute click missed the item. The browser restored the same local save and item from the restarted server."
+  ],
+  "screenshots": {
+    "handheldModels": "native-detector-huds.jpg",
+    "beltedCrystal": "native-detector-belted.jpg",
+    "geometryDuringOverlapThenAfterExpiry": "native-detector-geometry.jpg",
+    "nativeBeltedNightStar": "native-detector-native-belt.jpg"
+  },
+  "revealBoundaryTrials": {
+    "1-inside": {
+      "tier": 1,
+      "radius": 3,
+      "distance": 2.678170729558133,
+      "visible": true,
+      "worklet": {
+        "pitch": 1.3553638458251953,
+        "gain": 0.37999993562698364,
+        "initialRead": 0,
+        "peakRead": 3187,
+        "peakWrite": 17640
+      }
+    },
+    "1-outside": {
+      "tier": 1,
+      "radius": 3,
+      "distance": 3.2913252569137716,
+      "visible": false
+    },
+    "2-inside": {
+      "tier": 2,
+      "radius": 4,
+      "distance": 3.6837927123405674,
+      "visible": true,
+      "worklet": {
+        "pitch": 1.3386034965515137,
+        "gain": 0.37999996542930603,
+        "initialRead": 0,
+        "peakRead": 4092,
+        "peakWrite": 17640
+      }
+    },
+    "2-outside": {
+      "tier": 2,
+      "radius": 4,
+      "distance": 4.308478828956844,
+      "visible": false
+    },
+    "3-inside": {
+      "tier": 3,
+      "radius": 5,
+      "distance": 4.582601426261744,
+      "visible": true
+    },
+    "3-outside": {
+      "tier": 3,
+      "radius": 5,
+      "distance": 5.3140842339524506,
+      "visible": false
+    },
+    "4-inside": {
+      "tier": 4,
+      "radius": 6,
+      "distance": 5.712963529662189,
+      "visible": true
+    },
+    "4-outside": {
+      "tier": 4,
+      "radius": 6,
+      "distance": 6.311462803014962,
+      "visible": false
+    }
+  },
+  "finalWasmSha256": "9a855716e6be21513a034e8bf01e7152bee66938b16a280d45e0536f5e25cc93",
+  "overlappingBody": {
+    "separation": 0.003368887090113078,
+    "playerMotion": 0,
+    "bodyExpired": true,
+    "artefactStayedVisible": true,
+    "observed": "The shapes disappeared at expiry while the revealed Night Star stayed visible in the same first-person view."
+  },
+  "nativeBeltAfterRestart": {
+    "section": "af_night_star",
+    "placement": "belt:0",
+    "condition": 1,
+    "restarted": true
+  },
+  "finalSinglePlayer": {
+    "singlePlayer": true,
+    "saveAndReload": true,
+    "multiplayerRequests": 0,
+    "validationErrors": 0
+  }
+}

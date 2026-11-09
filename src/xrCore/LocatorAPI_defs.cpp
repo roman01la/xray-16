@@ -104,6 +104,17 @@ pcstr FS_Path::_update(string_path& dest, pcstr src) const
     string_path temp;
     xr_strcpy(temp, sizeof(temp), src);
 
+#ifdef XR_PLATFORM_WEB
+    // For an already lowercase ASCII name both case-resolution paths return
+    // identical bytes. Avoid probing the browser filesystem for that name.
+    if (std::all_of(temp, temp + xr_strlen(temp), [](unsigned char c)
+        { return c < 0x80 && (c < 'A' || c > 'Z'); }))
+    {
+        strconcat(sizeof(dest), dest, m_Path, temp);
+        return dest;
+    }
+#endif
+
 #if !defined(XR_PLATFORM_WINDOWS) // XXX: replace with runtime check for case-sensitivity
     string_path fullPath;
     strconcat(fullPath, m_Path, temp);

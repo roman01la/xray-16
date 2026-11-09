@@ -1,7 +1,34 @@
-// Reliable WebRTC v3. Commands have fixed layouts; events have positional fields.
+// WebRTC v3. Commands have fixed layouts; events have positional fields.
+import {levelForWorld} from './content.mjs';
 const VERSION=3,MAX=16384;
-const schemas=new Map([[16,['welcome','version','contract','playerId','principalId','tickHz','safeZones']],[17,['ownership_dirty']],[18,['weapon','state']],[19,['lifecycle','revision','tick','upsert','remove']],[20,['action_result','sequence','result']],[21,['inventory_dirty']],[22,['vitals','state']],[23,['weapon_shot','sequence','tick','result']],[24,['detonations','effects']]]);
+export const GUNSHOTS_OPCODE=31;
+const schemas=new Map([[16,['welcome','version','contract','playerId','principalId','tickHz','safeZones']],[17,['ownership_dirty']],[18,['weapon','state']],[19,['lifecycle','revision','tick','upsert','remove']],[20,['action_result','sequence','result']],[21,['inventory_dirty']],[22,['vitals','state']],[23,['weapon_shot','sequence','tick','result']],[24,['detonations','effects']],[25,['travel','world']],[26,['grenades','tick','entries']],[29,['weapon_fired','life','item','ammo','launcher']],[30,['weapon_reload','life','item','alias','milliseconds','sound','cancelled']],[GUNSHOTS_OPCODE,['gunshots','effects']],[32,['knife_swing','life','item','stab']]]);
 export const MAX_DETONATIONS=8;
+export const MAX_GRENADES=8;
+export const MAX_GUNSHOTS=8;
+export function validateGunshots(effects){
+ if(!Array.isArray(effects)||effects.length<1||effects.length>MAX_GUNSHOTS)throw Error('Invalid gunshot batch');
+ for(const entry of effects){
+  if(!Array.isArray(entry)||entry.length!==6)throw Error('Invalid gunshot');
+  const [shooter,section,sound,x,y,z]=entry;
+  if(!Number.isInteger(shooter)||shooter<1||shooter>0xffffffff||typeof section!=='string'
+     ||!/^[a-zA-Z0-9_.-]{1,128}$/.test(section)||!(section==='wpn_knife'?[3,4]:[0,1,2]).includes(sound)
+     ||![x,y,z].every(n=>Number.isFinite(n)&&Math.abs(n)<=32768))throw Error('Invalid gunshot');
+ }
+ return effects;
+}
+export function validateGrenades(frame){
+ const ids=new Set();
+ if(!Number.isInteger(frame?.tick)||frame.tick<0||frame.tick>0xffffffff||!Array.isArray(frame.entries)||frame.entries.length>MAX_GRENADES)throw Error('Invalid grenade frame');
+ for(const entry of frame.entries){
+  if(!Array.isArray(entry)||entry.length!==5)throw Error('Invalid grenade entry');
+  const [id,section,x,y,z]=entry;
+  if(!Number.isInteger(id)||id<1||id>0xffffffff||ids.has(id)||typeof section!=='string'||!(/^[a-zA-Z0-9_.-]{1,32}$/.test(section))
+    ||![x,y,z].every(n=>Number.isFinite(n)&&Math.abs(n)<=32768))throw Error('Invalid grenade entry');
+  ids.add(id);
+ }
+ return frame;
+}
 export function validateDetonations(effects){
  if(!Array.isArray(effects)||effects.length<1||effects.length>MAX_DETONATIONS)throw Error('Invalid detonation batch');
  for(const entry of effects){
@@ -13,6 +40,32 @@ export function validateDetonations(effects){
  return effects;
 }
 const uint=n=>{if(!Number.isInteger(n)||n<0||n>0xffffffff)throw Error('Invalid control integer');return n;};
+schemas.set(33,['grenade_hud','life','item','phase']);
+function validateWeaponCue(cue){
+ uint(cue?.life);
+ if(typeof cue.item!=='string'||!/^[0-9a-f]{32}$/.test(cue.item)||cue.item==='0'.repeat(32))throw Error('Invalid weapon cue item');
+}
+export function validateWeaponFire(cue){
+ validateWeaponCue(cue);
+ if(cue.type==='knife_swing'){
+  if(typeof cue.stab!=='boolean')throw Error('Invalid knife swing cue');
+  return cue;
+ }
+ if(cue.type==='grenade_hud'){
+  if(!['prime','quick','release','cancel'].includes(cue.phase))throw Error('Invalid grenade HUD cue');
+  return cue;
+ }
+ if(!Number.isInteger(cue.ammo)||cue.ammo<0||cue.ammo>0xffff||typeof cue.launcher!=='boolean')throw Error('Invalid weapon fire cue');
+ return cue;
+}
+export function validateWeaponReload(cue){
+ validateWeaponCue(cue);
+ if(typeof cue.alias!=='string'||!Number.isInteger(cue.milliseconds)||cue.milliseconds<0||cue.milliseconds>30000||
+    typeof cue.cancelled!=='boolean'||!Number.isInteger(cue.sound))throw Error('Invalid weapon reload cue');
+ if(cue.milliseconds===0 ? cue.alias!==''||cue.sound!==0 :
+    cue.cancelled||cue.sound<1||cue.sound>8||!/^(?:anm|anim)_[a-z0-9_]{1,40}$/.test(cue.alias))throw Error('Invalid weapon reload cue');
+ return cue;
+}
 export function encodeControl(message){
  if(message?.type==='world_items'||message?.type==='corpses'){
   keys(message,['type','sequence','after']);
@@ -35,20 +88,41 @@ export function encodeControl(message){
   v.setBigUint64(40,generation===null?0xffffffffffffffffn:BigInt(generation),true);return buffer;
  }
  if(message?.type==='inventory_list'||message?.type==='inventory_move')return encodeInventory(message);
- const specs={attack:[1,12,['type','sequence','target']],reload:[2,8,['type','sequence']],respawn:[3,28,['type','sequence','request_id','life']],fire:[4,36,['type','sequence','aim','item']],leave:[5,8,['type','sequence']],trigger_start:[11,36,['type','sequence','aim','item']],trigger_stop:[12,8,['type','sequence']]};
+ if(message?.type==='select_detector'){
+  if(Object.keys(message).length!==4||typeof message.active!=='boolean')throw Error('Invalid detector selection');
+  const buffer=new ArrayBuffer(13),v=new DataView(buffer);
+  v.setUint16(0,0x5a58,true);v.setUint8(2,VERSION);v.setUint8(3,28);
+  v.setUint32(4,uint(message.sequence),true);v.setUint8(8,Number(message.active));v.setUint32(9,uint(message.life),true);
+  return buffer;
+ }
+ const specs={attack:[1,12,['type','sequence','target']],reload:[2,8,['type','sequence']],respawn:[3,28,['type','sequence','request_id','life']],fire:[4,36,['type','sequence','aim','item']],leave:[5,8,['type','sequence']],trigger_start:[11,36,['type','sequence','aim','item']],trigger_stop:[12,8,['type','sequence']],use_travel:[13,8,['type','sequence']],select_weapon:[14,13,['type','sequence','slot','life']],grenade:[15,37,['type','sequence','aim','item','phase']],knife:[27,37,['type','sequence','aim','item','mode']]};
  const spec=specs[message?.type];if(!spec||Object.keys(message).length!==spec[2].length||spec[2].some(k=>!Object.hasOwn(message,k)))throw Error('Invalid control fields');
  const buffer=new ArrayBuffer(spec[1]),v=new DataView(buffer);v.setUint16(0,0x5a58,true);v.setUint8(2,VERSION);v.setUint8(3,spec[0]);v.setUint32(4,uint(message.sequence),true);
  if(message.type==='attack')v.setUint32(8,uint(message.target),true);
+ if(message.type==='select_weapon'){
+  if(![0,1,2,3,4,6].includes(message.slot))throw Error('Invalid active weapon slot');
+  v.setUint8(8,message.slot);v.setUint32(9,uint(message.life),true);
+ }
  if(message.type==='respawn'){if(!/^[0-9a-f]{32}$/.test(message.request_id))throw Error('Invalid respawn request ID');const b=new Uint8Array(buffer);for(let i=0;i<16;i++)b[8+i]=parseInt(message.request_id.slice(2*i,2*i+2),16);v.setUint32(24,uint(message.life),true);}
- if(message.type==='fire'||message.type==='trigger_start'){
+ if(['fire','trigger_start','grenade','knife'].includes(message.type)){
   const aim=message.aim;if(!aim||Object.keys(aim).length!==3||!['tick','yaw','pitch'].every(k=>Object.hasOwn(aim,k))||![aim.yaw,aim.pitch].every(n=>Number.isFinite(n)&&Number.isFinite(Math.fround(n))))throw Error('Invalid aim');
   v.setUint32(8,uint(aim.tick),true);v.setFloat32(12,aim.yaw,true);v.setFloat32(16,aim.pitch,true);
   const item=message.item;
-  if(item===null&&message.type==='trigger_start')throw Error('Missing trigger weapon ID');
+  if(item===null&&message.type!=='fire')throw Error(message.type==='grenade'?'Missing grenade ID':message.type==='knife'?'Missing knife ID':'Missing trigger weapon ID');
   if(item!==null){
    if(typeof item!=='string'||!(/^[0-9a-f]{32}$/).test(item)||item==='0'.repeat(32))throw Error('Invalid weapon ID');
    const bytes=new Uint8Array(buffer);
    for(let i=0;i<16;i++)bytes[20+i]=parseInt(item.slice(i*2,i*2+2),16);
+  }
+  if(message.type==='grenade'){
+    const phase=['prime','release','cancel'].indexOf(message.phase);
+    if(phase<0)throw Error('Invalid grenade phase');
+    v.setUint8(36,phase);
+  }
+  if(message.type==='knife'){
+    const mode=['slash','stab'].indexOf(message.mode);
+    if(mode<0)throw Error('Invalid knife mode');
+    v.setUint8(36,mode);
   }
  }return buffer;
 }
@@ -117,15 +191,23 @@ export function decodeControl(buffer){
  const message={type:schema[0]};for(const field of schema.slice(1))message[field]=value();
  if(at!==buffer.byteLength)throw Error('Trailing control data');
  if(message.type==='detonations')validateDetonations(message.effects);
+ if(message.type==='grenades')validateGrenades(message);
+ if(message.type==='gunshots')validateGunshots(message.effects);
+ if(message.type==='weapon_fired'||message.type==='knife_swing'||message.type==='grenade_hud')validateWeaponFire(message);
+ if(message.type==='weapon_reload')validateWeaponReload(message);
+ if(message.type==='travel'&&!levelForWorld(message.world))throw Error('Invalid travel world');
  return message;
 }
 
 
 export function validateVitals(state){
  const bounded=(n,max)=>Number.isInteger(n)&&n>=0&&n<=max;
- if(!Array.isArray(state)||state.length!==11||!bounded(state[0],0xffffffff)
+ if(!Array.isArray(state)||state.length!==14||!bounded(state[0],0xffffffff)
     ||!state.slice(1,6).every(n=>bounded(n,1000))||!bounded(state[6],7)
     ||!state.slice(7,10).every(n=>bounded(n,0xffffffff))||state[8]>state[9]
-    ||!bounded(state[10],1000))throw Error('Invalid player vitals');
+    ||!bounded(state[10],1000)||![0,1,2,3,4,6].includes(state[11])||!bounded(state[12],1000)
+    ||!bounded(state[13],0xffff))throw Error('Invalid player vitals');
+ const active=state[13]&0xff,expiring=state[13]>>>8;
+ if(expiring&~active)throw Error('Invalid expiring booster');
  return state;
 }

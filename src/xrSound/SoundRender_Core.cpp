@@ -48,6 +48,9 @@ CSoundRender_Core::CSoundRender_Core(CSoundManager& p)
 
 void CSoundRender_Core::_initialize()
 {
+#ifdef XR_PLATFORM_WEB
+    CSoundRender_Source::InitializePackedMetadata();
+#endif
     Timer.Start();
     TimerPersistent.Start();
 

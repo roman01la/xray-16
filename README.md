@@ -25,6 +25,15 @@ Installation instructions are on the [How to install and play](https://github.co
 Shadow of Chernobyl is **not supported** yet. (see [#392](https://github.com/OpenXRay/xray-16/issues/392)) <br>
 Legends of the Zone/Enhanced Edition is not supported and won't ever be likely. (see [#1865](https://github.com/OpenXRay/xray-16/issues/1865))
 
+## Call of Pripyat in the browser
+
+This fork runs Call of Pripyat 1.6.02 in a desktop browser with native WebGPU.
+The same browser build starts the original single-player game or the
+server-authoritative multiplayer alpha from its game menu. [Play the web version](https://stalker-online.xyz/)
+
+Local setup, browser requirements, display settings, and asset staging are in the
+[web build guide](misc/web/README.md).
+
 ## Main differences from the original X-Ray
 - Support for 64-bit.
 - Improved performance, better FPS.

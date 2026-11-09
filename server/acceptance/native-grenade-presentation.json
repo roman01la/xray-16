@@ -1,0 +1,368 @@
+{
+  "date": "2026-11-09",
+  "setup": "Two rendered Chrome WebGPU processes, optimized WASM and Rust, stock Zaton. The fixture seeded grounded player poses and original items in disposable saves. The smoke check used 4, Mouse1, Mouse2 and I.",
+  "engineWasmSha256": "0216003f858a0e192a45754fc5d08f5db0dd87e512ce100376d8c67033d30321",
+  "serverSha256": "78d97e9676ee09e6ec8bd41bb901c9089c7b21cca255f07be7a6fa16fab09b53",
+  "stockHudTiming": {
+    "source": "meshes/dynamics/weapons/wpn_grenades/wpn_hand_f1_hud_animation.omf",
+    "pinPullMs": 1067,
+    "throwMs": 634,
+    "releaseMarkMs": 368.666649,
+    "serverReadyTicks": 33,
+    "serverReleaseTicks": 12
+  },
+  "testResults": {
+    "rustPassed": 148,
+    "focusedBrowserPassed": 48
+  },
+  "cancel": {
+    "unchanged": true,
+    "cues": [
+      "prime",
+      "cancel"
+    ],
+    "flightFrames": 0
+  },
+  "quick": {
+    "latencyMs": 1515.7900004386902,
+    "replacement": {
+      "id": "322d48c83369a1fd7c1615ee7cf00b2e",
+      "place": "slot:4",
+      "revision": 1,
+      "section": "grenade_gd-05",
+      "state": {
+        "condition": 1,
+        "payload": {
+          "kind": "equipment"
+        },
+        "upgrades": []
+      }
+    },
+    "observers": [
+      {
+        "id": 1,
+        "blast": [
+          "grenade_gd-05",
+          36.0947151184082,
+          -3.3923959732055664,
+          104.99630737304688
+        ],
+        "samples": 25,
+        "earlySpeed": 24.711354953656066
+      },
+      {
+        "id": 1,
+        "blast": [
+          "grenade_gd-05",
+          36.0947151184082,
+          -3.3923959732055664,
+          104.99630737304688
+        ],
+        "samples": 25,
+        "earlySpeed": 24.711354953656066
+      }
+    ]
+  },
+  "charged": {
+    "releaseLatencyMs": 397.9099998474121,
+    "replacement": {
+      "id": "02a56fd62af4873c633c0f12982d2ffa",
+      "place": "slot:4",
+      "revision": 1,
+      "section": "grenade_rgd5",
+      "state": {
+        "condition": 1,
+        "payload": {
+          "kind": "equipment"
+        },
+        "upgrades": []
+      }
+    },
+    "health": 100,
+    "hud": [
+      "* Zone grenade HUD: grenade_gd-05 anm_throw_begin 1067 ms",
+      "* Zone grenade HUD: grenade_gd-05 anm_throw_idle 0 ms",
+      "* Zone grenade HUD: grenade_gd-05 anm_throw_begin 1067 ms",
+      "* Zone grenade HUD: grenade_gd-05 anm_throw 634 ms",
+      "* Zone grenade HUD: grenade_gd-05 anm_throw_begin 1067 ms",
+      "* Zone grenade HUD: grenade_gd-05 anm_throw_idle 0 ms",
+      "* Zone grenade HUD: grenade_gd-05 anm_throw 634 ms"
+    ],
+    "observers": [
+      {
+        "id": 2,
+        "blast": [
+          "grenade_gd-05",
+          36.72174835205078,
+          -7.2228288650512695,
+          122.45608520507812
+        ],
+        "samples": 24,
+        "earlySpeed": 29.638473297463936
+      },
+      {
+        "id": 2,
+        "blast": [
+          "grenade_gd-05",
+          36.72174835205078,
+          -7.2228288650512695,
+          122.45608520507812
+        ],
+        "samples": 24,
+        "earlySpeed": 29.638473297463936
+      }
+    ],
+    "throwerVoices": [
+      {
+        "slot": 0,
+        "generation": 7,
+        "frames": 265540,
+        "relative": false,
+        "position": [
+          36.0947151184082,
+          -3.3923959732055664,
+          104.99630737304688
+        ]
+      },
+      {
+        "slot": 1,
+        "generation": 5,
+        "frames": 6350,
+        "relative": false,
+        "position": [
+          36.72174835205078,
+          -7.2228288650512695,
+          122.45608520507812
+        ]
+      }
+    ],
+    "observerVoices": [
+      {
+        "slot": 0,
+        "generation": 1,
+        "frames": 265305,
+        "relative": false,
+        "position": [
+          36.0947151184082,
+          -3.3923959732055664,
+          104.99630737304688
+        ]
+      },
+      {
+        "slot": 1,
+        "generation": 1,
+        "frames": 6820,
+        "relative": false,
+        "position": [
+          36.72174835205078,
+          -7.2228288650512695,
+          122.45608520507812
+        ]
+      }
+    ],
+    "checkoutRelative": true
+  },
+  "safe": {
+    "protected": true,
+    "denied": {
+      "reason": "safe_zone",
+      "status": "rejected"
+    },
+    "unchanged": true,
+    "webgpuValidationErrors": 0
+  },
+  "trialNotes": [
+    "The local smoke run logged a headless pointer-lock warning while navigating from the completed trial to the protected save. The original safe-zone throw input still reached the server and was rejected.",
+    "The first F1 run matched the landing and rendered the blast but stopped audio capture before the exposed observer consumed its first sample. The passing F1-only trial polled matching AudioWorklet playback before ending capture."
+  ],
+  "explosiveTrials": {
+    "grenade_rgd5": {
+      "section": "grenade_rgd5",
+      "position": [
+        326.9764099121094,
+        41.83180618286133,
+        -392.77154541015625
+      ],
+      "distances": [
+        3.7840837017314453,
+        3.7855060483917384
+      ],
+      "openHealth": 78,
+      "coveredHealth": 100,
+      "openOutfit": 0.9865007,
+      "coveredOutfit": 1,
+      "stockPistolFallback": true,
+      "rendered": [
+        {
+          "blast": [
+            "grenade_rgd5",
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ],
+          "model": "* Zone detonation: grenade_rgd5 particles=explosions\\explosion_01 positional_sound=1 light=0 at [326.976,41.832,-392.772]"
+        },
+        {
+          "blast": [
+            "grenade_rgd5",
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ],
+          "model": "* Zone detonation: grenade_rgd5 particles=explosions\\explosion_01 positional_sound=1 light=0 at [326.976,41.832,-392.772]"
+        },
+        {
+          "blast": [
+            "grenade_rgd5",
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ],
+          "model": "* Zone detonation: grenade_rgd5 particles=explosions\\explosion_01 positional_sound=1 light=0 at [326.976,41.832,-392.772]"
+        }
+      ],
+      "hud": [
+        "* Zone grenade HUD: grenade_rgd5 anm_throw_begin 1067 ms",
+        "* Zone grenade HUD: grenade_rgd5 anm_throw 634 ms"
+      ],
+      "throwerVoices": [
+        {
+          "slot": 0,
+          "generation": 3,
+          "frames": 13406,
+          "relative": false,
+          "position": [
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ]
+        }
+      ],
+      "observerVoices": [
+        {
+          "slot": 0,
+          "generation": 1,
+          "frames": 9172,
+          "relative": false,
+          "position": [
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ]
+        }
+      ]
+    },
+    "grenade_f1": {
+      "section": "grenade_f1",
+      "position": [
+        326.9764099121094,
+        41.83180618286133,
+        -392.77154541015625
+      ],
+      "distances": [
+        3.7840837017314453,
+        3.7855060483917384
+      ],
+      "openHealth": 10,
+      "coveredHealth": 100,
+      "openOutfit": 0.9730014,
+      "coveredOutfit": 1,
+      "stockPistolFallback": true,
+      "rendered": [
+        {
+          "blast": [
+            "grenade_f1",
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ],
+          "model": "* Zone detonation: grenade_f1 particles=explosions\\explosion_01 positional_sound=1 light=0 at [326.976,41.832,-392.772]"
+        },
+        {
+          "blast": [
+            "grenade_f1",
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ],
+          "model": "* Zone detonation: grenade_f1 particles=explosions\\explosion_01 positional_sound=1 light=0 at [326.976,41.832,-392.772]"
+        },
+        {
+          "blast": [
+            "grenade_f1",
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ],
+          "model": "* Zone detonation: grenade_f1 particles=explosions\\explosion_01 positional_sound=1 light=0 at [326.976,41.832,-392.772]"
+        }
+      ],
+      "hud": [
+        "* Zone grenade HUD: grenade_f1 anm_throw_begin 1067 ms",
+        "* Zone grenade HUD: grenade_f1 anm_throw 634 ms"
+      ],
+      "throwerVoices": [
+        {
+          "slot": 0,
+          "generation": 3,
+          "frames": 1646,
+          "relative": false,
+          "position": [
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ]
+        }
+      ],
+      "observerVoices": [
+        {
+          "slot": 0,
+          "generation": 1,
+          "frames": 705,
+          "relative": false,
+          "position": [
+            326.9764099121094,
+            41.83180618286133,
+            -392.77154541015625
+          ]
+        }
+      ]
+    }
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      623929
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "explosiveComparison": {
+    "sameLanding": true,
+    "sameGroundedTargets": true,
+    "outfit": "exo_outfit",
+    "strongerF1": true,
+    "coveredPlayersUnharmed": true
+  }
+}

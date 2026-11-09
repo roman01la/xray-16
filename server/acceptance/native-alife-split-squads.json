@@ -1,0 +1,605 @@
+{
+  "date": "2026-11-09",
+  "environment": "Optimized macOS ARM64 native CoP, release Rust, two Chrome WebGPU engines with the live binary WebRTC protocol. Stock Zaton campaign and assets.",
+  "setup": "The no-peer probe identified existing offline squads. Test-only character saves started at two capsule-validated sites. The test disabled the logout body lease to observe absence without waiting 60 seconds. The campaign data and NPCs were unmodified.",
+  "positions": [
+    [
+      79.02549743652344,
+      43.005393981933594,
+      -425.64862060546875
+    ],
+    [
+      100.8000259399414,
+      -7.072343826293945,
+      232.69998168945312
+    ]
+  ],
+  "separationMetres": 660.61,
+  "initial": {
+    "gameMs": 16040,
+    "interests": 0,
+    "stockSquads": 44,
+    "livingOnline": 5,
+    "livingOffline": 448
+  },
+  "aOnly": {
+    "online": {
+      "gameMs": 29120,
+      "interests": 1,
+      "squads": [
+        {
+          "id": 6517,
+          "section": "simulation_snork",
+          "online": true
+        },
+        {
+          "id": 7132,
+          "section": "zat_b28_snork_squad",
+          "online": true
+        },
+        {
+          "id": 10858,
+          "section": "zat_b56_polter_squad",
+          "online": true
+        }
+      ]
+    },
+    "otherSiteOffline": {
+      "gameMs": 29120,
+      "interests": 1,
+      "squads": [
+        {
+          "id": 6638,
+          "section": "zat_a2_stalker_mechanic_squad",
+          "online": false
+        },
+        {
+          "id": 6652,
+          "section": "zat_a2_stalker_nimble_squad",
+          "online": false
+        },
+        {
+          "id": 7022,
+          "section": "zat_b106_stalker_crab_squad",
+          "online": false
+        },
+        {
+          "id": 7034,
+          "section": "zat_b106_stalker_gonta_squad",
+          "online": false
+        },
+        {
+          "id": 7088,
+          "section": "zat_b215_stalker_guide_zaton_squad",
+          "online": false
+        },
+        {
+          "id": 7104,
+          "section": "zat_b22_barmen",
+          "online": false
+        },
+        {
+          "id": 7121,
+          "section": "zat_b22_medic",
+          "online": false
+        },
+        {
+          "id": 7137,
+          "section": "zat_b30_owl_stalker_trader_squad",
+          "online": false
+        },
+        {
+          "id": 7157,
+          "section": "zat_b33_stalker_snag_squad",
+          "online": false
+        },
+        {
+          "id": 7170,
+          "section": "zat_b38_stalker_cop_squad",
+          "online": false
+        },
+        {
+          "id": 7346,
+          "section": "zat_b7_bandit_boss_sultan_squad",
+          "online": false
+        },
+        {
+          "id": 7358,
+          "section": "zat_b7_stalkers_raiders",
+          "online": false
+        },
+        {
+          "id": 10808,
+          "section": "stalker_sim_squad_novice",
+          "online": false
+        }
+      ]
+    }
+  },
+  "both": {
+    "a": {
+      "gameMs": 38778,
+      "interests": 2,
+      "squads": [
+        {
+          "id": 6517,
+          "section": "simulation_snork",
+          "online": true
+        },
+        {
+          "id": 7132,
+          "section": "zat_b28_snork_squad",
+          "online": true
+        },
+        {
+          "id": 10858,
+          "section": "zat_b56_polter_squad",
+          "online": true
+        }
+      ]
+    },
+    "b": {
+      "gameMs": 38778,
+      "interests": 2,
+      "squads": [
+        {
+          "id": 6638,
+          "section": "zat_a2_stalker_mechanic_squad",
+          "online": true
+        },
+        {
+          "id": 6652,
+          "section": "zat_a2_stalker_nimble_squad",
+          "online": true
+        },
+        {
+          "id": 7022,
+          "section": "zat_b106_stalker_crab_squad",
+          "online": true
+        },
+        {
+          "id": 7034,
+          "section": "zat_b106_stalker_gonta_squad",
+          "online": true
+        },
+        {
+          "id": 7088,
+          "section": "zat_b215_stalker_guide_zaton_squad",
+          "online": true
+        },
+        {
+          "id": 7104,
+          "section": "zat_b22_barmen",
+          "online": true
+        },
+        {
+          "id": 7121,
+          "section": "zat_b22_medic",
+          "online": true
+        },
+        {
+          "id": 7137,
+          "section": "zat_b30_owl_stalker_trader_squad",
+          "online": true
+        },
+        {
+          "id": 7157,
+          "section": "zat_b33_stalker_snag_squad",
+          "online": true
+        },
+        {
+          "id": 7170,
+          "section": "zat_b38_stalker_cop_squad",
+          "online": true
+        },
+        {
+          "id": 7346,
+          "section": "zat_b7_bandit_boss_sultan_squad",
+          "online": true
+        },
+        {
+          "id": 7358,
+          "section": "zat_b7_stalkers_raiders",
+          "online": true
+        },
+        {
+          "id": 10808,
+          "section": "stalker_sim_squad_novice",
+          "online": true
+        }
+      ]
+    },
+    "browserNpcCounts": [
+      8,
+      19
+    ],
+    "disjointNetworkNpcIds": true
+  },
+  "aDisconnected": {
+    "a": {
+      "gameMs": 40784,
+      "interests": 1,
+      "squads": [
+        {
+          "id": 6517,
+          "section": "simulation_snork",
+          "online": false
+        },
+        {
+          "id": 7132,
+          "section": "zat_b28_snork_squad",
+          "online": false
+        },
+        {
+          "id": 10858,
+          "section": "zat_b56_polter_squad",
+          "online": false
+        }
+      ]
+    },
+    "b": {
+      "gameMs": 40784,
+      "interests": 1,
+      "squads": [
+        {
+          "id": 6638,
+          "section": "zat_a2_stalker_mechanic_squad",
+          "online": true
+        },
+        {
+          "id": 6652,
+          "section": "zat_a2_stalker_nimble_squad",
+          "online": true
+        },
+        {
+          "id": 7022,
+          "section": "zat_b106_stalker_crab_squad",
+          "online": true
+        },
+        {
+          "id": 7034,
+          "section": "zat_b106_stalker_gonta_squad",
+          "online": true
+        },
+        {
+          "id": 7088,
+          "section": "zat_b215_stalker_guide_zaton_squad",
+          "online": true
+        },
+        {
+          "id": 7104,
+          "section": "zat_b22_barmen",
+          "online": true
+        },
+        {
+          "id": 7121,
+          "section": "zat_b22_medic",
+          "online": true
+        },
+        {
+          "id": 7137,
+          "section": "zat_b30_owl_stalker_trader_squad",
+          "online": true
+        },
+        {
+          "id": 7157,
+          "section": "zat_b33_stalker_snag_squad",
+          "online": true
+        },
+        {
+          "id": 7170,
+          "section": "zat_b38_stalker_cop_squad",
+          "online": true
+        },
+        {
+          "id": 7346,
+          "section": "zat_b7_bandit_boss_sultan_squad",
+          "online": true
+        },
+        {
+          "id": 7358,
+          "section": "zat_b7_stalkers_raiders",
+          "online": true
+        },
+        {
+          "id": 10808,
+          "section": "stalker_sim_squad_novice",
+          "online": true
+        }
+      ]
+    }
+  },
+  "offlineProgression": {
+    "gameMs": 43802,
+    "squad": 6517,
+    "section": "simulation_snork",
+    "member": 6518,
+    "vertices": [
+      311,
+      314
+    ],
+    "metres": 30.478457003407005
+  },
+  "aReturned": {
+    "a": {
+      "gameMs": 52860,
+      "interests": 2,
+      "squads": [
+        {
+          "id": 6517,
+          "section": "simulation_snork",
+          "online": true
+        },
+        {
+          "id": 7132,
+          "section": "zat_b28_snork_squad",
+          "online": true
+        },
+        {
+          "id": 10858,
+          "section": "zat_b56_polter_squad",
+          "online": true
+        }
+      ]
+    },
+    "visible": 8
+  },
+  "webgpuValidationErrors": [
+    0,
+    0
+  ],
+  "archiveChunkRequests": 0,
+  "checkpointCaptures": [
+    {
+      "wallMs": 50.12,
+      "bytes": 2320877,
+      "prepareMs": 9.02,
+      "serializeMs": 41.03
+    },
+    {
+      "wallMs": 146.25,
+      "bytes": 2465513,
+      "prepareMs": 84.32,
+      "serializeMs": 61.84
+    }
+  ],
+  "remaining": [
+    "Moving the players together through normal gameplay and observing the same rendered pursuit and attacks",
+    "End-to-end target population with the native host"
+  ],
+  "serializationRecheck": {
+    "scope": "Same fixture and optimized builds with the object registry reusing one spawn/update packet. This is a separate live run with independently spawned stock squad instances.",
+    "separationMetres": 660.61,
+    "browserNpcCounts": [
+      8,
+      19
+    ],
+    "offlineProgression": {
+      "gameMs": 42085,
+      "squad": 6519,
+      "section": "simulation_snork",
+      "member": 6520,
+      "vertices": [
+        311,
+        314
+      ],
+      "metres": 30.458586596384734
+    },
+    "reactivatedSquads": 3,
+    "checkpointCaptures": [
+      {
+        "wallMs": 59.73,
+        "bytes": 2398046,
+        "prepareMs": 20.77,
+        "serializeMs": 38.88
+      },
+      {
+        "wallMs": 49.31,
+        "bytes": 2440988,
+        "prepareMs": 23.27,
+        "serializeMs": 25.98
+      },
+      {
+        "wallMs": 116.41,
+        "bytes": 2492579,
+        "prepareMs": 82.53,
+        "serializeMs": 33.82
+      }
+    ]
+  },
+  "splitSiteCheckpointProfile": {
+    "scope": "Separate macOS native diagnostic run with both sites active and 1 ms stack sampling. Counts describe sampled stacks and are not elapsed checkpoint timings.",
+    "clientSaveSamples": 82,
+    "objectsNetSaveSamples": 81,
+    "stalkerNetSaveSamples": 64,
+    "stalkerJitCodeAllocationSamples": 52,
+    "hostSerializationSamples": 27
+  },
+  "restoredSplitSiteTiming": {
+    "scope": "Same optimized split-site world restored in place. Two rendered Chrome clients remained present for about one minute. Thread CPU excludes time descheduled by the OS.",
+    "players": {
+      "restoredWorld": true,
+      "worldSeparation": 660.6094360351562,
+      "bothSitesStartMs": 29592,
+      "bothSitesEndMs": 89017,
+      "captures": 2,
+      "health": [
+        100,
+        100
+      ],
+      "visibleNpcCounts": [
+        8,
+        23
+      ]
+    },
+    "captures": [
+      {
+        "wallMs": 129.55,
+        "bytes": 2490253,
+        "prepareMs": 94.73,
+        "serializeMs": 34.73,
+        "clientExportMs": 0.0,
+        "threadCpuMs": 129.09
+      },
+      {
+        "wallMs": 141.15,
+        "bytes": 2548494,
+        "prepareMs": 103.2,
+        "serializeMs": 37.87,
+        "clientExportMs": 0.0,
+        "threadCpuMs": 140.98
+      }
+    ]
+  },
+  "scopedJitPause": {
+    "scope": "Optimized macOS ARM64. Restored a copy of the stock Zaton split-site world. Two rendered Chrome WebRTC clients held both sites for about two minutes. Earlier timings used the same sites at an earlier point in the world.",
+    "admittedGeneration": 7,
+    "players": {
+      "restoredWorld": true,
+      "worldSeparation": 660.6094360351562,
+      "bothSitesStartMs": 14496,
+      "bothSitesEndMs": 134151,
+      "captures": 4,
+      "health": [
+        100,
+        100
+      ],
+      "visibleNpcCounts": [
+        8,
+        31
+      ]
+    },
+    "captures": [
+      {
+        "wallMs": 54.0,
+        "bytes": 2579496,
+        "prepareMs": 16.08,
+        "serializeMs": 37.81,
+        "clientExportMs": 0.0,
+        "threadCpuMs": 53.75
+      },
+      {
+        "wallMs": 71.83,
+        "bytes": 2582337,
+        "prepareMs": 16.3,
+        "serializeMs": 55.44,
+        "clientExportMs": 0.0,
+        "threadCpuMs": 71.57
+      },
+      {
+        "wallMs": 92.64,
+        "bytes": 2583862,
+        "prepareMs": 32.29,
+        "serializeMs": 60.27,
+        "clientExportMs": 0.0,
+        "threadCpuMs": 90.58
+      },
+      {
+        "wallMs": 66.75,
+        "bytes": 2584339,
+        "prepareMs": 34.05,
+        "serializeMs": 32.62,
+        "clientExportMs": 0.0,
+        "threadCpuMs": 66.59
+      }
+    ]
+  },
+  "flyX86SplitSiteTiming": {
+    "scope": "Optimized displayless Ubuntu x86-64 on a disposable Frankfurt Fly Machine. Rust ran on the same Machine. A private relay supplied two grounded poses at the same stock Zaton sites. Stock NPC scripts ran unchanged. There were no rendered or WAN clients in this timing run.",
+    "positions": [
+      [
+        79.02549743652344,
+        43.005393981933594,
+        -425.64862060546875
+      ],
+      [
+        100.8000259399414,
+        -7.072343826293945,
+        232.69998168945312
+      ]
+    ],
+    "separationMetres": 660.6094096054135,
+    "syntheticPoses": 2,
+    "activeSitesFirstMs": 8300,
+    "activeSitesLastMs": 126820,
+    "initialSquads": [
+      [
+        6518,
+        7103
+      ],
+      [
+        6620,
+        6635,
+        6998,
+        7010,
+        7060,
+        7075,
+        7093,
+        7108,
+        7127,
+        7143,
+        7321,
+        7330
+      ]
+    ],
+    "finalSquads": [
+      [
+        6518,
+        7103,
+        10688
+      ],
+      [
+        6514,
+        6591,
+        6620,
+        6635,
+        6998,
+        7010,
+        7060,
+        7075,
+        7093,
+        7108,
+        7127,
+        7143,
+        7321,
+        7330,
+        10641,
+        12881
+      ]
+    ],
+    "captures": [
+      {
+        "wallMs": 90.57,
+        "bytes": 2487629,
+        "prepareMs": 46.0,
+        "serializeMs": 44.42,
+        "clientExportMs": 0.01,
+        "threadCpuMs": 90.31
+      },
+      {
+        "wallMs": 131.48,
+        "bytes": 2487853,
+        "prepareMs": 25.47,
+        "serializeMs": 105.85,
+        "clientExportMs": 0.0,
+        "threadCpuMs": 130.88
+      },
+      {
+        "wallMs": 82.54,
+        "bytes": 2490810,
+        "prepareMs": 29.25,
+        "serializeMs": 53.13,
+        "clientExportMs": 0.01,
+        "threadCpuMs": 81.94
+      },
+      {
+        "wallMs": 120.77,
+        "bytes": 2546167,
+        "prepareMs": 69.09,
+        "serializeMs": 51.49,
+        "clientExportMs": 0.01,
+        "threadCpuMs": 120.47
+      }
+    ],
+    "peakMs": 131.48
+  }}

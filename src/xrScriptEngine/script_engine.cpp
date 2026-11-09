@@ -30,6 +30,9 @@
 #include <luabind/class_info.hpp>
 
 #include <stdarg.h>
+#ifdef XR_PLATFORM_WEB
+#include <string_view>
+#endif
 
 Flags32 g_LuaDebug;
 int g_LuaDumpDepth = 0;
@@ -54,7 +57,7 @@ setfenv(1, this) ";
 
 static const char* file_header = nullptr;
 
-static void* lua_alloc(void* ud, void* ptr, size_t osize, size_t nsize)
+[[maybe_unused]] static void* lua_alloc(void* ud, void* ptr, size_t osize, size_t nsize)
 {
     (void)ud;
     (void)osize;
@@ -129,7 +132,12 @@ void CScriptEngine::reinit()
         lua_close(m_virtual_machine);
         UnregisterState(m_virtual_machine);
     }
+#if XRAY_USE_LUAJIT && defined(XR_PLATFORM_LINUX) && defined(XR_ARCHITECTURE_ARM64)
+    // A Linux AArch64 PIE can get a system heap above LuaJIT's 47-bit range.
+    m_virtual_machine = luaL_newstate();
+#else
     m_virtual_machine = lua_newstate(lua_alloc, nullptr);
+#endif
     if (!m_virtual_machine)
     {
         Log("! ERROR : Cannot initialize script virtual machine!");
@@ -343,6 +351,46 @@ lua_State* L, LPCSTR caBuffer, size_t tSize, LPCSTR caScriptName, LPCSTR caNameS
     return true;
 }
 
+#ifdef XR_PLATFORM_WEB
+static xr_string browser_stock_sound_theme(pcstr path, pcstr name_space, std::string_view source)
+{
+    if (!name_space || xr_strcmp(name_space, "sound_theme") != 0)
+        return {};
+    // Keep loose scripts and other revisions on their original loader path.
+    const auto* entry = FS.GetFileDesc(path);
+    constexpr u32 stock_crc = 1493771803u;
+    constexpr size_t stock_size = 25649;
+    if (!entry || entry->vfs == size_t(-1) || entry->crc != stock_crc || source.size() != stock_size)
+        return {};
+
+    constexpr std::string_view first = "local f = getFS()\r\n\t"
+        R"(if f:exist("$game_sounds$",npc:sound_prefix()..self.path..".ogg") ~= nil then)";
+    constexpr std::string_view after = "if self.npc[npc_id].max < 0 then";
+    const size_t begin = source.find(first);
+    const size_t end = source.find(after, begin);
+    if (begin == std::string_view::npos || end == std::string_view::npos)
+        return {};
+
+    // Keep the original Lua probe block for a replaced getFS or an unsupported prefix.
+    xr_string result = "local browser_sound_count, native_get_fs = __xray_browser_sound_lookup_bindings()\n";
+    result.append(source.data(), begin);
+    result += "local sound_path, variant_count\n"
+              "\tif getFS == native_get_fs then\n"
+              "\t\tsound_path = npc:sound_prefix()..self.path\n"
+              "\t\tvariant_count = browser_sound_count(sound_path)\n"
+              "\tend\n"
+              "\tif variant_count == -1 then\n"
+              "\t\tself.sound_path[npc_id][1] = sound_path\n"
+              "\telseif variant_count and variant_count >= 0 then\n"
+              "\t\tfor num = 1, variant_count do self.sound_path[npc_id][num] = sound_path..num end\n"
+              "\telse\n\t\t";
+    result.append(source.data() + begin, end - begin);
+    result += "end\n\t";
+    result.append(source.data() + end, source.size() - end);
+    return result;
+}
+#endif
+
 bool CScriptEngine::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 {
     int start = lua_gettop(lua());
@@ -354,8 +402,17 @@ bool CScriptEngine::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
         return false;
     }
     strconcat(sizeof(l_caLuaFileName), l_caLuaFileName, "@", caScriptName);
-    if (!load_buffer(lua(), static_cast<LPCSTR>(l_tpFileReader->pointer()), l_tpFileReader->length(),
-        l_caLuaFileName, caNameSpaceName))
+    pcstr source = static_cast<pcstr>(l_tpFileReader->pointer());
+    size_t source_size = l_tpFileReader->length();
+#ifdef XR_PLATFORM_WEB
+    const auto patched = browser_stock_sound_theme(caScriptName, caNameSpaceName, {source, source_size});
+    if (!patched.empty())
+    {
+        source = patched.data();
+        source_size = patched.size();
+    }
+#endif
+    if (!load_buffer(lua(), source, source_size, l_caLuaFileName, caNameSpaceName))
     {
         // VERIFY(lua_gettop(lua())>=4);
         // lua_pop(lua(), 4);

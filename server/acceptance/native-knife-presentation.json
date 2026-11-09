@@ -1,0 +1,382 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized unified WASM and Rust with original Zaton collision and two rendered Chrome WebGPU processes. The fixture seeded grounded poses and a stock stalker outfit. All knives came from the normal starter grant. The original 1, W, Mouse1 and Mouse2 inputs selected, approached, slashed and stabbed.",
+  "engineWasmSha256": "17be203da7479676c9e3e1db6768eb104cd7f4c2ff6295c069a06e6075e5bb59",
+  "serverSha256": "76445f1bb5aeb6c2d91f0984428ef0900504e330c8c7970d0843ce395788535e",
+  "testResults": {
+    "rustPassed": 148,
+    "focusedBrowserPassed": 48
+  },
+  "range": {
+    "distance": 4.6300811767578125,
+    "result": {
+      "ammo": 0,
+      "status": "miss"
+    },
+    "observer": [
+      "* Zone observer torso: wpn_knife norm_all_5_attack_0"
+    ]
+  },
+  "armouredSlash": {
+    "near": {
+      "id": 3,
+      "x": 35.021602630615234,
+      "y": -1.0319851636886597,
+      "z": 75.76106262207031,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 3.140000104904175,
+      "health": 100,
+      "kind": 1,
+      "flags": 2
+    },
+    "result": {
+      "ammo": 0,
+      "health": 15,
+      "status": "hit",
+      "target": 3
+    },
+    "vitals": [
+      0,
+      915,
+      1000,
+      997,
+      850,
+      0,
+      3,
+      5550,
+      50000,
+      60000,
+      1000,
+      0,
+      1000,
+      0
+    ],
+    "outfitCondition": 0.9700000286102295,
+    "observer": "* Zone observer torso: wpn_knife norm_all_5_attack_0"
+  },
+  "stab": {
+    "result": {
+      "ammo": 0,
+      "health": 0,
+      "status": "hit",
+      "target": 3
+    },
+    "body": "* Zone observer torso: wpn_knife norm_all_5_attack_1",
+    "observerVoices": [
+      {
+        "slot": 0,
+        "generation": 1,
+        "frames": 12936,
+        "relative": false,
+        "position": [
+          35,
+          0.5177057981491089,
+          75
+        ]
+      },
+      {
+        "slot": 0,
+        "generation": 3,
+        "frames": 13171,
+        "relative": false,
+        "position": [
+          35,
+          0.5177057981491089,
+          75
+        ]
+      },
+      {
+        "slot": 0,
+        "generation": 5,
+        "frames": 12936,
+        "relative": false,
+        "position": [
+          35,
+          0.5177057981491089,
+          75
+        ]
+      }
+    ],
+    "attackerRelativeVoices": [
+      {
+        "slot": 0,
+        "generation": 1,
+        "frames": 12700,
+        "relative": true,
+        "position": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "slot": 0,
+        "generation": 3,
+        "frames": 12700,
+        "relative": true,
+        "position": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "slot": 0,
+        "generation": 5,
+        "frames": 13171,
+        "relative": true,
+        "position": [
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "hud": [
+      "* Zone weapon HUD knife: anm_attack 438 ms",
+      "* Zone weapon HUD knife: anm_attack_e 400 ms",
+      "* Zone weapon HUD knife: anm_attack 438 ms",
+      "* Zone weapon HUD knife: anm_attack_e 400 ms",
+      "* Zone weapon HUD knife: anm_attack2 875 ms",
+      "* Zone weapon HUD knife: anm_attack2_e 334 ms"
+    ],
+    "corpse": {
+      "life": 0,
+      "contents": [
+        {
+          "id": "1e4f67fce600fd80c993c0f44a7a43df",
+          "section": "bolt",
+          "revision": 2,
+          "state": {
+            "condition": 1,
+            "upgrades": [],
+            "payload": {
+              "kind": "equipment"
+            }
+          }
+        },
+        {
+          "id": "1f170511e441a5538b793864eac4dd97",
+          "section": "stalker_outfit",
+          "revision": 3,
+          "state": {
+            "condition": 0.925,
+            "upgrades": [],
+            "payload": {
+              "kind": "equipment"
+            }
+          }
+        },
+        {
+          "id": "3062f06121fcb948bc80b3d116df2cd2",
+          "section": "bandage",
+          "revision": 1,
+          "state": {
+            "condition": 1,
+            "upgrades": [],
+            "payload": {
+              "kind": "consumable",
+              "uses": 1
+            }
+          }
+        },
+        {
+          "id": "96df6b8650998ec8d6c8b46b9d4e1106",
+          "section": "device_torch",
+          "revision": 2,
+          "state": {
+            "condition": 1,
+            "upgrades": [],
+            "payload": {
+              "kind": "equipment"
+            }
+          }
+        },
+        {
+          "id": "ae1007d17dce8272763fa76d58e01cff",
+          "section": "device_pda",
+          "revision": 2,
+          "state": {
+            "condition": 1,
+            "upgrades": [],
+            "payload": {
+              "kind": "equipment"
+            }
+          }
+        },
+        {
+          "id": "dd63814982855e8c53487a1ba628a946",
+          "section": "wpn_knife",
+          "revision": 2,
+          "state": {
+            "condition": 1,
+            "upgrades": [],
+            "payload": {
+              "kind": "equipment"
+            }
+          }
+        },
+        {
+          "id": "eefef6581d65ccf7c0230b683417012a",
+          "section": "bread",
+          "revision": 1,
+          "state": {
+            "condition": 1,
+            "upgrades": [],
+            "payload": {
+              "kind": "consumable",
+              "uses": 1
+            }
+          }
+        }
+      ],
+      "integrity": "ok"
+    }
+  },
+  "restart": {
+    "unchangedCorpse": true,
+    "attackerKnifeIntact": true,
+    "webgpuValidationErrors": 0
+  },
+  "bareSlash": {
+    "result": {
+      "ammo": 0,
+      "health": 0,
+      "status": "hit",
+      "target": 4
+    },
+    "armouredHealth": 15
+  },
+  "trialNotes": [
+    "The first fixture duplicated a slot-1 starter grant. The successful run used the original provisioning path.",
+    "The initial observer implementation treated the null return from the all-partitions animation overload as failure. The final client verifies whole-body slash and stab tracks and the AudioWorklet samples at their expected positions.",
+    "The final unarmoured check used a separate save in the same second Chrome process."
+  ],
+  "stockGlass": {
+    "attacker": {
+      "id": 2,
+      "x": 326.97430419921875,
+      "y": 41.759803771972656,
+      "z": -391.4256896972656,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 0,
+      "health": 100,
+      "kind": 1,
+      "flags": 2
+    },
+    "covered": {
+      "id": 3,
+      "x": 326.97430419921875,
+      "y": 41.70780563354492,
+      "z": -390.3056945800781,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 3.140000104904175,
+      "health": 100,
+      "kind": 1,
+      "flags": 2
+    },
+    "slash": {
+      "ammo": 0,
+      "status": "blocked"
+    },
+    "stab": {
+      "ammo": 0,
+      "status": "blocked"
+    },
+    "health": 100,
+    "bleeding": 0,
+    "outfitCondition": 1,
+    "stockCollisionMaterial": "materials\\glass"
+  },
+  "safeZone": {
+    "outside": {
+      "id": 4,
+      "x": 168.31805419921875,
+      "y": -3.3219804763793945,
+      "z": 174.47999572753906,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 4.711185455322266,
+      "health": 100,
+      "kind": 1,
+      "flags": 2
+    },
+    "protectedActor": {
+      "id": 5,
+      "x": 167.39804077148438,
+      "y": -3.3210654258728027,
+      "z": 174.47999572753906,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "yaw": 1.5720000267028809,
+      "health": 100,
+      "kind": 1,
+      "flags": 3
+    },
+    "slash": {
+      "ammo": 0,
+      "status": "protected"
+    },
+    "stab": {
+      "ammo": 0,
+      "status": "protected"
+    },
+    "attackFromInside": {
+      "reason": "safe_zone",
+      "status": "rejected"
+    },
+    "deniedCueCount": 0,
+    "health": 100,
+    "bleeding": 0,
+    "outfitCondition": 1,
+    "webgpuValidationErrors": 0
+  },
+  "farStab": {
+    "distance": 4.6300811767578125,
+    "result": {
+      "ammo": 0,
+      "status": "miss"
+    },
+    "health": 100,
+    "bleeding": 0,
+    "outfitCondition": 1,
+    "observer": "* Zone observer torso: wpn_knife norm_all_5_attack_1"
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      625460
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  }
+}

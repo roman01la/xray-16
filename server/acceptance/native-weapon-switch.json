@@ -1,0 +1,80 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized Rust and unified WebAssembly in local Chrome WebGPU on stock Zaton. The fixtures seeded stock Makarov and Abakan equipment, ammunition and a surveyed position. Native input used the original 2, 3 and R bindings.",
+  "engineWasmSha256": "ac49417069370708b633d0c85a2ff8c2a9596a632889c2fcb6bee885944a583f",
+  "serverSha256": "ce51caaf4240207b25e5d9b8fef9ba30944eac7e43bc633d3622891f3b9576a4",
+  "browserBridgeSha256": "aac0edc4ffc94e49cac2d48f49bf34985ebd5a2c53ca640fee558939e3f123c9",
+  "switching": {
+    "startingSlot": 3,
+    "pistolSlot": 2,
+    "rifleSlot": 3,
+    "delayedEngineReply": true,
+    "reloadSuppressedBeforeConfirmation": true,
+    "pistolReloadMs": 2368,
+    "rifleReloadMs": 3035,
+    "pistolRounds": 8,
+    "rifleRounds": 30,
+    "pistolReserve": 8,
+    "rifleReserve": 5,
+    "oldWeaponCommands": 0,
+    "holsterConfirmed": true,
+    "reloadMotions": [
+      "* Zone weapon HUD reload: wpn_pm anm_reload_empty 2368 ms",
+      "* Zone weapon HUD reload: wpn_abakan anm_reload 3035 ms"
+    ],
+    "webgpuValidationErrors": 0
+  },
+  "depletedAndIncompatibleAmmo": {
+    "lastBoxConsumed": true,
+    "remainingCompatibleRounds": 0,
+    "pmCartridges": [
+      "ammo_9x18_fmj"
+    ],
+    "incompatibleSection": "ammo_9x19_fmj",
+    "incompatibleRounds": 12,
+    "reloadAlias": "anm_reload_empty",
+    "repeatedReload": "no_compatible_ammunition",
+    "restarted": true,
+    "sameRevisionAfterRestart": true,
+    "webgpuValidationErrors": 0
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      625671
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "testSuites": {
+    "rust": 148,
+    "browser": 133
+  },
+  "reloadScreenshot": "native-weapon-switch.jpg",
+  "runNotes": [
+    "The harness held the first selection reply on the browser main thread while reliable slot state reached the engine. R produced no command before the held reply was released. The second switch used the ordinary reply path.",
+    "The run covered immediate Reload. Immediate Next Ammo and broader firearm coverage remain manual checks.",
+    "The Abakan HUD screenshot showed a scope even though its seeded item had no attachments. The visual discrepancy remains under MP-08."
+  ]
+}

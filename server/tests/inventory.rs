@@ -22,7 +22,7 @@ fn context(principal: &str) -> Context {
     Context {
         principal: principal.into(),
         life: 0,
-        auth_epoch: 0,
+        visit: 0, auth_epoch: 0,
         world: "zaton".into(),
         position: [0.0, 0.0, 0.0],
         interaction_radius: 2.0,
@@ -381,6 +381,111 @@ async fn two_clients_racing_through_persistence_worker_have_one_winner() {
     tokio::time::sleep(Duration::from_millis(120)).await;
 }
 
+#[tokio::test]
+async fn native_corpse_inventory_is_owned_once_across_retries_and_restart() {
+    use std::sync::Arc;
+    use zone_server::{alife_checkpoint::Checkpoint, alife_corpse, catalog::Catalog, survival_rules::SurvivalRules};
+
+    fn name(packet: &mut Vec<u8>, value: &str) {
+        packet.push(value.len() as u8);
+        packet.extend(value.as_bytes());
+    }
+    let mut packet = b"ZAL1".to_vec();
+    for value in [15u64, 9, 1] {
+        packet.extend(value.to_le_bytes());
+    }
+    packet.extend([0; 12]);
+    packet.push(2);
+    name(&mut packet, "rifle");
+    packet.extend(0.57f32.to_le_bytes());
+    packet.extend([0, 3]);
+    name(&mut packet, "ammo_b");
+    packet.push(2);
+    name(&mut packet, "ammo_a");
+    packet.extend(2u16.to_le_bytes());
+    name(&mut packet, "ammo_b");
+    packet.extend(1u16.to_le_bytes());
+    packet.extend([0, 0, 0, 2]);
+    name(&mut packet, "story_food");
+    packet.extend(1.0f32.to_le_bytes());
+    packet.extend([0, 2, 1]);
+    assert!(alife_corpse::decode(&packet, 14, "zaton").is_none());
+    assert!(alife_corpse::decode(&packet[..packet.len() - 1], 15, "zaton").is_none());
+    let corpse = alife_corpse::decode(&packet, 15, "zaton").unwrap();
+
+    let sections = [
+        ("inventory", json!({"take_dist":"2","max_weight":"50"})),
+        ("rifle", json!({"class":"WP_AK74","inv_name":"rifle","inv_weight":"2",
+            "ammo_class":"ammo_a,ammo_b","ammo_mag_size":"30","slot":"2"})),
+        ("ammo_a", json!({"class":"AMMO_S","inv_name":"a","inv_weight":"1","box_size":"30"})),
+        ("ammo_b", json!({"class":"AMMO_S","inv_name":"b","inv_weight":"1","box_size":"30"})),
+        ("story_food", json!({"class":"S_FOOD","inv_name":"story","inv_weight":"1",
+            "eat_portions_num":"1","quest_item":"true"})),
+    ].into_iter().map(|(name, values)| (name.to_owned(), json!({"source":"system.ltx","values":values})))
+        .collect::<serde_json::Map<_, _>>();
+    let catalog = Arc::new(Catalog::from_bytes(&serde_json::to_vec(&json!({
+        "schema":1,"entry":"system.ltx","files":[{"path":"system.ltx","sha256":"0".repeat(64)}],
+        "sections":sections,
+    })).unwrap()).unwrap());
+    let mut rules = SurvivalRules::default();
+    rules.starter_kit.clear();
+    rules.private_storage = None;
+    let rules = Arc::new(rules);
+    let file = FileDb::new();
+    let mut db = Database::open(&file.0).unwrap();
+    let a = register(&mut db, 'a');
+    let b = register(&mut db, 'b');
+    db.initialize_inventory(&a).unwrap();
+    db.initialize_inventory(&b).unwrap();
+    drop(db);
+
+    let start = || Persistence::start_with_rules(&file.0, Some(catalog.clone()), Some(rules.clone()));
+    let store = start().unwrap();
+    let checkpoint = Checkpoint { lineage: 12, generation: 3 };
+    let admitted = store.native_world_request("zaton".into(), checkpoint).unwrap().await.unwrap().unwrap();
+    assert_eq!(admitted["accepted"], true);
+    let result = store.native_corpse_request(corpse.clone(), checkpoint).unwrap().await.unwrap().unwrap();
+    let source = result["corpse"].as_str().unwrap();
+    assert_eq!(result["items"], 1);
+    let (ca, cb) = (context(&a), context(&b));
+    let view = store.inventory_request(ca.clone(), Operation::CorpseItems(source.into(), String::new(), None, ca.clone()))
+        .unwrap().await.unwrap().unwrap();
+    let item = view["items"][0]["id"].as_str().unwrap();
+    assert_eq!(view["items"][0]["state"]["payload"]["cartridges"], json!(["ammo_a","ammo_a","ammo_b"]));
+    assert_eq!(view["items"][0]["state"]["payload"]["jammed"], true);
+    let (ra, rb) = tokio::join!(
+        store.execute(secret('a'), pickup(item, 0, source, "native-race-a", &ca)),
+        store.execute(secret('b'), pickup(item, 0, source, "native-race-b", &cb)),
+    );
+    let results = [ra.unwrap(), rb.unwrap()];
+    assert_eq!(results.iter().filter(|v| v["status"] == "committed").count(), 1);
+    store.flush().await.unwrap();
+    drop(store);
+
+    let restarted = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(store) = start() {
+                break store;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+    let stale = Checkpoint { generation: 2, ..checkpoint };
+    let rejected = restarted.native_world_request("zaton".into(), stale).unwrap().await.unwrap().unwrap();
+    assert_eq!(rejected["accepted"], false);
+    assert!(restarted.native_corpse_request(corpse.clone(), stale).unwrap().await.unwrap().is_err());
+    let replay = restarted.native_corpse_request(corpse, checkpoint).unwrap().await.unwrap().unwrap();
+    assert_eq!(replay["replayed"], true);
+    let sql = file.connection();
+    assert_eq!(sql.query_row("SELECT count(*) FROM item_containers WHERE kind='corpse'", [], |r| r.get::<_, u32>(0)).unwrap(), 1);
+    let (section, owner, revision): (String, String, u32) = sql.query_row(
+        "SELECT i.section,c.owner,i.revision FROM inventory_items i JOIN item_containers c ON c.id=i.container WHERE i.id=?1",
+        [item], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).unwrap();
+    assert_eq!((section.as_str(), revision), ("rifle", 1));
+    assert!(owner == a || owner == b);
+}
+
 #[test]
 fn paginated_private_inventory_detects_intervening_mutation() {
     let mut db = Database::open(Path::new(":memory:")).unwrap();
@@ -456,7 +561,10 @@ fn v4_migration_preserves_existing_identity_ownership_and_replay() {
     drop(db);
     // Reconstruct the exact pre-inventory schema; no v5 tables in a v4 fixture.
     let sql = file.connection();
-    sql.execute_batch("DROP TABLE authored_loose_slots; DROP TABLE authored_loot_slots; DROP TABLE authored_loot_worlds; DROP TABLE inventory_grants; DROP TABLE inventory_items; DROP TABLE inventory_characters; DROP TABLE item_containers; PRAGMA user_version=4;").unwrap();
+    sql.execute_batch("DROP TABLE alife_world_fences; DROP TABLE alife_corpse_deaths; DROP TABLE artefact_reveals; DROP TABLE authored_artefact_slots; DROP TABLE authored_artefact_worlds;
+        DROP TABLE authored_loose_slots; DROP TABLE authored_loot_slots; DROP TABLE authored_loot_worlds;
+        DROP TABLE inventory_grants; DROP TABLE inventory_items; DROP TABLE inventory_characters; DROP TABLE item_containers;
+        ALTER TABLE runtime_meta DROP COLUMN lab_lift_powered; PRAGMA user_version=4;").unwrap();
     drop(sql);
     let mut db = Database::open(&file.0).unwrap();
     assert_eq!(register(&mut db, 'a'), a);
@@ -475,7 +583,7 @@ fn v4_migration_preserves_existing_identity_ownership_and_replay() {
     assert_eq!(
         sql.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        13
+        22
     );
     assert!(
         sql.prepare("PRAGMA foreign_key_check")
@@ -594,7 +702,7 @@ fn world_discovery_is_bounded_public_and_uses_current_server_authority() {
     let personal=db.provision_world_container("zaton",[0.0,0.0,0.0]).unwrap();
     let private=db.provision_inventory_item(&personal,"wpn_ak74",&weapon(),"rucksack").unwrap();
     assert_eq!(db.execute(&secret('b'),pickup(&private,0,&personal,"private",&context(&b))).unwrap()["status"],"committed");
-    let first=db.execute(&secret('a'),Operation::WorldItems(String::new(),ca.clone())).unwrap();
+    let first=db.execute(&secret('a'),Operation::WorldItems(String::new(),ca.clone(),Default::default())).unwrap();
     assert!(first["items"].as_array().unwrap().len()<=32);
     assert!(first["nextCursor"].is_string());
     let mut found=Vec::new();let mut page=first;
@@ -607,21 +715,21 @@ fn world_discovery_is_bounded_public_and_uses_current_server_authority() {
             assert_eq!(item["state"],serde_json::to_value(weapon()).unwrap());
         }
         let Some(cursor)=page["nextCursor"].as_str() else {break;};
-        page=db.execute(&secret('a'),Operation::WorldItems(cursor.into(),ca.clone())).unwrap();
+        page=db.execute(&secret('a'),Operation::WorldItems(cursor.into(),ca.clone(),Default::default())).unwrap();
     }
     expected.sort();assert_eq!(found,expected);
     db.execute(&secret('b'),Operation::InventoryDeath(context(&b))).unwrap();
-    let page=db.execute(&secret('a'),Operation::WorldItems(String::new(),ca.clone())).unwrap();
+    let page=db.execute(&secret('a'),Operation::WorldItems(String::new(),ca.clone(),Default::default())).unwrap();
     assert!(!page.to_string().contains(&private));
     // Visibility radius is not pickup permission.
     let mut distant=ca.clone();distant.position=[20.0,0.0,0.0];
-    assert!(!db.execute(&secret('a'),Operation::WorldItems(String::new(),distant.clone())).unwrap()["items"].as_array().unwrap().is_empty());
+    assert!(!db.execute(&secret('a'),Operation::WorldItems(String::new(),distant.clone(),Default::default())).unwrap()["items"].as_array().unwrap().is_empty());
     assert_eq!(db.execute(&secret('a'),pickup(&expected[0],0,&near,"out-of-reach",&distant)).unwrap()["status"],"rejected");
     for invalid in [Context{life:1,..ca.clone()},Context{principal:b.clone(),..ca.clone()},Context{auth_epoch:1,..ca.clone()},Context{expires:Instant::now()-Duration::from_secs(1),..ca.clone()}] {
-        assert!(db.execute(&secret('a'),Operation::WorldItems(String::new(),invalid)).unwrap()["error"].is_string());
+        assert!(db.execute(&secret('a'),Operation::WorldItems(String::new(),invalid,Default::default())).unwrap()["error"].is_string());
     }
     db.execute(&secret('a'),Operation::InventoryDeath(ca.clone())).unwrap();
-    assert!(db.execute(&secret('a'),Operation::WorldItems(String::new(),ca)).unwrap()["error"].is_string());
+    assert!(db.execute(&secret('a'),Operation::WorldItems(String::new(),ca,Default::default())).unwrap()["error"].is_string());
 }
 
 #[test]

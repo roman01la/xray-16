@@ -1,0 +1,196 @@
+{
+  "date": "2026-11-09",
+  "scope": "Optimized unified WASM64 and Rust release on loopback with two rendered Chrome clients, stock Zaton and seeded stock weapon upgrades",
+  "wasmSha256": "536adf13fca027d96575dc385f3f5d1bd0329e5d5ee086c8b69edfc0e22ee864",
+  "serverSha256": "9fd918daf74e4d7ee4889e0ee18ebeb3473ca81f4059a4a30736cbf27aebc161",
+  "originalInput": [
+    "J first person",
+    "R reload",
+    "I inventory",
+    "G drop",
+    "F use",
+    "inventory double-click to equip"
+  ],
+  "upgradePresentation": {
+    "groza": {
+      "baseCapacity": 20,
+      "upgradedCapacity": 30,
+      "roundsBeforeReload": [
+        "ammo_9x39_ap",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9",
+        "ammo_9x39_pab9"
+      ],
+      "reserveBeforeReload": 15,
+      "reserveAfterReload": 4,
+      "nativeTooltipCapacity": 30
+    },
+    "convertedAK74": {
+      "condition": 0.8600000143051147,
+      "payload": {
+        "attachments": [],
+        "cartridges": [
+          "ammo_5.56x45_ss190",
+          "ammo_5.56x45_ap"
+        ],
+        "fire_mode": 0,
+        "kind": "weapon",
+        "launcher_cartridges": [],
+        "launcher_mode": false,
+        "selected_ammunition": "ammo_5.56x45_ap"
+      },
+      "upgrades": [
+        "up_fifthc_ak74"
+      ]
+    },
+    "nativeMagazines": [
+      [
+        "* Zone native magazine: wpn_groza condition=0.7300 capacity=30 rounds=19 selected=ammo_9x39_pab9 first=ammo_9x39_ap last=ammo_9x39_pab9 exact=1",
+        "* Zone native magazine: wpn_groza condition=0.7300 capacity=30 rounds=30 selected=ammo_9x39_pab9 first=ammo_9x39_ap last=ammo_9x39_pab9 exact=1"
+      ],
+      [
+        "* Zone native magazine: wpn_ak74 condition=0.8600 capacity=30 rounds=2 selected=ammo_5.56x45_ap first=ammo_5.56x45_ss190 last=ammo_5.56x45_ap exact=1",
+        "* Zone native magazine: wpn_groza condition=0.7300 capacity=30 rounds=30 selected=ammo_9x39_pab9 first=ammo_9x39_ap last=ammo_9x39_pab9 exact=1"
+      ]
+    ]
+  },
+  "groza": {
+    "id": "b98549a86929c1591226716393789269",
+    "place": "slot:3",
+    "revision": 4,
+    "section": "wpn_groza",
+    "state": {
+      "condition": 0.7300000190734863,
+      "payload": {
+        "attachments": [],
+        "cartridges": [
+          "ammo_9x39_ap",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9",
+          "ammo_9x39_pab9"
+        ],
+        "fire_mode": 0,
+        "kind": "weapon",
+        "launcher_cartridges": [
+          "ammo_vog-25"
+        ],
+        "launcher_mode": false,
+        "selected_ammunition": "ammo_9x39_pab9"
+      },
+      "upgrades": [
+        "up_fiftha_groza"
+      ]
+    }
+  },
+  "transfers": [
+    {
+      "action": "start equipped",
+      "owner": "A",
+      "revision": 0
+    },
+    {
+      "action": "reload",
+      "owner": "A",
+      "revision": 1
+    },
+    {
+      "action": "drop",
+      "owner": "world",
+      "revision": 2
+    },
+    {
+      "action": "pickup",
+      "owner": "B",
+      "place": "rucksack",
+      "revision": 3
+    },
+    {
+      "action": "equip",
+      "owner": "B",
+      "place": "slot:3",
+      "revision": 4
+    }
+  ],
+  "sameIdAndExactStateAfterDropPickupAndEquip": true,
+  "exactStateAfterRustRestart": true,
+  "singlePersistedOwnerAfterRestart": true,
+  "renderingValidationErrors": [
+    0,
+    0
+  ],
+  "scopeNotes": [
+    "The Groza was seeded with a stock capacity upgrade, a mixed primary magazine and one stock launcher round. Both browsers rebuilt the magazine in that exact order.",
+    "The converted AK-74 was seeded with the stock 5.56 mm conversion and verified separately on player B.",
+    "The first harness expected the private inventory view and nearby-world view to arrive simultaneously. The passing run waits for both views and verifies removal on both clients.",
+    "SQLite and binary condition values were compared as the same float32."
+  ],
+  "singlePlayer": {
+    "singlePlayer": true,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      627540
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  }
+}

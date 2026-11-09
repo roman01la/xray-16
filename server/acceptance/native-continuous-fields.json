@@ -1,0 +1,628 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized unified WASM and Rust on original Zaton with Chrome WebGPU. Seeded stock items, quick-slot assignments and starting poses. Walked into acid with stock movement controls, used the original F1 binding, and equipped gear and the artefact over the normal binary inventory protocol.",
+  "engineWasmSha256": "2b1a6d9108904283cc01b5b379e977aacd95452a94452bb34a5db54805144234",
+  "serverSha256": "5ed8f8d3fc75d1a6bda2564af04a26b0943ca65fafc9335f92c9ea70aaa9e2a1",
+  "stockFieldManifestSha256": "e51ccf2ed1575d774cf78341d3fab205adb184c5cc36aa01f8f4eb0be3065103",
+  "acid": {
+    "field": 1137,
+    "entry": [
+      -426.2606506347656,
+      -7.681591033935547,
+      162.71310424804688
+    ],
+    "outside": {
+      "seconds": 1.3,
+      "before": {
+        "health": 100,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": []
+      },
+      "after": {
+        "health": 100,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": []
+      }
+    },
+    "bare": {
+      "seconds": 2.4,
+      "before": {
+        "health": 94,
+        "staminaPermille": 998,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "rucksack",
+            "condition": 0.5
+          },
+          {
+            "section": "helm_respirator",
+            "place": "rucksack",
+            "condition": 0.5
+          }
+        ]
+      },
+      "after": {
+        "health": 74,
+        "staminaPermille": 993,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "rucksack",
+            "condition": 0.5
+          },
+          {
+            "section": "helm_respirator",
+            "place": "rucksack",
+            "condition": 0.5
+          }
+        ]
+      }
+    },
+    "outfitAndHelmet": {
+      "seconds": 2.4,
+      "before": {
+        "health": 63,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.49799007177352905
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4979041516780853
+          }
+        ]
+      },
+      "after": {
+        "health": 53,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.49188321828842163
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4913065433502197
+          }
+        ]
+      }
+    },
+    "beltedMeatChunk": {
+      "seconds": 2.4,
+      "before": {
+        "health": 53,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.49188321828842163
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4913065433502197
+          }
+        ]
+      },
+      "after": {
+        "health": 53,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 5,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.49188321828842163
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4913065433502197
+          }
+        ]
+      }
+    },
+    "unbelted": {
+      "seconds": 1.8,
+      "before": {
+        "health": 52,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 5,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.49137431383132935
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4907558858394623
+          }
+        ]
+      },
+      "after": {
+        "health": 44,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 5,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.4867941737174988
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.48579397797584534
+          }
+        ]
+      }
+    },
+    "antidote": {
+      "seconds": 1.6,
+      "before": {
+        "health": 43,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 5,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 128,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.48653972148895264
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4855180084705353
+          }
+        ]
+      },
+      "after": {
+        "health": 43,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 5,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 128,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.48246848583221436
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.48109787702560425
+          }
+        ]
+      }
+    },
+    "antidoteRemainingPortions": 0,
+    "afterRestart": {
+      "seconds": 1.4,
+      "before": {
+        "health": 44,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 5,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 128,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.4427739381790161
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4375581443309784
+          }
+        ]
+      },
+      "after": {
+        "health": 44,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 5,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 128,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.4392116069793701
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.43361136317253113
+          }
+        ]
+      }
+    },
+    "protectionSecondsRemainingAfterRestart": 41.36695
+  },
+  "acidDeath": {
+    "field": 1137,
+    "health": 0,
+    "transferred": [
+      "device_pda",
+      "wpn_knife",
+      "stalker_outfit",
+      "helm_respirator",
+      "bread",
+      "bandage",
+      "bolt",
+      "device_torch"
+    ],
+    "carriedItems": 8
+  },
+  "heatSpawnedInside": {
+    "field": 514,
+    "seconds": 2.2,
+    "before": {
+      "health": 26,
+      "staminaPermille": 990,
+      "bleedingPermille": 0,
+      "radiationPermille": 0,
+      "psyHealthPermille": 1000,
+      "boosterIcons": 0,
+      "gear": [
+        {
+          "section": "stalker_outfit",
+          "place": "slot:7",
+          "condition": 0.4670732021331787
+        },
+        {
+          "section": "helm_respirator",
+          "place": "slot:12",
+          "condition": 0.4699311852455139
+        }
+      ]
+    },
+    "after": {
+      "health": 10,
+      "staminaPermille": 988,
+      "bleedingPermille": 0,
+      "radiationPermille": 0,
+      "psyHealthPermille": 1000,
+      "boosterIcons": 0,
+      "gear": [
+        {
+          "section": "stalker_outfit",
+          "place": "slot:7",
+          "condition": 0.46048784255981445
+        },
+        {
+          "section": "helm_respirator",
+          "place": "slot:12",
+          "condition": 0.4638044238090515
+        }
+      ]
+    }
+  },
+  "fixtureIssues": [
+    "The first acid starting point was inside neighboring field 1131. The repeat started outside both fields.",
+    "An early browser run attempted to aim in third person. The repeat switched to first person before turning.",
+    "The initial psy fixture placed the character inside field 1145. The server killed the character while the engine was opening.",
+    "The first heat approach overlapped neighboring field 513. A separate route was checked against all stock spheres before the repeat."
+  ],
+  "screenshots": [
+    "native-fields-acid-bare.jpg",
+    "native-fields-acid-inventory.jpg",
+    "native-fields-psy-protected.jpg",
+    "native-fields-radiation-protected.jpg",
+    "native-fields-radiation-expired.jpg"
+  ],
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      624659
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "heatRoute": {
+    "field": 514,
+    "entry": [
+      -57.34072494506836,
+      24.16655158996582,
+      328.00732421875
+    ],
+    "outside": {
+      "seconds": 1,
+      "before": {
+        "health": 100,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.5
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.5
+          }
+        ]
+      },
+      "after": {
+        "health": 100,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.5
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.5
+          }
+        ]
+      }
+    },
+    "bare": {
+      "seconds": 1.7,
+      "before": {
+        "health": 87,
+        "staminaPermille": 996,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "rucksack",
+            "condition": 0.5
+          },
+          {
+            "section": "helm_respirator",
+            "place": "rucksack",
+            "condition": 0.5
+          }
+        ]
+      },
+      "after": {
+        "health": 71,
+        "staminaPermille": 992,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "rucksack",
+            "condition": 0.5
+          },
+          {
+            "section": "helm_respirator",
+            "place": "rucksack",
+            "condition": 0.5
+          }
+        ]
+      }
+    },
+    "outfitAndHelmet": {
+      "seconds": 1.7,
+      "before": {
+        "health": 50,
+        "staminaPermille": 999,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.4958527386188507
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.4970611035823822
+          }
+        ]
+      },
+      "after": {
+        "health": 40,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": [
+          {
+            "section": "stalker_outfit",
+            "place": "slot:7",
+            "condition": 0.4915037453174591
+          },
+          {
+            "section": "helm_respirator",
+            "place": "slot:12",
+            "condition": 0.49344518780708313
+          }
+        ]
+      }
+    }
+  },
+  "psy": {
+    "field": 1145,
+    "entry": [
+      304.0980224609375,
+      -3.5075390338897705,
+      -228.49266052246094
+    ],
+    "outside": {
+      "seconds": 1,
+      "before": {
+        "health": 100,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": []
+      },
+      "after": {
+        "health": 100,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 1000,
+        "boosterIcons": 0,
+        "gear": []
+      }
+    },
+    "bare": {
+      "seconds": 1.4,
+      "before": {
+        "health": 88,
+        "staminaPermille": 996,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 878,
+        "boosterIcons": 0,
+        "gear": []
+      },
+      "after": {
+        "health": 77,
+        "staminaPermille": 993,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 764,
+        "boosterIcons": 0,
+        "gear": []
+      }
+    },
+    "blockade": {
+      "seconds": 1.8,
+      "before": {
+        "health": 77,
+        "staminaPermille": 994,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 764,
+        "boosterIcons": 64,
+        "gear": []
+      },
+      "after": {
+        "health": 77,
+        "staminaPermille": 1000,
+        "bleedingPermille": 0,
+        "radiationPermille": 0,
+        "psyHealthPermille": 765,
+        "boosterIcons": 64,
+        "gear": []
+      }
+    },
+    "blockadeRemainingPortions": 0
+  },
+  "radiation": {
+    "field": 1254,
+    "unprotectedPermille": [
+      27,
+      50
+    ],
+    "protectedPermille": [
+      62,
+      62
+    ],
+    "radioprotectorRemainingPortions": 0,
+    "activeIconMask": 32,
+    "expiry": {
+      "expiryBlinkMask": 8224,
+      "expiredMask": 0,
+      "secondsInFieldAfterExpiry": 1.6,
+      "radiationPermilleAfterExpiry": [
+        64,
+        87
+      ]
+    }
+  }
+}

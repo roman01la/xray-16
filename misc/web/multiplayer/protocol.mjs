@@ -1,17 +1,19 @@
 // Protocol v3: little endian; keep in sync with server/src/protocol.rs.
 export const newer = (a, b) => ((a - b) | 0) > 0;
-export function encodeInput(sequence, {x = 0, z = 0, yaw = 0, sprint = false, jump = false, crouch = false} = {}, trigger = null) {
-  const heading=trigger?.yaw??yaw;
-  if (![x,z,heading].every(Number.isFinite)) throw new TypeError('Non-finite input');
-  const b = new ArrayBuffer(trigger ? 32 : 20), v = new DataView(b);
+export function encodeInput(sequence, {x = 0, z = 0, yaw = 0, pitch = 0, sprint = false, jump = false, crouch = false, walk = false, aiming = false} = {}, trigger = null) {
+  const heading=trigger?trigger.yaw:yaw, elevation=trigger?trigger.pitch:pitch;
+  if (![x,z,heading,elevation].every(Number.isFinite)) throw new TypeError('Non-finite input');
+  if (Math.abs(elevation)>1.55) throw new RangeError('Invalid input pitch');
+  const b = new ArrayBuffer(trigger ? 28 : 20), v = new DataView(b);
   v.setUint16(0, 0x5a58, true); v.setUint8(2,3); v.setUint8(3,1);
   v.setUint32(4,sequence,true);
   v.setInt16(8,Math.round(Math.max(-1,Math.min(1,x))*32767),true);
   v.setInt16(10,Math.round(Math.max(-1,Math.min(1,z))*32767),true);
-  v.setFloat32(12,heading % (Math.PI*2),true); v.setUint16(16,(sprint?1:0)|(jump?2:0)|(crouch?4:0),true);
+  v.setFloat32(12,heading % (Math.PI*2),true); v.setUint16(16,(sprint?1:0)|(jump?2:0)|(crouch?4:0)|(walk?8:0)|(aiming?16:0),true);
+  v.setInt16(18,Math.round(elevation*32767/1.55),true);
   if(trigger){
-    if(![trigger.sequence,trigger.tick].every(n=>Number.isInteger(n)&&n>=0&&n<=0xffffffff)||!Number.isFinite(trigger.pitch)||Math.abs(trigger.pitch)>1.55)throw Error('Invalid held trigger sample');
-    v.setUint32(20,trigger.sequence,true);v.setUint32(24,trigger.tick,true);v.setFloat32(28,trigger.pitch,true);
+    if(![trigger.sequence,trigger.tick].every(n=>Number.isInteger(n)&&n>=0&&n<=0xffffffff))throw Error('Invalid held trigger sample');
+    v.setUint32(20,trigger.sequence,true);v.setUint32(24,trigger.tick,true);
   }
   return b;
 }
@@ -42,15 +44,23 @@ function decodeDelta(buffer){
  for(let i=0;i<count;i++){
   if(at+5>buffer.byteLength)return null;const type=v.getUint8(at++),id=v.getUint32(at,true);at+=4;if(!id)return null;
   if(type===0){entities.push({id,remove:true});continue;}
-  if(type!==1&&type!==2)return null;const size=type===1?21:32;if(at+size>buffer.byteLength)return null;
+  if(type>4)return null;
+  const compact=(type&1)!==0, hasMotion=type>2, size=(compact?21:32)+(hasMotion?6:0);
+  if(at+size>buffer.byteLength)return null;
   let x,y,z,vx,vy,vz,yaw;
-  if(type===1){x=signed24(at)/100;y=signed24(at+3)/100;z=signed24(at+6)/100;vx=v.getInt16(at+9,true)/100;vy=v.getInt16(at+11,true)/100;vz=v.getInt16(at+13,true)/100;yaw=v.getInt16(at+15,true)/32767*Math.PI;at+=17;}
+  if(compact){x=signed24(at)/100;y=signed24(at+3)/100;z=signed24(at+6)/100;vx=v.getInt16(at+9,true)/100;vy=v.getInt16(at+11,true)/100;vz=v.getInt16(at+13,true)/100;yaw=v.getInt16(at+15,true)/32767*Math.PI;at+=17;}
   else{x=v.getFloat32(at,true);y=v.getFloat32(at+4,true);z=v.getFloat32(at+8,true);vx=v.getFloat32(at+12,true);vy=v.getFloat32(at+16,true);vz=v.getFloat32(at+20,true);yaw=v.getFloat32(at+24,true);at+=28;
    if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(z)||!Number.isFinite(vx)||!Number.isFinite(vy)||!Number.isFinite(vz)||!Number.isFinite(yaw))return null;
   }
   const health=v.getUint16(at,true),kind=v.getUint8(at+2),state=v.getUint8(at+3);at+=4;
-  if((kind!==1&&kind!==2)||state>15)return null;
-  entities.push({id,x,y,z,vx,vy,vz,yaw,health,kind,flags:state});
+  if((kind!==1&&kind!==2)||state>31)return null;
+  const entity={id,x,y,z,vx,vy,vz,yaw,health,kind,flags:state};
+  if(hasMotion){
+   const id=v.getUint32(at,true),timeMs=v.getUint16(at+4,true);at+=6;
+   if(kind!==2||id===0xffffffff)return null;
+   entity.motion={id,timeMs};
+  }
+  entities.push(entity);
  }
  if(at!==buffer.byteLength)return null;
  return {tick,playerId,ack,part,parts,entities,delta:true,keyframe:!!flags,baseline};

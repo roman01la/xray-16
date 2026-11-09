@@ -24,3 +24,13 @@ test('persistent IDs survive AOI re-entry but cannot alias two live proxies',()=
  assert.equal(r.entries.size,1);assert.equal(r.entries.get(7).persistentId,persistentId);
  r.clear();assert.equal(r.entries.size,0);
 });
+test('equipment metadata replaces an actor look atomically and rejects private or unsafe fields',()=>{
+ const r=new LifecycleRegistry(),appearance={outfit:'stalker_outfit',helmet:'helm_tactic',weapon:'wpn_pm'};
+ r.apply(batch(1,[{...entry(1),appearance}]));
+ assert.deepEqual(r.entries.get(1).appearance,appearance);
+ for(const bad of [{...appearance,ammo:8},{weapon:'../model'},{weapon:'x'.repeat(129)}]){
+   assert.throws(()=>r.apply(batch(2,[{...entry(1),appearance:bad}])));
+   assert.deepEqual(r.entries.get(1).appearance,appearance);
+ }
+ r.apply(batch(2,[entry(1)]));assert.equal(r.entries.get(1).appearance,undefined);
+});

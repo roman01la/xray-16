@@ -17,11 +17,9 @@ add_link_options(${XRAY_WEB_TARGET_FLAGS})
 
 set(CMAKE_EXECUTABLE_SUFFIX ".js")
 
-foreach (lib Ogg::Ogg Vorbis::Vorbis Vorbis::VorbisFile JPEG::JPEG OpenAL::OpenAL)
+foreach (lib Ogg::Ogg Vorbis::Vorbis Vorbis::VorbisFile JPEG::JPEG)
     add_library(${lib} INTERFACE IMPORTED)
 endforeach()
-target_link_options(OpenAL::OpenAL INTERFACE -lopenal)
-target_include_directories(OpenAL::OpenAL INTERFACE "${EMSCRIPTEN_SYSROOT}/include/AL")
 set(JPEG_FOUND TRUE)
 
 include("${CMAKE_CURRENT_LIST_DIR}/XRay.NativeSDL.cmake")
@@ -46,6 +44,7 @@ set(XRAY_WEB_EXECUTABLE_LINK_OPTIONS
     -sDEFAULT_PTHREAD_STACK_SIZE=4MB
     -sMALLOC=mimalloc
     "--js-library=${XRAY_SOURCE_DIR}/misc/web/native-canvas-library.js"
+    "--js-library=${XRAY_SOURCE_DIR}/misc/web/audio-library.js"
     "--js-library=${XRAY_SOURCE_DIR}/misc/web/streaming/library.js"
     "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$GL']"
     -sGL_ENABLE_GET_PROC_ADDRESS=0

@@ -5,7 +5,7 @@ const [path,probePath]=process.argv.slice(2);if(!path||!probePath)throw Error('U
 const m=JSON.parse(await readFile(path)),probe=JSON.parse(await readFile(probePath)),content={geometry:m.sha256,materials:m.materials.sha256};
 const assets={geometry:new Uint8Array(await readFile(join(dirname(path),m.sha256+'.cform'))),materials:new Uint8Array(await readFile(join(dirname(path),m.materials.sha256+'.gamemtl')))};
 const wasm=await readFile(resolve(import.meta.dirname,'../prediction/target/wasm32-unknown-unknown/release/zone_prediction.wasm'));
-const authority=await createWasmMotor(content,assets,wasm),local=await createWasmMotor(content,assets,wasm),reports=[];
+const authority=await createWasmMotor(m.level,content,assets,wasm),local=await createWasmMotor(m.level,content,assets,wasm),reports=[];
 for(const [delay,loss]of [[0,0],[3,.1],[5,.2]]){
  let now=0,seed=42,ack=0,history=[],inputQueue=[],snapshotQueue=[],held={x:0,z:0,sprint:false},lastTick=0,fallbacks=0,maxReplay=0,maxError=0;
  const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};

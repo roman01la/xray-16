@@ -3,6 +3,8 @@ use crate::{
     catalog::{Catalog, Kind},
     combat::{ArmourImpact, ShotTarget},
     inventory::ItemState,
+    survival::ImpactKind,
+    environment::Armour as FieldArmour,
     world::CharacterKey,
 };
 use anyhow::{Context, Result, ensure};
@@ -171,6 +173,10 @@ fn equipped(tx: &Transaction<'_>, character: &CharacterKey, belt: bool) -> Resul
 
 fn wear(tx: &Transaction<'_>, gear: &Gear, state: &mut ItemState, received: f64, factor: f64) -> Result<bool> {
     let condition = (f64::from(state.condition) - received * factor.max(0.0)).clamp(0.0, 1.0) as f32;
+    save_condition(tx, gear, state, condition)
+}
+
+fn save_condition(tx: &Transaction<'_>, gear: &Gear, state: &mut ItemState, condition: f32) -> Result<bool> {
     if condition == state.condition {
         return Ok(false);
     }
@@ -186,24 +192,62 @@ fn wear(tx: &Transaction<'_>, gear: &Gear, state: &mut ItemState, received: f64,
     Ok(true)
 }
 
+pub(crate) fn field_exposure(
+    tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey,
+    pulses: &[crate::environment::Pulse], state: &mut crate::survival::State,
+) -> Result<Option<FieldArmour>> {
+    use crate::environment::{Factors, Protection};
+    let factors = Factors::from_catalog(catalog)?;
+    let mut protection = Protection::default();
+    let mut worn = Vec::new();
+    for gear in equipped(tx, character, true)?.into_iter().flatten() {
+        let (definition, kind) = catalog.item(&gear.section)?;
+        if gear.place.starts_with("belt:") {
+            if kind == Kind::Artefact { protection.add_artefact(catalog, definition)?; }
+        } else {
+            ensure!(matches!(kind, Kind::Outfit | Kind::Helmet), "invalid equipped field armour");
+            let item: ItemState = serde_json::from_str(&gear.raw)?;
+            protection.armour.add(catalog, &gear.section, &item, &gear.place)?;
+            worn.push((gear, item));
+        }
+    }
+    factors.apply_all(state, &mut protection, pulses);
+    let mut gear_changed = false;
+    for (gear, mut item) in worn {
+        let layer = if gear.place == "slot:7" { protection.armour.outfit } else { protection.armour.helmet };
+        gear_changed |= save_condition(tx, &gear, &mut item, layer.condition)?;
+    }
+    if gear_changed { protection.armour.stamp(tx, &character.principal)?; }
+    Ok(gear_changed.then_some(protection.armour))
+}
+
 pub(crate) fn strike(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     target: &ShotTarget,
-    mut power: f64,
+    power: f64,
     penetration: f64,
 ) -> Result<ArmourImpact> {
-    let rows = equipped(tx, &target.character, false)?;
+    strike_for_bone(tx, catalog, &target.character, target.bone, power, penetration)
+}
+
+fn strike_for_bone(
+    tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey, bone: &str,
+    mut power: f64, penetration: f64,
+) -> Result<ArmourImpact> {
+    let rows = equipped(tx, character, false)?;
     if rows.is_empty() {
         return Ok(ArmourImpact::Stale);
     }
 
     let mut wound = true;
     let mut gear_changed = false;
+    let mut field_armour = FieldArmour::default();
     for gear in rows.into_iter().flatten() {
         let mut state: ItemState = serde_json::from_str(&gear.raw)?;
-        let profile = protection(catalog, &gear.section, &state, target.bone)?;
+        let profile = protection(catalog, &gear.section, &state, bone)?;
         if profile.bone.armour < 0.0 {
+            field_armour.add(catalog, &gear.section, &state, &gear.place)?;
             continue;
         }
         let armour = profile.bone.armour * f64::from(state.condition);
@@ -216,29 +260,81 @@ pub(crate) fn strike(
             wound = false;
         }
         gear_changed |= wear(tx, &gear, &mut state, received, profile.wear)?;
+        field_armour.add(catalog, &gear.section, &state, &gear.place)?;
     }
     ensure!(
         (power as f32).is_finite() && power >= 0.0,
         "invalid armoured shot power"
     );
+    if gear_changed {
+        field_armour.stamp(tx, &character.principal)?;
+    }
     Ok(ArmourImpact::Hit {
         power: power as f32,
         wound,
         gear_changed,
+        field_armour: gear_changed.then_some(field_armour),
     })
 }
 
-pub(crate) fn blast(
-    tx: &Transaction<'_>,
-    catalog: &Catalog,
-    character: &CharacterKey,
-    mut power: f64,
+pub(crate) fn impact(
+    tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey,
+    kind: ImpactKind, power: f64, health: f32,
+) -> Result<(ArmourImpact, f32)> {
+    let (impact, immunity, adds_wound) = match kind {
+        // Preserve the existing grenade damage rules.
+        ImpactKind::Blast => return Ok((absorb_hit(tx, catalog, character, power,
+            ("explosion_protection", "explosion_immunity"))?, 0.0)),
+        ImpactKind::Wound => return wound(tx, catalog, character, &[power], health),
+        ImpactKind::Strike => (absorb_hit(tx, catalog, character, power,
+            ("strike_protection", "strike_immunity"))?, "strike_immunity", false),
+        ImpactKind::Bullet { bone, penetration } => (strike_for_bone(tx, catalog, character, &bone,
+            power, f64::from(penetration))?, "fire_wound_immunity", true),
+    };
+    let ArmourImpact::Hit { power, wound, gear_changed, field_armour } = impact else { return Ok((impact, 0.0)); };
+    let (health_factor, power_factor) = actor_hit_factors(catalog, immunity)?;
+    Ok((ArmourImpact::Hit { power: power * health_factor, wound: wound && adds_wound, gear_changed, field_armour },
+        power * power_factor))
+}
+
+fn actor_hit_factors(catalog: &Catalog, hit: &str) -> Result<(f32, f32)> {
+    let actor = catalog.section("mp_actor")?;
+    let condition = catalog.section(actor.text("condition_sect")?)?;
+    let immunity = catalog.section(actor.text("immunities_sect")?)?.number(hit)?;
+    let health = (immunity * condition.number("health_hit_part")?) as f32;
+    let power = (immunity * condition.number("power_hit_part")?) as f32;
+    ensure!((0.0..=100.0).contains(&health) && (0.0..=100.0).contains(&power), "invalid actor hit factors");
+    Ok((health, power))
+}
+
+pub(crate) fn wound(
+    tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey, hits: &[f64], health: f32,
+) -> Result<(ArmourImpact, f32)> {
+    let (health_factor, power_factor) = actor_hit_factors(catalog, "wound_immunity")?;
+    let mut damage = 0.0;
+    let mut power_loss = 0.0;
+    let mut worn = None;
+    for &hit in hits {
+        let impact = absorb_hit(tx, catalog, character, hit, ("wound_protection", "wound_immunity"))?;
+        let ArmourImpact::Hit { power, field_armour, .. } = impact else { return Ok((impact, 0.0)); };
+        damage += power * health_factor;
+        power_loss += power * power_factor;
+        worn = field_armour.or(worn);
+        if damage >= health { break; }
+    }
+    Ok((ArmourImpact::Hit { power: damage, wound: true, gear_changed: worn.is_some(), field_armour: worn }, power_loss))
+}
+
+fn absorb_hit(
+    tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey, mut power: f64,
+    (protection_key, immunity_key): (&str, &str),
 ) -> Result<ArmourImpact> {
     let rows = equipped(tx, character, true)?;
     if rows.is_empty() {
         return Ok(ArmourImpact::Stale);
     }
     let mut gear_changed = false;
+    let mut field_armour = FieldArmour::default();
     for gear in rows.into_iter().flatten() {
         let mut state: ItemState = serde_json::from_str(&gear.raw)?;
         let (base, kind) = catalog.item(&gear.section)?;
@@ -249,30 +345,34 @@ pub(crate) fn blast(
             {
                 // CoP's hit path applies the raw artefact value. Condition
                 // scaling is used by its protection display, not this hit.
-                power -= catalog.section(section)?.number("explosion_immunity")?;
+                power -= catalog.section(section)?.number(immunity_key)?;
             }
             continue;
         }
-        ensure!(matches!(kind, Kind::Outfit | Kind::Helmet), "invalid equipped blast armour");
+        ensure!(matches!(kind, Kind::Outfit | Kind::Helmet), "invalid equipped impact armour");
         let received = power.max(0.0);
-        let protection = catalog.effective_number(&gear.section, &state, "explosion_protection", 0.0)?;
+        let protection = catalog.effective_number(&gear.section, &state, protection_key, 0.0)?;
         power = (received - protection * f64::from(state.condition)).max(0.0);
         let mut factor = 1.0;
         for definition in std::iter::once(base).chain(catalog.upgrade_effects(&gear.section, &state.upgrades)?) {
             if let Some(name) = definition.values.get("immunities_sect").filter(|name| !name.is_empty()) {
-                factor = catalog.section(name)?.number("explosion_immunity")?;
+                factor = catalog.section(name)?.number(immunity_key)?;
             }
             if let Some(name) = definition.values.get("immunities_sect_add").filter(|name| !name.is_empty()) {
                 let extra = catalog.section(name)?;
-                if extra.values.get("explosion_immunity").is_some_and(|value| !value.is_empty()) {
-                    factor += extra.number("explosion_immunity")?;
+                if extra.values.get(immunity_key).is_some_and(|value| !value.is_empty()) {
+                    factor += extra.number(immunity_key)?;
                 }
             }
         }
-        ensure!(factor.is_finite(), "invalid blast armour wear");
+        ensure!(factor.is_finite(), "invalid impact armour wear");
         gear_changed |= wear(tx, &gear, &mut state, received, factor)?;
+        field_armour.add(catalog, &gear.section, &state, &gear.place)?;
     }
     let power = power.max(0.0) as f32;
-    ensure!(power.is_finite(), "invalid protected blast power");
-    Ok(ArmourImpact::Hit { power, wound: true, gear_changed })
+    ensure!(power.is_finite(), "invalid protected impact power");
+    if gear_changed {
+        field_armour.stamp(tx, &character.principal)?;
+    }
+    Ok(ArmourImpact::Hit { power, wound: true, gear_changed, field_armour: gear_changed.then_some(field_armour) })
 }

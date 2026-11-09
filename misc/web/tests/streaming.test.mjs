@@ -152,7 +152,8 @@ test('complete startup installation shares payloads across modes, pins metadata 
     await reader.install(archives(version));
     return reader;
   };
-  const runtime=()=>new ChunkReader({...options,mode:'installed',fetcher:()=>assert.fail('gameplay tried to fetch')});
+  const runtime=()=>new ChunkReader({...options,mode:'installed',
+    fetcher:()=>assert.fail('gameplay tried to fetch'),digest:()=>assert.fail('gameplay tried to rehash a chunk')});
   const first=await install('v1');
   assert.equal(first.stats.networkChunks,3);
   assert.equal(first.stats.downloadedBytes,5);
@@ -174,6 +175,34 @@ test('complete startup installation shares payloads across modes, pins metadata 
   await cacheStorage.stores.get('xray-game-chunks-v1').items.delete(`https://test/.xray-cache/game-chunks/${hash(old)}.bin`);
   await assert.rejects(read(runtime(),archives('v1')[1].url,2),/Reload to repair/);
   await assert.rejects(read(runtime(),archives('unknown')[0].url,1),/metadata is missing/);
+});
+
+test('installed reads use exact disk blob ranges across chunks and bootstrap bundles',async()=>{
+  const a='a'.repeat(64),b='b'.repeat(64),bundle='c'.repeat(64),reads=[],matches=[];
+  const d={format:'xray-archive-v1',size:CHUNK_BYTES+8,chunkBytes:CHUNK_BYTES,chunks:[a,b],
+    bootstrap:[{offset:100,size:5,hash:bundle,chunkOffset:8,chunkSize:20}]};
+  const sizes=new Map([[a,CHUNK_BYTES],[b,8],[bundle,20]]);
+  const makeReader=()=>new ChunkReader({mode:'installed',fetcher:()=>assert.fail('gameplay fetch'),
+    digest:()=>assert.fail('gameplay digest'),cacheStorage:{open:async name=>({match:async key=>{
+      if(name==='xray-game-archives-v1')return Response.json(d);
+      const id=key.split('/').at(-1).slice(0,-4);matches.push(id);
+      return {arrayBuffer:()=>assert.fail('whole chunk materialized'),blob:async()=>({size:sizes.get(id),arrayBuffer:async()=>{
+        assert.equal(id,bundle);reads.push([id,0,sizes.get(id)]);return Uint8Array.from({length:sizes.get(id)},(_,i)=>i).buffer;
+      },slice(start,end){
+        reads.push([id,start,end]);return {arrayBuffer:async()=>new Uint8Array(end-start).fill(id.charCodeAt(0)).buffer};
+      }})};
+    }})}});
+  const reader=makeReader(),out=new Uint8Array(5);
+  assert.equal(await reader.read(url,CHUNK_BYTES-3,5,(bytes,at)=>out.set(bytes,at)),5);
+  assert.deepEqual([...out],[97,97,97,98,98]);
+  assert.equal(await reader.read(url,101,2,bytes=>assert.deepEqual([...bytes],[9,10])),2);
+  assert.equal(await reader.read(url,102,1,bytes=>assert.deepEqual([...bytes],[10])),1);
+  assert.equal(await reader.read(url,CHUNK_BYTES+6,5,bytes=>assert.deepEqual([...bytes],[98,98])),2);
+  assert.deepEqual(reads,[[a,CHUNK_BYTES-3,CHUNK_BYTES],[b,0,2],[bundle,0,20],[b,6,8]]);
+  assert.deepEqual(matches,[a,b,bundle]);
+  assert.equal(reader.hot.size,0);
+  sizes.set(b,7);
+  await assert.rejects(makeReader().read(url,CHUNK_BYTES,1,()=>assert.fail('used wrong size')),/Reload to repair/);
 });
 
 test('a failed startup does not publish archive metadata and resumes verified chunks on retry',async()=>{

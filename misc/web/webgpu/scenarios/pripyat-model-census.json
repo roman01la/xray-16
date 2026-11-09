@@ -1,0 +1,14 @@
+{
+  "name": "stock-pripyat-model-census",
+  "map": "pripyat",
+  "save": "pripyat-transition.scop",
+  "phases": [
+    {
+      "name": "pripyat-online-models",
+      "commands": [],
+      "actorUpdate": true,
+      "lua": "assert(level.name() == 'pripyat')\nlocal models = {}\nlocal objects, with_visual = 0, 0\nlevel.iterate_online_objects(function(object)\n  objects = objects + 1\n  local name = object:get_visual_name()\n  if name and name ~= '' then\n    models[name] = true\n    with_visual = with_visual + 1\n  end\n  return false\nend)\nlocal names, monolith = {}, 0\nfor name in pairs(models) do\n  names[#names + 1] = name\n  if string.find(name, 'monolit', 1, true) then monolith = monolith + 1 end\nend\ntable.sort(names)\nassert(#names > 0 and with_visual >= #names)\nfor _, name in ipairs(names) do log1('SHADER_PRIPYAT_VISUAL ' .. name) end\nlog1(string.format('SHADER_SWEEP CENSUS map=%s objects=%d with_visual=%d models=%d monolith=%d', level.name(), objects, with_visual, #names, monolith))",
+      "expect": ["SHADER_SWEEP CENSUS map=pripyat"]
+    }
+  ]
+}

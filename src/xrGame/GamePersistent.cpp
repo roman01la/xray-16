@@ -24,6 +24,9 @@
 #include "xrUICore/XML/UITextureMaster.h"
 
 #include "ai_space.h"
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+#include "alife_simulator.h"
+#endif
 
 #include "holder_custom.h"
 #include "game_cl_base.h"
@@ -625,6 +628,13 @@ void CGamePersistent::OnFrame()
 
     if (!Device.Paused())
     {
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+        // CoP's A-Life schedule runs slower than the private pose stream.
+        // Refresh that stream before AI sees the actors for this frame.
+        if (g_pGameLevel && g_pGameLevel->bReady && CALifeSwitchManager::host_interests_requested())
+            if (const auto* alife = ai().get_alife())
+                alife->refresh_host_interests(Level());
+#endif
         Engine.Sheduler.Update();
     }
 

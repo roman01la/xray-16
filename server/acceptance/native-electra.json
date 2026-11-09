@@ -1,0 +1,427 @@
+{
+  "date": "2026-11-09",
+  "setup": "Two rendered Chrome WebGPU tabs, optimized local Rust, stock Zaton Electra 255. Seeded starting poses and carried gear. Used the original slot 6, primary fire, alternate fire and movement bindings. Scripted relative pointer input and observed the live AudioWorklet ring without altering the mixer.",
+  "engineWasmSha256": "29d33b2756528ffc37d721f092d440780d19334909838b5fb1f666b1c216321e",
+  "serverSha256": "5ed8f8d3fc75d1a6bda2564af04a26b0943ca65fafc9335f92c9ea70aaa9e2a1",
+  "mineSpawnId": 255,
+  "startingHealth": [
+    100,
+    100
+  ],
+  "quick": {
+    "thrower": {
+      "firstProjectile": [
+        1,
+        [
+          [
+            645,
+            -358.07421875,
+            41.686344146728516,
+            -368.9323425292969
+          ],
+          [
+            648,
+            -360.0741882324219,
+            41.52284240722656,
+            -368.9347229003906
+          ],
+          [
+            651,
+            -362.07415771484375,
+            41.163143157958984,
+            -368.9371032714844
+          ],
+          [
+            654,
+            -364.0741271972656,
+            40.607242584228516,
+            -368.9394836425781
+          ]
+        ]
+      ],
+      "mineCue": [
+        "zone_mine_electric_average",
+        -361.4075622558594,
+        39.97638702392578,
+        -368.6815490722656
+      ],
+      "engine": [
+        "* Zone projectile model: 1 bolt dynamics\\devices\\dev_bolt\\dev_bolt.ogf",
+        "* Zone projectile drawn: 1",
+        "* Zone detonation: zone_mine_electric_average particles=anomaly2\\electra2_blast positional_sound=1 light=1 at [-361.408,39.976,-368.682]"
+      ],
+      "worklet": [
+        {
+          "position": [
+            -361.4075622558594,
+            39.97638702392578,
+            -368.6815490722656
+          ],
+          "gain": 0.3999999761581421,
+          "initialRead": 0,
+          "peakRead": 4939,
+          "peakWrite": 22050
+        }
+      ]
+    },
+    "observer": {
+      "firstProjectile": [
+        1,
+        [
+          [
+            645,
+            -358.07421875,
+            41.686344146728516,
+            -368.9323425292969
+          ],
+          [
+            648,
+            -360.0741882324219,
+            41.52284240722656,
+            -368.9347229003906
+          ],
+          [
+            651,
+            -362.07415771484375,
+            41.163143157958984,
+            -368.9371032714844
+          ],
+          [
+            654,
+            -364.0741271972656,
+            40.607242584228516,
+            -368.9394836425781
+          ]
+        ]
+      ],
+      "mineCue": [
+        "zone_mine_electric_average",
+        -361.4075622558594,
+        39.97638702392578,
+        -368.6815490722656
+      ],
+      "engine": [
+        "* Zone projectile model: 1 bolt dynamics\\devices\\dev_bolt\\dev_bolt.ogf",
+        "* Zone projectile drawn: 1",
+        "* Zone detonation: zone_mine_electric_average particles=anomaly2\\electra2_blast positional_sound=1 light=1 at [-361.408,39.976,-368.682]"
+      ],
+      "worklet": [
+        {
+          "position": [
+            -361.4075622558594,
+            39.97638702392578,
+            -368.6815490722656
+          ],
+          "gain": 0.3999999761581421,
+          "initialRead": 235,
+          "peakRead": 4233,
+          "peakWrite": 17640
+        }
+      ]
+    },
+    "bothPlayersUnharmed": true
+  },
+  "charged": {
+    "metresPerSecondByClient": [
+      [
+        19.99969482421875,
+        18.00018310546875
+      ],
+      [
+        19.99969482421875,
+        18.00018310546875
+      ]
+    ],
+    "seriesLabels": [
+      "quick",
+      "charged"
+    ],
+    "boltPathsByClient": [
+      [
+        [
+          1,
+          [
+            [
+              645,
+              -358.07421875,
+              41.686344146728516,
+              -368.9323425292969
+            ],
+            [
+              648,
+              -360.0741882324219,
+              41.52284240722656,
+              -368.9347229003906
+            ],
+            [
+              651,
+              -362.07415771484375,
+              41.163143157958984,
+              -368.9371032714844
+            ],
+            [
+              654,
+              -364.0741271972656,
+              40.607242584228516,
+              -368.9394836425781
+            ],
+            [
+              657,
+              -365.3918762207031,
+              40.24993896484375,
+              -369.0665283203125
+            ],
+            [
+              660,
+              -365.72906494140625,
+              40.24976348876953,
+              -369.304931640625
+            ]
+          ]
+        ],
+        [
+          2,
+          [
+            [
+              696,
+              -358.007568359375,
+              41.686344146728516,
+              -368.9322814941406
+            ],
+            [
+              699,
+              -359.8075866699219,
+              41.52284240722656,
+              -368.9344787597656
+            ],
+            [
+              702,
+              -361.60760498046875,
+              41.163143157958984,
+              -368.9366760253906
+            ],
+            [
+              705,
+              -363.4076232910156,
+              40.607242584228516,
+              -368.9388732910156
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          1,
+          [
+            [
+              645,
+              -358.07421875,
+              41.686344146728516,
+              -368.9323425292969
+            ],
+            [
+              648,
+              -360.0741882324219,
+              41.52284240722656,
+              -368.9347229003906
+            ],
+            [
+              651,
+              -362.07415771484375,
+              41.163143157958984,
+              -368.9371032714844
+            ],
+            [
+              654,
+              -364.0741271972656,
+              40.607242584228516,
+              -368.9394836425781
+            ],
+            [
+              657,
+              -365.3918762207031,
+              40.24993896484375,
+              -369.0665283203125
+            ],
+            [
+              660,
+              -365.72906494140625,
+              40.24976348876953,
+              -369.304931640625
+            ]
+          ]
+        ],
+        [
+          2,
+          [
+            [
+              696,
+              -358.007568359375,
+              41.686344146728516,
+              -368.9322814941406
+            ],
+            [
+              699,
+              -359.8075866699219,
+              41.52284240722656,
+              -368.9344787597656
+            ],
+            [
+              702,
+              -361.60760498046875,
+              41.163143157958984,
+              -368.9366760253906
+            ],
+            [
+              705,
+              -363.4076232910156,
+              40.607242584228516,
+              -368.9388732910156
+            ]
+          ]
+        ]
+      ]
+    ],
+    "sameCarriedBolt": true
+  },
+  "actorContact": {
+    "entered": {
+      "id": 3,
+      "x": -361.27569580078125,
+      "y": 40.15158462524414,
+      "z": -368.6848449707031,
+      "vx": 4.0008544921875,
+      "vy": 0,
+      "vz": -0.00274658203125,
+      "yaw": 1.5720000267028809,
+      "health": 70,
+      "kind": 1,
+      "flags": 2
+    },
+    "life": 0,
+    "health": 0,
+    "corpseItems": [
+      "device_pda",
+      "wpn_knife",
+      "bandage",
+      "device_torch",
+      "bread",
+      "bolt",
+      "exo_outfit"
+    ],
+    "outfit": "exo_outfit",
+    "outfitCondition": 0.9773332,
+    "blasts": [
+      [
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ],
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ],
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ],
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ]
+      ],
+      [
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ],
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ],
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ],
+        [
+          "zone_mine_electric_average",
+          -361.4075622558594,
+          39.97638702392578,
+          -368.6815490722656
+        ]
+      ]
+    ],
+    "originalItemIdsMatched": true
+  },
+  "fixtureIssues": [
+    "A starting coordinate on a collision seam failed to ground the thrower. Both players started on surveyed ground for the verified run.",
+    "The first charged hold exceeded the stock one-second speed cap. The comparison used a shorter hold.",
+    "A third renderer stalled during startup in the two-tab run. The safe-zone and restart checks used the same saved world in one renderer at a time."
+  ],
+  "screenshots": [
+    "native-electra-before-quick.jpg",
+    "native-electra-quick-throw.jpg",
+    "native-electra-quick-observer.jpg"
+  ],
+  "safe": {
+    "position": [
+      92.19999694824219,
+      -6.994636535644531,
+      189
+    ],
+    "denied": {
+      "method": "fire",
+      "status": "rejected",
+      "reason": "safe_zone"
+    }
+  },
+  "restart": {
+    "boltRetained": true,
+    "selectedSlot": 6,
+    "deathRetained": true,
+    "corpseItems": 7
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      625294
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "stock-travel-pripyat",
+  "map": "zaton",
+  "phases": [
+    {
+      "name": "travel-pripyat",
+      "commands": [
+        "g_god on",
+        "jump_to_level pripyat"
+      ],
+      "expect": [
+        "\\levels\\pripyat\\level.hom"
+      ],
+      "waitForSync": true
+    }
+  ]
+}

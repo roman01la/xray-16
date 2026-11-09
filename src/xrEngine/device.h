@@ -46,6 +46,7 @@ private:
     CTimer_paused Timer;
     CTimer_paused TimerGlobal;
     CTimer TimerMM;
+    bool m_headlessAlifeHost{};
 
     void SetupStates();
 
@@ -197,6 +198,8 @@ public:
 
     void Run();
     void Shutdown();
+    void SetHeadlessAlifeHost(bool enabled) { m_headlessAlifeHost = enabled; }
+    bool IsHeadlessAlifeHost() const { return m_headlessAlifeHost; }
 
     void ProcessEvent(const SDL_Event& event);
     void OnWindowActivate(SDL_Window* window, bool activated);

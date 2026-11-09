@@ -1,8 +1,10 @@
 //! CoP magazine and ammunition-box transactions. The caller owns the durable
 //! request journal and the live character/item revision checks.
 use crate::{
-    catalog::{Catalog, Kind},
-    combat::{ChargedShot, LaunchSpec, MAX_OWNED_RANGE, QueueRound, ShotTarget},
+    ballistics::{Dispersion, MAX_PELLETS, MAX_PENETRATION, RoundProfile, SurfaceProfile},
+    catalog::{Catalog, Kind, Section},
+    alife_attacks::{NativeDamage, NativeHitKind},
+    combat::{ArmourImpact, ChargedShot, FireState, LaunchSpec, MAX_OWNED_RANGE, QueueRound, VolleyImpact},
     inventory::{self, AttachedItem, AttachmentSlot, ItemPayload, ItemState, Move, MoveAction},
 };
 use anyhow::{Context, Result, ensure};
@@ -505,39 +507,146 @@ fn launch_spec(catalog: &Catalog, section: &str, state: &ItemState, round: &str)
     Ok(LaunchSpec {
         section: projectile_section.to_owned(),
         speed: speed as f32,
+        timed: false,
         fuse_ticks: (milliseconds * f64::from(crate::world::TICK_HZ) / 1000.0).ceil() as u32,
         blast_power: power as f32,
         blast_radius: radius as f32,
     })
 }
 
+fn silencer(catalog: &Catalog, section: &str, state: &ItemState, attachments: &[String]) -> Result<(bool, Option<String>)> {
+    let status = catalog.effective_text(section, state, "silencer_status")?;
+    let attached = if status.as_deref() == Some("2") {
+        catalog.effective_text(section, state, "silencer_name")?
+            .filter(|silencer| attachments.contains(silencer))
+    } else {
+        None
+    };
+    Ok((status.as_deref() == Some("1") || attached.is_some(), attached))
+}
+
+fn shot_wear(catalog: &Catalog, section: &str, state: &ItemState, round: &Section, first: bool) -> Result<f64> {
+    let wear = if first {
+        catalog.effective_number(section, state, "condition_shot_dec", 0.0)?
+    } else {
+        let definition = catalog.item(section)?.0;
+        let base = definition.values.get("condition_shot_dec")
+            .map(|_| definition.number("condition_shot_dec")).transpose()?.unwrap_or_default();
+        catalog.effective_number(section, state, "condition_queue_shot_dec", base)?
+    } * round.number("impair")?;
+    ensure!(wear.is_finite() && wear >= 0.0, "invalid shot wear");
+    Ok(wear)
+}
+
+fn dispersion(catalog: &Catalog, section: &str, state: &ItemState, round: &Section, addon: Option<&Section>) -> Result<Dispersion> {
+    let value = |key, default| catalog.effective_number(section, state, key, default);
+    let mut base = value("fire_dispersion_base", 0.0)?.to_radians();
+    if round.values.contains_key("k_disp") { base *= round.number("k_disp")?; }
+    if let Some(addon) = addon.filter(|addon| addon.values.contains_key("fire_dispersion_base_k")) {
+        base *= addon.number("fire_dispersion_base_k")?.clamp(0.0, 1.0);
+    }
+    let condition_factor = value("fire_dispersion_condition_factor", 0.0)?;
+    let cone = |first| -> Result<f32> {
+        let condition = (f64::from(state.condition) - shot_wear(catalog, section, state, round, first)?).clamp(0.0, 1.0);
+        Ok((base * (1.0 + condition_factor * (1.0 - condition))) as f32)
+    };
+    let mut profile = Dispersion { first: cone(true)?, followup: cone(false)?, ..Default::default() };
+    if let Some(actor) = catalog.section("mp_actor").ok().filter(|actor| actor.values.contains_key("disp_base")) {
+        let factor = |actor_key, weapon_key| -> Result<f32> { Ok((actor.number(actor_key)? * value(weapon_key, 1.0)?) as f32) };
+        profile.actor_base = (actor.number("disp_base")?.to_radians() * value("PDM_disp_base", 1.0)?) as f32;
+        if actor.values.contains_key("disp_aim") {
+            profile.actor_aim = actor.number("disp_aim")?.to_radians() as f32;
+        }
+        profile.velocity_factor = factor("disp_vel_factor", "PDM_disp_vel_factor")?;
+        profile.acceleration_factor = factor("disp_accel_factor", "PDM_disp_accel_factor")?;
+        profile.crouch_factor = factor("disp_crouch_factor", "PDM_disp_crouch")?;
+        profile.crouch_still_factor = factor("disp_crouch_no_acc_factor", "PDM_disp_crouch_no_acc")?;
+    }
+    ensure!([profile.first, profile.followup, profile.actor_base, profile.actor_aim, profile.velocity_factor,
+        profile.acceleration_factor, profile.crouch_factor, profile.crouch_still_factor]
+        .into_iter().all(f32::is_finite), "invalid shot dispersion");
+    Ok(profile)
+}
+
+pub(crate) fn round_profile(catalog: &Catalog, section: &str, state: &ItemState, revision: u32) -> Result<Option<RoundProfile>> {
+    // The synthetic inventory fixtures have no engine-wide bullet settings.
+    let Ok(manager) = catalog.section("mp_bullet_manager").or_else(|_| catalog.section("bullet_manager"))
+        else { return Ok(None); };
+    let ItemPayload::Weapon { cartridges, launcher_mode: false, jammed: false, attachments, .. } = &state.payload
+        else { return Ok(None); };
+    let Some(cartridge) = cartridges.last() else { return Ok(None); };
+    let round = catalog.item(cartridge)?.0;
+    if round.text("class")? != "AMMO_S" { return Ok(None); }
+
+    let gravity = manager.number("gravity_const")?;
+    let drag = if round.values.contains_key("k_air_resistance") {
+        round.number("k_air_resistance")?
+    } else {
+        catalog.section("bullet_manager")?.number("air_resistance_k")?
+    } * catalog.effective_number(section, state, "air_resistance_factor", 1.0)?;
+    let mut speed = catalog.effective_number(section, state, "bullet_speed", 0.0)?;
+    let attached = silencer(catalog, section, state, attachments)?.1;
+    let addon = attached.as_deref().map(|name| catalog.item(name).map(|item| item.0)).transpose()?;
+    if let Some(addon) = addon.filter(|addon| addon.values.contains_key("bullet_speed_k")) {
+        speed *= addon.number("bullet_speed_k")?.clamp(0.0, 1.0);
+    }
+    let pellets = if round.values.contains_key("buck_shot") { u8::try_from(round.integer("buck_shot")?)? } else { 1 };
+    ensure!((1..=MAX_PELLETS).contains(&pellets), "invalid pellet count");
+    let spread = dispersion(catalog, section, state, round, addon)?;
+    let setting = |section: &Section, key, default| {
+        if section.values.contains_key(key) { section.number(key) } else { Ok(default) }
+    };
+    let penetration = setting(round, "k_ap", 0.0)?;
+    let energy_min = setting(manager, "collision_energy_min", 0.8)?;
+    let energy_max = setting(manager, "collision_energy_max", 0.5)?;
+    ensure!((0.0..=f64::from(MAX_PENETRATION)).contains(&penetration) && (0.0..=1.0).contains(&energy_min)
+        && (0.0..=1.0).contains(&energy_max), "invalid bullet surface profile");
+    let surface = SurfaceProfile { penetration: penetration as f32,
+        ricochet: round.boolean("allow_ricochet", true)?, magnetic: round.boolean("magnetic_beam_shot", false)?,
+        energy_min: energy_min as f32, energy_max: energy_max as f32 };
+    let range = catalog.effective_number(section, state, "fire_distance", 0.0)? * round.number("k_dist")?;
+    // The original quest Gauss rifle uses 100,000 m/s.
+    ensure!((1.0..=100_000.0).contains(&speed) && (0.0..=10.0).contains(&drag)
+        && (0.0..=100.0).contains(&gravity) && range > 0.0 && range <= f64::from(MAX_OWNED_RANGE),
+        "invalid ballistic profile for {section}/{cartridge}");
+    Ok(Some(RoundProfile { revision, range: range as f32, speed: speed as f32, drag: drag as f32, gravity: gravity as f32, pellets, spread, surface }))
+}
+
 /// A reliable, sequenced trigger is submitted once by the live session. This
-/// transaction owns the round and weapon wear before combat can apply damage.
+/// transaction owns the round, weapon wear and any durable hit.
 pub(crate) fn debit_shot(
     tx: &Transaction<'_>,
-    principal: &str,
-    life: u32,
+    shooter: &inventory::Context,
     item: &str,
     catalog: &Catalog,
-    target: Option<&ShotTarget>,
-    queue_index: Option<u32>,
+    targets: Vec<crate::survival::FireVictim>,
+    FireState { queue_index, traced }: FireState,
+    rules: Option<&crate::survival_rules::SurvivalRules>,
 ) -> Result<Value> {
+    let principal = &shooter.principal;
     let reject = |reason| Ok(json!({"status":"rejected","reason":reason}));
-    let equipped: Option<(String, String, u32)> = tx
+    let equipped: Option<(String, String, u32, String)> = tx
         .query_row(
-            "SELECT i.section,i.state,i.revision FROM inventory_items i
+            "SELECT i.section,i.state,i.revision,i.place FROM inventory_items i
          JOIN item_containers c ON c.id=i.container
          JOIN inventory_characters a ON a.principal=c.owner
          WHERE i.id=?1 AND c.owner=?2 AND c.kind='carried'
            AND i.place IN('slot:2','slot:3') AND a.life=?3 AND a.alive=1",
-            params![item, principal, life],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            params![item, principal, shooter.life],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
-    let Some((section, raw, revision)) = equipped else {
+    let Some((section, raw, revision, place)) = equipped else {
         return reject("weapon_not_equipped");
     };
+    match (crate::inventory::active_weapon_slot(tx, principal)?, place.as_str()) {
+        (2, "slot:2") | (3, "slot:3") => {}
+        _ => return reject("weapon_not_drawn"),
+    }
     let mut state: ItemState = serde_json::from_str(&raw)?;
+    if traced != round_profile(catalog, &section, &state, revision)? {
+        return reject("stale_ballistics");
+    }
     let ItemPayload::Weapon {
         cartridges,
         launcher_cartridges,
@@ -567,9 +676,9 @@ pub(crate) fn debit_shot(
         let ItemPayload::Weapon { launcher_cartridges, .. } = &mut state.payload else { unreachable!() };
         launcher_cartridges.pop();
         save_weapon(tx, item, revision, next, &state)?;
-        return Ok(json!({"shot":ChargedShot {
-            ammo: 0, range: 0.0, damage: 0, interval: 1, mass_spent,
-            queue: None, armour: None, launcher: Some(spec),
+        return Ok(json!({"effect":(section, 2), "shot":ChargedShot {
+            ammo: 0, range: 0.0, damage: 0, interval: 1, mass_spent, power_loss: 0.0,
+            queue: None, armour: None, target_commit: None, launcher: Some(spec), native_damage: None,
         }}));
     }
     if *jammed {
@@ -600,7 +709,7 @@ pub(crate) fn debit_shot(
         };
         *jammed = true;
         save_weapon(tx, item, revision, next, &state)?;
-        return reject("misfire");
+        return Ok(json!({"status":"rejected","reason":"misfire","ballistics":null}));
     }
     let mass_spent = catalog.round_weight(cartridge)?;
     let (definition, _) = catalog.item(&section)?;
@@ -628,25 +737,23 @@ pub(crate) fn debit_shot(
         .trim_end_matches(['f', 'F'])
         .parse()?;
     let mut power = master * round.number("k_hit")?;
-    if catalog
-        .effective_text(&section, &state, "silencer_status")?
-        .as_deref()
-        == Some("2")
-        && let Some(silencer) = catalog.effective_text(&section, &state, "silencer_name")?
-        && attachments.contains(&silencer)
-    {
+    let multiplier = |key: &str| -> Result<f64> {
+        if round.values.contains_key(key) { round.number(key) } else { Ok(1.0) }
+    };
+    let mut impulse = catalog.effective_number(&section, &state, "hit_impulse", 0.0)? * multiplier("k_impulse")?;
+    let penetration = round.values.get("k_ap").map(|_| round.number("k_ap")).transpose()?.unwrap_or_default();
+    ensure!((0.0..=f64::from(MAX_PENETRATION)).contains(&penetration), "invalid cartridge penetration");
+    let (suppressed, attached_silencer) = silencer(catalog, &section, &state, attachments)?;
+    if let Some(silencer) = attached_silencer {
         let definition = catalog.item(&silencer)?.0;
         if definition.values.contains_key("bullet_hit_power_k") {
             power *= definition.number("bullet_hit_power_k")?.clamp(0.0, 1.0);
         }
+        if definition.values.contains_key("bullet_hit_impulse_k") {
+            impulse *= definition.number("bullet_hit_impulse_k")?.clamp(0.0, 1.0);
+        }
     }
-    let wear = if index == 0 {
-        catalog.effective_number(&section, &state, "condition_shot_dec", 0.0)?
-    } else {
-        let base = definition.values.get("condition_shot_dec")
-            .map(|_| definition.number("condition_shot_dec")).transpose()?.unwrap_or_default();
-        catalog.effective_number(&section, &state, "condition_queue_shot_dec", base)?
-    } * round.number("impair")?;
+    let wear = shot_wear(catalog, &section, &state, round, index == 0)?;
     let ticks = f64::from(crate::world::TICK_HZ) * 60.0 / rpm;
     let interval = ticks.ceil();
     ensure!(
@@ -661,12 +768,6 @@ pub(crate) fn debit_shot(
         power.is_finite() && power >= 0.0 && wear.is_finite() && wear >= 0.0,
         "invalid shot power or wear"
     );
-    let armour = target.filter(|target| target.distance <= range as f32).map(|target| {
-        ensure!(target.character.principal != principal, "self-hit is not a valid shot target");
-        let penetration = round.number("k_ap")?;
-        ensure!(penetration >= 0.0, "invalid cartridge penetration");
-        crate::armour::strike(tx, catalog, target, power, penetration)
-    }).transpose()?;
     let ItemPayload::Weapon { cartridges, .. } = &mut state.payload else {
         unreachable!()
     };
@@ -674,14 +775,106 @@ pub(crate) fn debit_shot(
     let ammo = u16::try_from(cartridges.len())?;
     state.condition = (f64::from(state.condition) - wear).clamp(0.0, 1.0) as f32;
     save_weapon(tx, item, revision, next, &state)?;
-    Ok(json!({"shot":ChargedShot {
+    let mut volley = None;
+    let (armour, target_commit) = if traced.is_some_and(|profile| profile.pellets > 1) {
+        let mut impacts = Vec::with_capacity(targets.len());
+        for target in targets {
+            impacts.push(commit_volley(tx, catalog, shooter, target, rules, (power, penetration, range as f32))?);
+        }
+        volley = Some(impacts);
+        (None, None)
+    } else if let Some(victim) = targets.into_iter().next().map(|v| v.authority).filter(|v| v.target.distance <= range as f32) {
+        let (impact, commit, _) = commit_shot_hit(tx, shooter, victim, rules,
+            |target, _| Ok((crate::armour::strike(tx, catalog, target,
+                power * f64::from(target.speed_factor), target.penetration.map_or(penetration, f64::from))?, 0.0)))?;
+        (Some(impact), commit)
+    } else { (None, None) };
+    let ballistics = round_profile(catalog, &section, &state, next)?;
+    Ok(json!({"effect":(section, u8::from(suppressed)), "ballistics":ballistics, "volley":volley, "shot":ChargedShot {
         ammo,
         range: range as f32,
         damage: (power * 100.0).round().clamp(0.0, f64::from(u16::MAX)) as u16,
         interval: interval as u32,
         mass_spent,
+        power_loss: 0.0,
         queue: queue_index.map(|_| QueueRound { limit, ticks }),
         armour,
+        target_commit,
         launcher: None,
+        native_damage: Some(NativeDamage { kind: NativeHitKind::Bullet, power: [power as f32, 0.0, 0.0],
+            penetration: penetration as f32, impulse: impulse as f32 }),
     }}))
+}
+
+fn commit_volley(tx: &Transaction<'_>, catalog: &Catalog, shooter: &inventory::Context, volley: crate::survival::FireVictim,
+    rules: Option<&crate::survival_rules::SurvivalRules>, (power, penetration, range): (f64, f64, f32)) -> Result<Option<VolleyImpact>>
+{
+    use crate::survival::{self, ShotVictim};
+    if !shot_current(tx, shooter, &volley.authority)? { return Ok(None); }
+    let ShotVictim { target, context, mut before, mut location, shooter_location, combat_lock_ms } = volley.authority;
+    let mut applied_pellets = 0;
+    let mut damaged = false;
+    let mut field_armour = None;
+    for pellet in std::iter::once(target).chain(volley.additional).filter(|pellet| pellet.distance <= range) {
+        let impact = crate::armour::strike(tx, catalog, &pellet, power * f64::from(pellet.speed_factor),
+            pellet.penetration.map_or(penetration, f64::from))?;
+        let ArmourImpact::Hit { power, wound, field_armour: updated, .. } = impact else {
+            anyhow::bail!("volley victim changed inside its transaction");
+        };
+        if updated.is_some() { field_armour = updated; }
+        before.state.apply_hit(power, wound);
+        applied_pellets += 1;
+        damaged |= power > 0.0;
+        if before.state.health == 0.0 { break; }
+    }
+    if applied_pellets == 0 { return Ok(None); }
+    let deadline = survival::impact_deadline(if damaged { 1.0 } else { 0.0 }, combat_lock_ms)?;
+    location.combat_until_ms = location.combat_until_ms.max(deadline);
+    let (health, bleeding) = (before.state.health, before.state.bleeding);
+    let commit = survival::commit_condition_change(tx, &context, rules, before, location)?;
+    save_shooter_lock(tx, shooter, shooter_location, deadline)?;
+    Ok(Some(VolleyImpact { applied_pellets, damaged, health, bleeding, field_armour, commit }))
+}
+
+fn shot_current(tx: &Transaction<'_>, shooter: &inventory::Context, victim: &crate::survival::ShotVictim) -> Result<bool> {
+    use crate::survival::{self, ShotVictim};
+    let ShotVictim { target, context, before, location, shooter_location, .. } = victim;
+    ensure!(context.principal != shooter.principal && context.principal == target.character.principal
+        && context.life == target.character.life && context.world == shooter.world
+        && context.auth_epoch == shooter.auth_epoch && location.world == shooter.world
+        && shooter_location.world == shooter.world && location.content_revision == shooter_location.content_revision,
+        "invalid shot authority");
+    let visit = crate::travel::authority(tx, &context.principal)?;
+    Ok(visit.as_ref().map_or(context.visit == 0, |visit| visit.visit == context.visit && visit.world == context.world)
+        && survival::impact_current(tx, context, before)?)
+}
+
+fn save_shooter_lock(tx: &Transaction<'_>, shooter: &inventory::Context, mut location: crate::survival::Location, deadline: i64) -> Result<()> {
+    if deadline != 0 {
+        location.combat_until_ms = location.combat_until_ms.max(deadline);
+        ensure!(tx.execute("UPDATE inventory_characters SET location=?1 WHERE principal=?2 AND life=?3 AND alive=1",
+            params![serde_json::to_string(&location)?, shooter.principal, shooter.life])? == 1,
+            "shooter changed during impact");
+    }
+    Ok(())
+}
+
+pub(crate) fn commit_shot_hit(
+    tx: &Transaction<'_>, shooter: &inventory::Context,
+    victim: crate::survival::ShotVictim,
+    rules: Option<&crate::survival_rules::SurvivalRules>,
+    resolve: impl FnOnce(&crate::combat::ShotTarget, &crate::survival::State) -> Result<(ArmourImpact, f32)>,
+) -> Result<(ArmourImpact, Option<crate::survival::ImpactCommit>, f32)> {
+    use crate::survival::{self, ShotVictim};
+    if !shot_current(tx, shooter, &victim)? {
+        return Ok((ArmourImpact::Stale, None, 0.0));
+    }
+    let ShotVictim { target, context, mut before, location, shooter_location, combat_lock_ms } = victim;
+    let (impact, power_loss) = resolve(&target, &before.state)?;
+    let ArmourImpact::Hit { power, wound, .. } = impact else { return Ok((impact, None, 0.0)); };
+    let deadline = survival::impact_deadline(power, combat_lock_ms)?;
+    before.state.power = (before.state.power - power_loss).max(0.0);
+    let commit = survival::commit_impact(tx, &context, rules, before, location, (power, wound), deadline)?;
+    save_shooter_lock(tx, shooter, shooter_location, deadline)?;
+    Ok((impact, Some(commit), power_loss))
 }

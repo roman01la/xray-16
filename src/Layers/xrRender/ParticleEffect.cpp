@@ -647,7 +647,8 @@ void CParticleEffect::Render(CBackend& cmd_list, float, bool use_fast_geo)
 
 #ifdef USE_OGL
     // Due to the big impact on performance
-    const float distSQ = Device.vCameraPosition.distance_to_sqr(m_InitialPosition) + EPS;
+    const auto& origin = m_RT_Flags.is(flRT_XFORM) ? m_XFORM.c : m_InitialPosition;
+    const float distSQ = Device.vCameraPosition.distance_to_sqr(origin) + EPS;
     if (distSQ > _sqr(100.f*psVisDistance))
         return;
 #endif

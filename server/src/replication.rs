@@ -8,14 +8,14 @@ use std::collections::VecDeque;
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Record {
     id: u32,
-    bytes: [u8; 37],
+    bytes: [u8; 43],
     len: usize,
 }
 impl Record {
     fn new(id: u32, kind: u8) -> Self {
         let mut r = Self {
             id,
-            bytes: [0; 37],
+            bytes: [0; 43],
             len: 0,
         };
         r.extend([kind]);
@@ -80,7 +80,8 @@ fn record(e: &SnapshotEntity, local: bool) -> Record {
         && [e.velocity.x, e.velocity.y, e.velocity.z]
             .iter()
             .all(|v| v.is_finite() && v.abs() < 327.);
-    let mut b = Record::new(e.id, if compact { 1 } else { 2 });
+    let kind = if compact { 1 } else { 2 } + if e.native_motion.is_some() { 2 } else { 0 };
+    let mut b = Record::new(e.id, kind);
     if compact {
         for v in [e.position.x, e.position.y, e.position.z] {
             i24(&mut b, v);
@@ -106,6 +107,10 @@ fn record(e: &SnapshotEntity, local: bool) -> Record {
     }
     b.extend(e.health.to_le_bytes());
     b.extend([e.kind, e.flags]);
+    if let Some(motion) = e.native_motion {
+        b.extend(motion.id.to_le_bytes());
+        b.extend(motion.time_ms.to_le_bytes());
+    }
     b
 }
 impl Replicator {
@@ -265,6 +270,7 @@ mod tests {
             health: 100,
             kind: 1,
             flags: 0,
+            native_motion: None,
         }
     }
     #[test]

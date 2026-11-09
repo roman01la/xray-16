@@ -1,7 +1,7 @@
 const params=new URLSearchParams(location.search),multiplayer=params.get('play')==='multiplayer';
 function selectMode(mode){
  const url=new URL(location.href);url.searchParams.delete('save');url.searchParams.delete('autostart');
- if(mode==='multiplayer'){url.searchParams.set('play',mode);url.searchParams.set('map','zaton');url.searchParams.set('slot','public');}
+ if(mode==='multiplayer'){url.searchParams.set('play',mode);url.searchParams.delete('map');url.searchParams.set('slot','public');}
  else {for(const key of ['play','map','slot'])url.searchParams.delete(key);}
  location.assign(url.href);
 }

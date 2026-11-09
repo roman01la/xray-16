@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-08",
+  "environment": "Optimized Rust server, native Apple ARM64 OpenXRay with Cocoa, original Call of Pripyat Zaton archives and a disposable survival database",
+  "socketDrill": {
+    "maximumPositionsVerified": 512,
+    "separatedInterestCoverage": true,
+    "onlineDistanceMetres": 135,
+    "offlineDistanceMetres": 165,
+    "malformedAndWrongLevelRejected": true,
+    "emptySnapshotClearsInterests": true,
+    "expiryMillis": 1200
+  },
+  "stockZaton": {
+    "webrtcPeers": 2,
+    "restoredPoseSeparationMetres": 444.26,
+    "initial": {"gameMs": 3070, "interests": 0, "livingOnline": 0, "livingOffline": 379},
+    "firstWithPlayers": {"gameMs": 4086, "interests": 2, "livingOnline": 4, "livingOffline": 396},
+    "lastWithPlayers": {"gameMs": 36167, "interests": 2, "livingOnline": 11, "livingOffline": 446},
+    "afterFeedExpiry": {"gameMs": 38171, "interests": 0, "livingOnline": 7, "livingOffline": 450},
+    "livingRuntimeCreaturesWithinOnlineRangeOfFirstPeer": 4,
+    "livingRuntimeCreaturesWithinOnlineRangeOfSecondPeer": 0,
+    "livingRuntimeCreaturesAfterExpiry": 0,
+    "creaturesMovingOverOneMetre": 3,
+    "maximumDisplacementMetres": 33.88,
+    "hostAudio": "OpenAL initialized at zero volume. A prior run with -nosound stalled in the controller sound path.",
+    "playableEncounter": "Open"
+  },
+  "nativeNoSoundRegression": {
+    "originalFailure": "Controller sound playback was stuck when the no-audio backend returned invalid sound references.",
+    "fix": "Exclude failed ref_sound::create results from NPC sound collections.",
+    "optimizedRebuildPassed": true,
+    "stockZatonSynchronized": true,
+    "observedActiveRendering": true,
+    "firstWithPlayers": {"gameMs": 5373, "interests": 2, "livingOnline": 3, "livingOffline": 395},
+    "subsequentSamples": "No later snapshot captured in the no-audio trial."
+  },
+  "rustTestsPassed": 124,
+  "unifiedBrowserReleaseBuild": "Built, staged and loader audited"
+}

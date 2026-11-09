@@ -7,10 +7,18 @@
     "logoutSeconds": 8,
     "combatLockSeconds": 60,
     "sameActorOnReconnect": true,
-    "positionOnReconnect": [-313.685791, 17.669968, 564.080688],
+    "positionOnReconnect": [
+      -313.685791,
+      17.669968,
+      564.080688
+    ],
     "movementAcceptedAfterReconnect": true,
     "healthAfterOutsideHit": 20,
-    "positionInsideSafeZone": [-299.118530, 17.744230, 563.973572],
+    "positionInsideSafeZone": [
+      -299.11853,
+      17.74423,
+      563.973572
+    ],
     "protectionFlagInsideWhileLocked": false,
     "firingFromInsideRejected": "safe_zone",
     "healthAfterShotWhileOffline": 0,
@@ -23,15 +31,387 @@
     "serverSha256": "29aaab8d68f18fe7d4d3bcd00c1ff8c5fbc28fe4ce3a69a89bd8dd7a159534e0",
     "logoutSeconds": 60,
     "combatLockSeconds": 60,
-    "restoredOfflineBodyPosition": [-299.115662, 17.742594, 563.973450],
+    "restoredOfflineBodyPosition": [
+      -299.115662,
+      17.742594,
+      563.97345
+    ],
     "restoredBodyHealthAtShot": 13,
     "restoredBodyProtectionFlag": false,
     "shotKilledOfflineBody": true,
     "corpse": "9aa74c9f9c821e5230ef9f8cfa986fc9",
     "corpseCarriedItems": 6,
-    "nativeReconnect": {"life": 0, "alive": false, "items": 0},
-    "nativeEnterRespawn": {"life": 1, "alive": true, "items": 6}
+    "nativeReconnect": {
+      "life": 0,
+      "alive": false,
+      "items": 0
+    },
+    "nativeEnterRespawn": {
+      "life": 1,
+      "alive": true,
+      "items": 6
+    }
   },
   "nativeWasmSha256": "ac44ed5bbd266169b82ec3f09124c04b95e64a291b557f43fc307998492fdf8a",
-  "screenshots": ["native-logout-dead.jpg", "native-logout-respawn.jpg"]
+  "screenshots": [
+    "native-logout-dead.jpg",
+    "native-logout-respawn.jpg"
+  ],
+  "authoredSkadovsk": {
+    "date": "2026-11-09",
+    "setup": "Two isolated Chrome WebGPU processes and an optimized local Rust server on stock Zaton. The harness seeded players and weapons by the western boundary. Original W, Mouse1 and Enter bindings drove the test, with scripted relative pointer aim.",
+    "combatLockSeconds": 11,
+    "logoutVulnerabilitySeconds": 55,
+    "respawnDelaySeconds": 2,
+    "restrictor": "zat_a2_sr_noweap",
+    "boundaryX": 90.38176727294922,
+    "reviewedVolumesByLevel": {
+      "zaton": 4,
+      "jupiter": 3,
+      "pripyat": 1
+    },
+    "checks": {
+      "lockedEntry": {
+        "startA": {
+          "id": 1,
+          "x": 84.38200378417969,
+          "y": -6.990001678466797,
+          "z": 189,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 100,
+          "kind": 1,
+          "flags": 2
+        },
+        "startB": {
+          "id": 2,
+          "x": 88.88200378417969,
+          "y": -6.991441249847412,
+          "z": 189,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 100,
+          "kind": 1,
+          "flags": 2
+        },
+        "initial": {
+          "ammo": 7,
+          "health": 78,
+          "status": "hit",
+          "target": 2
+        },
+        "entered": {
+          "id": 2,
+          "x": 92.33399963378906,
+          "y": -6.9946136474609375,
+          "z": 188.9575653076172,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 1.5720000267028809,
+          "health": 78,
+          "kind": 1,
+          "flags": 2
+        },
+        "denied": {
+          "reason": "safe_zone",
+          "status": "rejected"
+        },
+        "second": {
+          "ammo": 6,
+          "health": 55,
+          "status": "hit",
+          "target": 2
+        },
+        "defenderRounds": 8
+      },
+      "protectedLogout": {
+        "protectedB": {
+          "id": 2,
+          "x": 92.33399963378906,
+          "y": -6.9946136474609375,
+          "z": 188.9575653076172,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 4.7191853523254395,
+          "health": 55,
+          "kind": 1,
+          "flags": 3
+        },
+        "protectedShot": {
+          "ammo": 5,
+          "status": "protected"
+        },
+        "postProtected": {
+          "id": 2,
+          "x": 92.33399963378906,
+          "y": -6.9946136474609375,
+          "z": 188.9575653076172,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 4.7191853523254395,
+          "health": 55,
+          "kind": 1,
+          "flags": 3
+        },
+        "protectedDelay": 210
+      },
+      "sameBody": {
+        "fresh": {
+          "id": 3,
+          "x": 92.33399963378906,
+          "y": -6.9946136474609375,
+          "z": 188.9575653076172,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 55,
+          "kind": 1,
+          "flags": 3
+        },
+        "outside": {
+          "id": 3,
+          "x": 88.09491729736328,
+          "y": -6.965066432952881,
+          "z": 188.91453552246094,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 4.711185455322266,
+          "health": 55,
+          "kind": 1,
+          "flags": 2
+        },
+        "same": {
+          "id": 3,
+          "x": 88.09491729736328,
+          "y": -6.965066432952881,
+          "z": 188.91453552246094,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 54,
+          "kind": 1,
+          "flags": 2
+        }
+      },
+      "expired": {
+        "visible": {
+          "id": 3,
+          "x": 88.09,
+          "y": -6.97,
+          "z": 188.91,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 54,
+          "kind": 1,
+          "flags": 2
+        },
+        "delayMs": 55025
+      },
+      "deathOffline": {
+        "beforeRestart": {
+          "id": 4,
+          "x": 88.09491729736328,
+          "y": -6.965066432952881,
+          "z": 188.91453552246094,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 50,
+          "kind": 1,
+          "flags": 2
+        },
+        "restoredA": {
+          "id": 1,
+          "x": 84.38200378417969,
+          "y": -6.990001678466797,
+          "z": 189,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 100,
+          "kind": 1,
+          "flags": 2
+        },
+        "restoredB": {
+          "id": 2,
+          "x": 88.09,
+          "y": -6.97,
+          "z": 188.91,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "health": 49,
+          "kind": 1,
+          "flags": 2
+        },
+        "killingShots": [
+          {
+            "ammo": 4,
+            "health": 25,
+            "status": "hit",
+            "target": 2
+          },
+          {
+            "ammo": 3,
+            "health": 2,
+            "status": "hit",
+            "target": 2
+          },
+          {
+            "ammo": 2,
+            "health": 0,
+            "status": "hit",
+            "target": 2
+          }
+        ]
+      },
+      "recovered": {
+        "dead": {
+          "life": 0,
+          "items": 0
+        },
+        "respawn": {
+          "life": 1,
+          "items": 6
+        },
+        "validationErrors": [
+          0,
+          0
+        ]
+      }
+    },
+    "persisted": {
+      "corpseCount": 1,
+      "corpseItems": 8,
+      "newLife": 1,
+      "newCarriedItems": 6
+    },
+    "cameraNote": "The rendered client initializes heading to zero when reopening the game. Actor ID, position, inventory and condition were verified independently of camera heading.",
+    "rustTestsPassed": 144,
+    "sha256": {
+      "server": "528dc9f7edd896fd5dc518a590999ed977cb963655692bea6f6b11e0efe8ec5c",
+      "browserWasm": "f742bd4b84acc81af4a910adfc527b82f74f8083c728067e16bf452a42ec24ed",
+      "zoneExport": "ce7f780a93013cc4075b7f7419168c2cf7aa4d27790e8856afd5dc44c1238483",
+      "protectedInside": "75ab2b4fdd76dfa0e7d2a16d81991156a196fcc26f2a315db620f31ed43877ed",
+      "offlineDeath": "18f97afebb8ecf2beee5e46a7627ac4d8997833774bf393b16c67737de277098"
+    }
+  },
+  "savedFacingRecheck": {
+    "date": "2026-11-09",
+    "setup": "The optimized unified build ran in two warm Chrome WebGPU processes on stock Zaton. The harness seeded the starting pose, then used the original W and first-person mouse input to move and change heading.",
+    "initialSnapshot": {
+      "actor": 2,
+      "position": [
+        92.19999694824219,
+        -6.994636535644531,
+        189
+      ],
+      "serverYaw": 4.75,
+      "engineYaw": -1.5331854820251465,
+      "firstPacketYaw": 4.75,
+      "crouched": true
+    },
+    "protectedReconnect": {
+      "previousId": 2,
+      "previousYaw": 5.230000019073486,
+      "result": {
+        "actor": 3,
+        "position": [
+          92.19999694824219,
+          -6.994636535644531,
+          189
+        ],
+        "serverYaw": 5.230000019073486,
+        "engineYaw": -1.0531854629516602,
+        "firstPacketYaw": 5.230000019073486,
+        "crouched": true
+      }
+    },
+    "vulnerableReconnect": {
+      "previousId": 3,
+      "offlineYaw": 2.190016156294383,
+      "result": {
+        "actor": 3,
+        "position": [
+          88.558837890625,
+          -6.982708930969238,
+          188.96475219726562
+        ],
+        "serverYaw": 2.190000057220459,
+        "engineYaw": 2.190000057220459,
+        "firstPacketYaw": 2.190000057220459,
+        "crouched": true
+      }
+    },
+    "restartReconnect": {
+      "previousYaw": 3.309999942779541,
+      "offlineYaw": -2.9732331241942527,
+      "result": {
+        "actor": 2,
+        "position": [
+          88.558837890625,
+          -6.982708930969238,
+          188.96475219726562
+        ],
+        "serverYaw": 3.309999942779541,
+        "engineYaw": -2.9731855392456055,
+        "firstPacketYaw": 3.309999942779541,
+        "crouched": true
+      }
+    },
+    "sameBinarySinglePlayer": {
+      "singlePlayer": true,
+      "multiplayerRequests": 0,
+      "saveAndReload": true,
+      "saveInput": "quicksave",
+      "keyEvents": [
+        {
+          "code": "F5",
+          "focused": "canvas",
+          "locked": "canvas"
+        },
+        {
+          "code": "F5",
+          "focused": "canvas",
+          "locked": "canvas"
+        },
+        {
+          "code": "F9",
+          "focused": "canvas",
+          "locked": "canvas"
+        }
+      ],
+      "saveBytes": [
+        626210
+      ],
+      "archiveChunkRequests": 0,
+      "rendering": "WebGPU",
+      "validationErrors": 0
+    },
+    "webgpuValidationErrors": [
+      0,
+      0
+    ],
+    "browserTestsPassed": 214,
+    "sha256": {
+      "wasm": "27d174d83f22b16a5430b3b2369b7e47e9551589648e2a0a814c0dfbfa0876ee",
+      "server": "528dc9f7edd896fd5dc518a590999ed977cb963655692bea6f6b11e0efe8ec5c",
+      "restoredSessionScreenshot": "fc6100e56cd043b6b256b1002f04ae2036c506e113c285240fb1ae0d2e28eefd"
+    }
+  }
 }

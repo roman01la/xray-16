@@ -1,0 +1,107 @@
+{
+  "date": "2026-11-08",
+  "environment": "Optimized macOS ARM64 CoP host, Rust release server with SQLite schema 21, and two Chrome WebGPU clients on loopback Zaton",
+  "setup": {
+    "nativeNpc": "sim_default_stalker_2",
+    "nativeNpcId": 12288,
+    "death": "A disposable Lua fixture spawned a stock generic stalker and delivered a controlled stock hit. CoP ran its original death callback and loot manager.",
+    "browserInput": "The harness used the regular ZoneClient WebRTC corpse search and pickup actions."
+  },
+  "results": {
+    "bothBrowsersSawSameCorpseAndInventory": true,
+    "initialItems": 11,
+    "contestedSection": "wpn_lr300",
+    "condition": 0.57,
+    "ammunitionSection": "ammo_5.56x45_ss190",
+    "loadedRounds": 30,
+    "fireModeSelector": 3,
+    "contest": ["committed", "rejected"],
+    "winnerKeptTheSameItemAndStateAfterRustRestart": true,
+    "otherClientDidNotReceiveTheRifle": true,
+    "corpseSearchAfterRestartReturnedRemainingItems": 10,
+    "webgpuValidationErrorsAfterRestart": [0, 0],
+    "chunkDownloadsAfterRestart": 0,
+    "rustTestsPassed": 131
+  },
+  "privateSocketTest": {
+    "acknowledgedOnlyAfterSqliteCommit": true,
+    "replayedSameDeathAfterRustRestart": true,
+    "oneCorpseAndOneRifleAfterReplay": true
+  },
+  "earlierRuns": [
+    "The native engine waited at its startup prompt. The next run used the existing prompt-free local host configuration.",
+    "Both browsers discovered a 14-item corpse but the interaction ray hit terrain above the native ragdoll root. The short floor correction raised the sample anchor from 2.869 m to 3.366 m and cleared the same ray.",
+    "Both browsers read the 11-item corpse and submitted their pickup. The first post-contest read returned no item page. Durable outcomes recorded one winner, and both clients verified the resulting inventories after restarting Rust."
+  ],
+  "remaining": [
+    "Single-item UI contention and the emptied body appearance",
+    "Production rollout and multi-map ownership"
+  ],
+  "originalCorpseUi": {
+    "date": "2026-11-09",
+    "scope": "Optimized unified Chrome WebGPU and release Rust on stock Zaton with the native A-Life host. A disposable fixture spawned a stock armed stalker. Two rendered engines saw it killed by the original knife alternate-fire input. The protected looter aimed at the published corpse using scripted relative browser motion.",
+    "sourceId": "cf0d5d19dc5a614982c1b75df904c120",
+    "sharedDeathTick": 744,
+    "controls": [
+      "F Use",
+      "X Take All"
+    ],
+    "itemsTransferred": 11,
+    "itemSections": [
+      "ammo_11.43x23_fmj",
+      "ammo_5.56x45_ss190",
+      "antirad",
+      "bandage",
+      "bolt",
+      "bread",
+      "bread",
+      "grenade_rgd5",
+      "grenade_rgd5",
+      "wpn_colt1911",
+      "wpn_l85"
+    ],
+    "allItemIdsAndStatePreserved": true,
+    "oneRevisionIncrementPerItem": true,
+    "corpseContentsRemaining": 0,
+    "otherPlayerReceivedNone": true,
+    "reconnect": {
+      "renderedReconnect": true,
+      "sameOwner": true,
+      "sameItemIdsAndStates": 11,
+      "webgpuValidationErrors": 0
+    },
+    "sqliteVerifiedAfterRestart": true,
+    "wasmSha256": "3813c7cca4ca3819cadab9e1563398427bca5d4f07071296307ec10d5e39ae3b",
+    "scopeNotes": "The browser used the stock Take All keyboard shortcut. The separate earlier test covered simultaneous contention through WebRTC. This run did not race two original UI clicks. A headless focus change logged a pointer-lock warning. F and X both reached the original UI."
+  },
+  "originalCorpseUiRace": {
+    "date": "2026-11-09",
+    "scope": "Two separate optimized Chrome processes with the first-person weapon HUD, local release Rust and the native A-Life host on stock Zaton. A disposable fixture spawned a stock armed stalker. Both engines saw the same gameplay knife kill and opened the corpse with the original Use key. A used the first-person knife HUD. The harness supplied relative aiming.",
+    "sourceId": "e6d79da2169caea8dd1f1ca9ee9508a3",
+    "sharedDeathTick": 658,
+    "bothSubmittedEveryItemViaTakeAll": true,
+    "takeAllRequestDeltaMsAtBrowser": 0,
+    "itemsContested": 11,
+    "itemsByPlayer": [
+      6,
+      5
+    ],
+    "corpseContentsRemainingOnEachClient": [
+      0,
+      0
+    ],
+    "reconnect": {
+      "sameOwnerAndStateAfterRenderedReconnect": true,
+      "counts": [
+        6,
+        5
+      ],
+      "webgpuValidationErrors": [
+        0,
+        0
+      ]
+    },
+    "sqliteVerifiedAfterRestart": true,
+    "wasmSha256": "61af0f89de84cc4938cd5dfde310ad382dfc56876e4dc53f1423527fabf9cdb5",
+    "scopeNotes": "The interval is measured at browser intent submission and has millisecond resolution. A headless pointer-lock warning occurred and both original inputs still reached the UI. After the first result was recorded, the finished browser harness had to be stopped before the isolated Rust restart. This run checked Take All contention. Single-item UI contention and the emptied body appearance remain separate checks."
+  }}

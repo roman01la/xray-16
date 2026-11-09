@@ -148,7 +148,8 @@ void CSE_ALifeDynamicObject::try_switch_online()
         return;
     }
 
-    if (alife().graph().actor()->o_Position.distance_to(o_Position) > alife().online_distance())
+    const bool director = alife().uses_host_interests() && this == alife().graph().actor();
+    if (!director && !alife().near_switch_interest(o_Position, alife().online_distance()))
     {
         on_failed_switch_online();
         return;
@@ -168,7 +169,8 @@ void CSE_ALifeDynamicObject::try_switch_offline()
         return;
     }
 
-    if (alife().graph().actor()->o_Position.distance_to(o_Position) <= alife().offline_distance())
+    const bool director = alife().uses_host_interests() && this == alife().graph().actor();
+    if (director || alife().near_switch_interest(o_Position, alife().offline_distance()))
         return;
 
     alife().switch_offline(this);

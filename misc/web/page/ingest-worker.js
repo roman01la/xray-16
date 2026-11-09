@@ -245,10 +245,18 @@ onmessage = async (e) => {
         await ingest(e.data.dir, e.data.root);
         postMessage({ id, type: "done" });
         break;
-      case "sync-engine-data":
+      case "sync-engine-data": {
         await syncEngineData(e.data.root, e.data.appDirectory);
-        postMessage({ id, type: "done" });
+        let streaming;
+        if (e.data.pack) {
+          const { installStreaming } = await import("./streaming.js");
+          streaming = await installStreaming(e.data.pack, e.data.root, (detail) =>
+            postMessage({ id, type: "stream-progress", detail }),
+          );
+        }
+        postMessage({ id, type: "done", streaming });
         break;
+      }
     }
   } catch (err) {
     postMessage({ id, type: "error", error: err.message });

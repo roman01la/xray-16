@@ -127,5 +127,5 @@ export function createShaderStore({cacheStorage = globalThis.caches, fetchProgra
     pending.set(key, work);
     try { return await work; } finally { pending.delete(key); }
   }
-  return {load,preload};
+  return {load,preload,hasPackaged:async key=>(await packagedKeys())?.has(key)??false};
 }

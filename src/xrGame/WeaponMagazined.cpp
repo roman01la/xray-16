@@ -21,6 +21,9 @@
 #include "xrScriptEngine/script_callback_ex.h"
 #include "script_game_object.h"
 #include "HudSound.h"
+#ifdef XRAY_WEB_MULTIPLAYER
+#include "player_hud.h"
+#endif
 
 CWeaponMagazined::CWeaponMagazined(ESoundTypes eSoundType) : CWeapon(), m_bStopedAfterQueueFired(false)
 {
@@ -645,6 +648,70 @@ void CWeaponMagazined::OnShot()
 }
 
 void CWeaponMagazined::OnEmptyClick() { PlaySound("sndEmptyClick", get_LastFP()); }
+#ifdef XRAY_WEB_MULTIPLAYER
+void CWeaponMagazined::PlayConfirmedHudReload(unsigned sound, ref_sound& playback)
+{
+    // Sound discriminators from the authoritative reload phase.
+    constexpr pcstr aliases[] = {nullptr, "sndReload", "sndReloadEmpty", "sndReloadMisfire",
+        "sndReloadG", "sndReload1", "sndOpen", "sndAddCartridge", "sndClose"};
+    if (!HudItemData() || sound == 0 || sound >= std::size(aliases))
+        return;
+    auto* item = m_sounds.FindSoundItem(aliases[sound], false);
+    if (!item && (sound == 2 || sound == 3))
+        item = m_sounds.FindSoundItem("sndReload", false);
+    if (item && HUD_SOUND_ITEM::PlayTrackedHudSound(*item, playback) && strstr(Core.Params, "-zone-weapon-hud-probe"))
+        Msg("* Zone weapon HUD reload sound: %s %s %s", cNameSect().c_str(), item->m_alias.c_str(), playback._handle()->file_name());
+}
+
+void CWeaponMagazined::PlayConfirmedHudShot(bool launcher)
+{
+    auto* hud = HudItemData();
+    if (!hud)
+        return;
+
+    const bool underbarrel = launcher && IsGrenadeLauncherAttached();
+    auto* launcherSound = underbarrel ? m_sounds.FindSoundItem("sndShotG", false) : nullptr;
+    const pcstr sound = launcherSound ? "sndShotG" : m_sSndShotCurrent.c_str();
+    const auto center = Fvector().set(0.f, 0.f, 0.f);
+    const bool played = launcherSound ? HUD_SOUND_ITEM::PlayOneShot(*launcherSound, center, true)
+        : sound && m_layered_sounds.PlayOneShot(sound, center, true);
+
+    const auto& flame = underbarrel ? m_sFlameParticles2 : m_sFlameParticlesCurrent;
+    const auto firePoint = underbarrel ? hud_item_measures::e_fire_point2 : hud_item_measures::e_fire_point;
+    const bool hasMuzzle = hud->m_measures.m_prop_flags.test(firePoint);
+    if (hasMuzzle)
+    {
+        firedeps deps{};
+        deps.m_FireParticlesXForm.set(hud->m_item_transform);
+        hud->setup_firedeps(deps);
+        deps.m_FireParticlesXForm.c = underbarrel ? deps.vLastFP2 : deps.vLastFP;
+
+        const auto play = [&](const shared_str& effect)
+        {
+            if (!effect.size())
+                return;
+            auto* particles = CParticlesObject::Create(effect.c_str(), FALSE);
+            particles->SetXFORM(deps.m_FireParticlesXForm);
+            particles->Play(true);
+            // Play emits the first simulation step. Keep a bounded lifetime
+            // for those particles after stopping a looping preset.
+            if (particles->IsLooped())
+            {
+                particles->Stop(TRUE);
+                particles->PSI_SetLifeTime(1.f);
+            }
+            particles->SetAutoRemove(true);
+        };
+        play(flame);
+        if (!underbarrel)
+            play(m_sSmokeParticlesCurrent);
+    }
+    if (strstr(Core.Params, "-zone-weapon-hud-probe"))
+        Msg("* Zone weapon HUD feedback: %s sound=%s flame=%s smoke=%s", cNameSect().c_str(),
+            played ? sound : "-", hasMuzzle && flame.size() ? flame.c_str() : "-",
+            hasMuzzle && !underbarrel && m_sSmokeParticlesCurrent.size() ? m_sSmokeParticlesCurrent.c_str() : "-");
+}
+#endif
 void CWeaponMagazined::OnAnimationEnd(u32 state)
 {
     switch (state)

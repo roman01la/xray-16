@@ -226,6 +226,9 @@ target_sources(xrGame PRIVATE
     alife_story_registry.cpp
     alife_story_registry.h
     alife_story_registry_inline.h
+    alife_host_interests.cpp
+    alife_host_targets.cpp
+    alife_host_interests.h
     alife_surge_manager.cpp
     alife_surge_manager.h
     alife_surge_manager_inline.h

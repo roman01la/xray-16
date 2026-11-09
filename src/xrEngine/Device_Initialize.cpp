@@ -104,7 +104,7 @@ void CRenderDevice::Initialize()
     }
 #endif
 
-    if (!GEnv.isDedicatedServer)
+    if (!GEnv.isDedicatedServer && !IsHeadlessAlifeHost())
     {
         seqFrame.Add(&m_editor, -5);
     }

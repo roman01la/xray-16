@@ -8,9 +8,12 @@ fn input(sequence: u32) -> Input {
         x: 1.,
         z: 1.,
         yaw: 0.,
+        pitch: 0.0,
         sprint: true,
         jump: false,
         crouch: false,
+        walk: false,
+        aiming: false,
     }
 }
 #[test]
@@ -111,13 +114,19 @@ fn wire_input_validation() {
     for size in 0..20 {
         assert!(decode_input(&b[..size]).is_none());
     }
-    b[18] = 1;
+    b[18..20].copy_from_slice(&i16::MIN.to_le_bytes());
     assert!(decode_input(&b).is_none());
-    b[18] = 0;
+    b[18..20].copy_from_slice(&i16::MAX.to_le_bytes());
+    assert_eq!(decode_input(&b).unwrap().pitch, 1.55);
     b[16] = 7;
     let stance = decode_input(&b).unwrap();
     assert!(stance.sprint && stance.jump && stance.crouch);
     b[16] = 8;
+    let walking = decode_input(&b).unwrap();
+    assert!(walking.walk && !walking.sprint && !walking.crouch);
+    b[16] = 16;
+    assert!(decode_input(&b).unwrap().aiming);
+    b[16] = 32;
     assert!(decode_input(&b).is_none());
     b[16] = 0;
     b[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
@@ -125,14 +134,16 @@ fn wire_input_validation() {
     b[12..16].copy_from_slice(&0.5f32.to_le_bytes());
     b.extend(61u32.to_le_bytes());
     b.extend(100u32.to_le_bytes());
-    b.extend((-0.25f32).to_le_bytes());
+    b[18..20].copy_from_slice(&(-5285i16).to_le_bytes());
     let (input, trigger) = decode_player_input(&b).unwrap();
     assert_eq!(input.sequence, 42);
     let trigger = trigger.unwrap();
     assert_eq!(trigger.sequence, 61);
     assert_eq!(trigger.aim.tick, 100);
-    assert_eq!(trigger.aim.pitch, -0.25);
-    b[28..32].copy_from_slice(&1.6f32.to_le_bytes());
+    assert!((trigger.aim.pitch + 0.25).abs() < 0.000_024);
+    assert_eq!(trigger.aim.pitch, input.pitch);
+    assert!(decode_input(&b[..27]).is_none());
+    b.push(0);
     assert!(decode_input(&b).is_none());
 }
 #[test]

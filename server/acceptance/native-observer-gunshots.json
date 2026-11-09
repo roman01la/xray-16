@@ -1,0 +1,305 @@
+{
+  "recorded": "2026-11-09",
+  "environment": "Optimized unified WASM64 and Rust release on loopback, three isolated rendered Chrome profiles, stock Zaton collision and item catalog",
+  "wasmSha256": "918491488f1a460f1c018a153c39b5aa8068bf1002f2752da949847d508c0cd6",
+  "serverSha256": "3d1207c8ad5ac8dbb9b0145308f7fa93ea45584b6687beb6f072e66772e10c12",
+  "scope": "Server-confirmed nearby positional firearm audio from original input and AudioWorklet voice reads",
+  "observerMetres": {
+    "near": 0.5165231577175398,
+    "far": 274.9499842709163,
+    "interestRadius": 100
+  },
+  "rifleAndSuppressedPistol": {
+    "nearEvents": [
+      [
+        "wpn_ak74",
+        0,
+        -121,
+        4.812600135803223,
+        306
+      ],
+      [
+        "wpn_ak74",
+        0,
+        -121,
+        4.812600135803223,
+        306
+      ],
+      [
+        "wpn_ak74",
+        0,
+        -121,
+        4.812600135803223,
+        306
+      ],
+      [
+        "wpn_pb",
+        1,
+        -121,
+        4.812600135803223,
+        306
+      ]
+    ],
+    "shooterEvents": [],
+    "farEvents": [],
+    "observerVoices": [
+      {
+        "slot": 0,
+        "generation": 1,
+        "frames": 52214,
+        "relative": false,
+        "position": [
+          -121,
+          4.812600135803223,
+          306
+        ]
+      },
+      {
+        "slot": 1,
+        "generation": 1,
+        "frames": 53625,
+        "relative": false,
+        "position": [
+          -121,
+          4.812600135803223,
+          306
+        ]
+      },
+      {
+        "slot": 2,
+        "generation": 1,
+        "frames": 53155,
+        "relative": false,
+        "position": [
+          -121,
+          4.812600135803223,
+          306
+        ]
+      },
+      {
+        "slot": 0,
+        "generation": 3,
+        "frames": 6350,
+        "relative": false,
+        "position": [
+          -121,
+          4.812600135803223,
+          306
+        ]
+      }
+    ],
+    "webgpuValidationErrors": 0,
+    "observerWorkletErrors": 0,
+    "rifleAmmoAfterRounds": [
+      2,
+      1,
+      0
+    ],
+    "pistolAmmoAfterRound": 0,
+    "emptyTriggerRejected": true,
+    "emptyTriggerCue": false,
+    "localRelativeVoices": [
+      3,
+      1
+    ]
+  },
+  "underbarrel": {
+    "nearEvents": [
+      [
+        "wpn_groza",
+        2,
+        -121,
+        4.812600135803223,
+        306
+      ]
+    ],
+    "shooterEvents": [],
+    "farEvents": [],
+    "observerVoices": [
+      {
+        "slot": 0,
+        "generation": 1,
+        "frames": 24696,
+        "relative": false,
+        "position": [
+          -121,
+          4.812600135803223,
+          306
+        ]
+      }
+    ],
+    "webgpuValidationErrors": 0,
+    "observerWorkletErrors": 0,
+    "ammo": "ammo_vog-25",
+    "localRelativeVoices": 1
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      625522
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "notes": [
+    "Distance is between player capsule origins. The receiver read the server firing position from the AudioWorklet as a non-relative voice.",
+    "Firing cues are unreliable. These loopback tests recorded successful delivery and did not inject network impairment.",
+    "The headless harness logged pointer-lock warnings while activating audio. Original J, weapon slot keys and mouse firing completed.",
+    "Observer weapon animations and muzzle effects remain open."
+  ],
+  "observerPresentation": {
+    "environment": "Optimized unified WASM64 and release Rust, two three-client loopback trials on stock Zaton",
+    "wasmSha256": "d24f974b77d04a81cffa45d480d2b150b248b77ef60b933085d7909a893c8f08",
+    "serverSha256": "2ecc4a89fc8ddc441f353ccf7189d512de80d34b4bcceb522d1e47d29177a7db",
+    "standingRifleAndSuppressedPistol": {
+      "observerVisuals": [
+        "* Zone observer torso: wpn_ak74 norm_torso_2_attack_1",
+        "* Zone observer muzzle: shooter=3 wpn_ak74 mode=0 pos=(-120.771,4.516,306.811) flame=weapons\\generic_weapon05 smoke=weapons\\generic_shoot_00",
+        "* Zone observer muzzle: shooter=3 wpn_ak74 mode=0 pos=(-120.771,4.520,306.797) flame=weapons\\generic_weapon05 smoke=weapons\\generic_shoot_00",
+        "* Zone observer muzzle: shooter=3 wpn_ak74 mode=0 pos=(-120.771,4.521,306.795) flame=weapons\\generic_weapon05 smoke=weapons\\generic_shoot_00",
+        "* Zone observer torso: wpn_pb norm_torso_1_attack_1",
+        "* Zone observer muzzle: shooter=3 wpn_pb mode=1 pos=(-120.832,4.710,306.874) flame=- smoke=weapons\\generic_shoot_00"
+      ],
+      "nearEvents": [
+        [
+          3,
+          "wpn_ak74",
+          0,
+          -121,
+          4.812600135803223,
+          306
+        ],
+        [
+          3,
+          "wpn_ak74",
+          0,
+          -121,
+          4.812600135803223,
+          306
+        ],
+        [
+          3,
+          "wpn_ak74",
+          0,
+          -121,
+          4.812600135803223,
+          306
+        ],
+        [
+          3,
+          "wpn_pb",
+          1,
+          -121,
+          4.812600135803223,
+          306
+        ]
+      ],
+      "shooterEvents": [],
+      "farEvents": [],
+      "webgpuValidationErrors": 0,
+      "emptyTriggerRejected": true,
+      "emptyTriggerCue": false
+    },
+    "crouchedUnderbarrel": {
+      "observerVisuals": [
+        "* Zone observer torso: wpn_groza cr_torso_8_attack_1",
+        "* Zone observer muzzle: shooter=3 wpn_groza mode=2 pos=(-120.707,3.991,306.711) flame=weapons\\generic_weapon01 smoke=-",
+        "* Zone observer torso: wpn_groza norm_torso_8_attack_1"
+      ],
+      "nearEvents": [
+        [
+          3,
+          "wpn_groza",
+          2,
+          -121,
+          4.212599754333496,
+          306
+        ]
+      ],
+      "shooterEvents": [],
+      "farEvents": [],
+      "webgpuValidationErrors": 0,
+      "outfit": "stalker_outfit",
+      "crouched": true
+    },
+    "rendererProbe": {
+      "wasmSha256": "a021063c3b4d58ab6626dabe39d5f4340ac42890897cd439ca816f1f87d351ae",
+      "underbarrelDraws": [
+        "* Zone observer sprite draw: weapons\\effects\\weapon_shot_invert_glow",
+        "* Zone observer sprite draw: weapons\\effects\\weapon_shot_invert_big",
+        "* Zone observer sprite draw: weapons\\effects\\weapon_test_02_flame",
+        "* Zone observer sprite draw: weapons\\effects\\generic_smoke_01",
+        "* Zone observer sprite draw: weapons\\effects\\weapon_test_02_sparks"
+      ],
+      "normalReleaseRebuiltIdentically": true,
+      "rifleDraws": [
+        "* Zone observer sprite draw: weapons\\effects\\weapon_shot_invert_glow",
+        "* Zone observer sprite draw: weapons\\effects\\weapon_shot_invert_01",
+        "* Zone observer sprite draw: weapons\\effects\\weapon_test_02_flame",
+        "* Zone observer sprite draw: weapons\\effects\\weapon_test_02c",
+        "* Zone observer sprite draw: weapons\\effects\\weapon_test_02_sparks",
+        "* Zone observer sprite draw: weapons\\effects\\generic_shoot_01",
+        "* Zone observer sprite draw: weapons\\effects\\generic_shoot_00"
+      ],
+      "suppressedPistolDraws": [
+        "* Zone observer sprite draw: weapons\\effects\\generic_shoot_01",
+        "* Zone observer sprite draw: weapons\\effects\\generic_shoot_00"
+      ]
+    },
+    "singlePlayer": {
+      "singlePlayer": true,
+      "saveAndReload": true,
+      "saveInput": "quicksave",
+      "keyEvents": [
+        {
+          "code": "F5",
+          "focused": "canvas",
+          "locked": "canvas"
+        },
+        {
+          "code": "F5",
+          "focused": "canvas",
+          "locked": "canvas"
+        },
+        {
+          "code": "F9",
+          "focused": "canvas",
+          "locked": "canvas"
+        }
+      ],
+      "saveBytes": [
+        624165
+      ],
+      "archiveChunkRequests": 0,
+      "rendering": "WebGPU",
+      "validationErrors": 0
+    },
+    "scopeNotes": [
+      "Remote muzzle positions come from the observer weapon transform. Audio positions come from the server firing pose.",
+      "The far observer and shooter received no observer visuals. The tests used a stationary rifle/pistol shooter and a crouched launcher shooter with the stock stalker outfit.",
+      "The clean screencast sampled six rifle frames. The separate renderer probe verified sprite submission from non-HUD particle draws and was removed before restoring the verified release artifact.",
+      "The headless harness logged pointer-lock warnings during audio activation. Original firing, crouch, and quicksave inputs completed.",
+      "Stock animated hit volumes, remote aiming pitch, lighting, casings, jam presentation, and cases with packet impairment remain unverified."
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #ifdef XRAY_WEB_MULTIPLAYER
+#include "multiplayer/EngineAdapter.h"
 #include "multiplayer/InventoryPresentation.h"
 #endif
 #include "UIMainIngameWnd.h"
@@ -657,6 +658,8 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     flags |= LA_TEXTURECOLOR;
 #ifdef XRAY_WEB_MULTIPLAYER
     const auto* multiplayerVitals = zone::inventoryVitals();
+    if (zone::inventory().valid)
+        UpdateBoosterIndicators(pActor->conditions().GetCurBoosterInfluences());
 #endif
     // Bleeding icon
     if (m_ind_bleeding)
@@ -988,6 +991,38 @@ void CUIMainIngameWnd::DrawMainIndicatorsForInventory()
 
 void CUIMainIngameWnd::UpdateBoosterIndicators(const CEntityCondition::BOOSTER_MAP& influences)
 {
+#ifdef XRAY_WEB_MULTIPLAYER
+    if (const auto* vitals = zone::inventoryVitals())
+    {
+        // Same ordering as the private vitals payload and the stock EBoostParams.
+        const std::array icons{
+            m_ind_boost_health, m_ind_boost_power, m_ind_boost_rad, m_ind_boost_wound,
+            m_ind_boost_weight, m_ind_boost_radia, m_ind_boost_psy, m_ind_boost_chem,
+        };
+        for (unsigned i = 0; i < icons.size(); ++i)
+        {
+            auto* icon = icons[i];
+            if (!icon)
+                continue;
+            const auto mask = 1u << i;
+            icon->Show((vitals->boosterIcons & mask) != 0);
+            const bool expiring = (vitals->boosterIcons & (mask << 8)) != 0;
+            if (expiring == icon->IsColorAnimationPresent())
+                continue;
+            if (expiring)
+            {
+                icon->SetColorAnimation("ui_slow_blinking_alpha", LA_CYCLIC | LA_ONLYALPHA | LA_TEXTURECOLOR);
+                icon->ResetColorAnimation();
+            }
+            else
+            {
+                icon->SetColorAnimation(nullptr, 0);
+                icon->ColorAnimationSetTextureColor(255, true);
+            }
+        }
+        return;
+    }
+#endif
     if (m_ind_boost_psy)
         m_ind_boost_psy->Show(false);
     if (m_ind_boost_radia)

@@ -1,0 +1,82 @@
+{
+  "date": "2026-11-08",
+  "server": "optimized local build",
+  "clients": "five str0m WebRTC peers, replies decoded by the production JavaScript codec",
+  "conditions": "Stock Zaton collision and authored waypoints. Disposable saves with detector equipment and nearby poses. Continuous hazards disabled for the pickup drill.",
+  "world": "zaton-static-v1",
+  "detectors": [
+    "Echo",
+    "Bear",
+    "Veles",
+    "Svarog"
+  ],
+  "stockSites": {
+    "count": 29,
+    "paths": 84,
+    "configuredStartingArtefacts": 26,
+    "maps": {
+      "zaton": {
+        "sites": 12,
+        "unreachablePoints": 13
+      },
+      "jupiter": {
+        "sites": 10,
+        "unreachablePoints": 3
+      },
+      "pripyat": {
+        "sites": 7,
+        "unreachablePoints": 7
+      },
+      "jupiter_underground": {
+        "sites": 0,
+        "unreachablePoints": 0
+      },
+      "labx8": {
+        "sites": 0,
+        "unreachablePoints": 0
+      }
+    }
+  },
+  "pickup": {
+    "site": 516,
+    "section": "af_cristall",
+    "stowedInitiallyHidden": true,
+    "echoCueHasNoBearing": true,
+    "bearCueHasBearing": true,
+    "radarSite": 380,
+    "radarSection": "af_night_star",
+    "velesPoints": 1,
+    "svarogPoints": 1,
+    "forgedRevisionDeniedWithoutDisclosure": true,
+    "revealSurvivedStow": true,
+    "revealExpiredAfterFiveSeconds": true,
+    "pickupWinners": 1,
+    "winner": "echo",
+    "exactInstanceSurvivedRestart": true,
+    "siteStayedDepletedAtRestart": true
+  },
+  "campaignRefill": {
+    "configuredCooldownSeconds": 1,
+    "observationSeconds": 10,
+    "population": {
+      "jupiter-static-v1": {
+        "slots": 23,
+        "populated": 17,
+        "largestSiteCap": 3
+      },
+      "pripyat-static-v1": {
+        "slots": 16,
+        "populated": 11,
+        "largestSiteCap": 3
+      },
+      "zaton-static-v1": {
+        "slots": 31,
+        "populated": 24,
+        "largestSiteCap": 3
+      }
+    },
+    "foreignKeyCheck": true
+  },
+  "unifiedOptimizedBuildStaged": true,
+  "renderedBrowserAcceptance": "open"
+}

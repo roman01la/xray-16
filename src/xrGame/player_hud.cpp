@@ -604,13 +604,13 @@ void player_hud::render_hud(u32 context_id, IRenderable* root)
     attachable_hud_item* item0 = m_attached_items[0];
     attachable_hud_item* item1 = m_attached_items[1];
 
-    if (!item0 && !item1)
+    if (!item0 && !item1 && !m_render_detached_hands)
         return;
 
     const bool b_r0 = item0 && item0->need_renderable();
     const bool b_r1 = item1 && item1->need_renderable();
 
-    if (!b_r0 && !b_r1)
+    if (!b_r0 && !b_r1 && !m_render_detached_hands)
         return;
 
     if (m_model)
@@ -675,22 +675,14 @@ void player_hud::update(const Fmatrix& cam_trans)
         m_transform = trans;
     else
     {
-        Fvector ypr{};
-        if (item0)
-            ypr = item0->hands_attach_rot();
-        else if (item1)
-            ypr = item1->hands_attach_rot();
-
-        ypr.mul(PI / 180.f);
-        m_attach_offset.setHPB(ypr.x, ypr.y, ypr.z);
-
-        Fvector tmp{};
-        if (item0)
-            tmp = item0->hands_attach_pos();
-        else if (item1)
-            tmp = item1->hands_attach_pos();
-
-        m_attach_offset.translate_over(tmp);
+        if (item0 || item1 || !m_render_detached_hands)
+        {
+            auto* attached = item0 ? item0 : item1;
+            Fvector ypr = attached ? attached->hands_attach_rot() : Fvector{};
+            ypr.mul(PI / 180.f);
+            m_attach_offset.setHPB(ypr.x, ypr.y, ypr.z);
+            m_attach_offset.translate_over(attached ? attached->hands_attach_pos() : Fvector{});
+        }
         m_transform.mul(trans, m_attach_offset);
 
         m_model->UpdateTracks();

@@ -11,12 +11,11 @@ not final design requirements. Detailed survival mechanics await user specificat
 
 ## Mode boundary
 
-Single player keeps its existing local X-Ray server, ALife, Lua gameplay, saves
-and WebGPU launch path. It imports no multiplayer modules. Multiplayer uses a
-separate launch/build/staging path and must refuse a single-player engine artifact.
-An engine adapter capability check must succeed before multiplayer can start a
-level. Starting a single-player save and merely overlaying remote actors is not
-an acceptable implementation of server authority.
+Both browser modes use the same native WebGPU engine artifact. Single player
+starts the local X-Ray server, ALife and Lua gameplay with its own saves and
+without a multiplayer bridge. The multiplayer menu item restarts the engine
+with the network bridge enabled. The engine adapter capability check must
+succeed before joining the Rust server's level. [Unified browser entry](#unified-browser-entry)
 
 The synthetic network harness does not boot the game. The separately staged
 engine preview loads Zaton and renders authoritative proxies using WebGPU.
@@ -93,18 +92,13 @@ configuration, preserving immutable asset aliases. It routes app-data, settings,
 logs, screenshots and local save paths beneath `<game>/_multiplayer_/v1/`.
 The original `fsgame.ltx` and `_appdata_/savedgames` are never opened for writing.
 This is logical separation, not an OPFS permissions sandbox. The eventual engine
-adapter must additionally disable local save/load commands for authoritative
-multiplayer gameplay. Asset ingestion/synchronization remains an explicit
-single-player preparation step until a read-only multiplayer asset path exists.
+adapter controls access to local save/load in the multiplayer mode. Both modes
+can read the same content-addressed archive chunks.
 
-The new `web-multiplayer-release` preset enables `XRAY_WEB_MULTIPLAYER`, placing
-compiled output in its own build tree and staging only engine artifacts there.
-It does not invoke the single-player packager. Its capability manifest explicitly
-reports `actorAdapter: false`; it is not a playable multiplayer engine yet.
-
-A separate CMake binary directory alone was insufficient: the existing build also
-uses shared `bin/wasm64/Release` and `misc/web/dist` output paths. Both artifact paths and staging are now isolated for the experimental preset. Do not overwrite the known
-working single-player artifacts with experimental multiplayer output.
+The `web-multiplayer-release` preset enables `XRAY_WEB_MULTIPLAYER` and writes
+the engine artifacts beneath its build tree. `stage-game.mjs` packages that
+engine with the unified menu. The isolated network harness uses the same
+artifacts with its own development page. [Web build guide](../misc/web/README.md)
 
 ## Community integration map
 

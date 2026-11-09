@@ -41,6 +41,7 @@ if (EMSCRIPTEN)
     target_link_options(xr_3da PRIVATE ${XRAY_WEB_EXECUTABLE_LINK_OPTIONS})
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/pre.js")
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/native-canvas-library.js")
+    set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/audio-library.js")
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/streaming/library.js")
     if (XRAY_WEB_MULTIPLAYER)
         # Never run the single-player packager or overwrite its dist/bin output.

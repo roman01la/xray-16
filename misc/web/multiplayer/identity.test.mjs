@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {loadIdentity,newCredential,writeRecord} from './identity.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import {loadIdentity,newCredential,savedKey,writeRecord} from './identity.mjs';
 function storage(){const m=new Map();return {getItem:k=>m.get(k)??null,setItem:(k,v)=>m.set(k,v)};}
 const ok={ok:true,json:async()=>({principalId:'a'.repeat(32)})};
 test('credentials are persisted before enrollment and retries reuse them',async()=>{
@@ -8,6 +8,16 @@ test('credentials are persisted before enrollment and retries reuse them',async(
  const a=await loadIdentity('test',{storage:s,request}),b=await loadIdentity('test',{storage:s,request});
  assert.deepEqual(a,b);assert.equal(seen[0][1],seen[1][1]);assert.equal(seen[0][0],'/identity/register');assert.equal(seen[1][0],'/identity/register');assert.equal(seen[2][0],'/identity/resume');
  assert.match(newCredential(),/^[a-f0-9]{64}$/);
+});
+test('copy reads an enrolled key locally and keeps pending enrollments private',async()=>{
+ const s=storage();
+ assert.throws(()=>savedKey('public',s),/No multiplayer save key/);
+ await assert.rejects(loadIdentity('public',{storage:s,request:async()=>{throw Error('offline');}}),/offline/);
+ assert.throws(()=>savedKey('public',s),/No multiplayer save key/);
+ const enrolled=await loadIdentity('public',{storage:s,request:async()=>ok});
+ assert.equal(savedKey('public',s),enrolled.secret);
+ s.setItem('zone-multiplayer-identity-v1:public','null');
+ assert.throws(()=>savedKey('public',s),/Invalid saved multiplayer identity/);
 });
 test('missing server identity or changed principal never silently replaces a saved identity',async()=>{
  const s=storage();await loadIdentity('test',{storage:s,request:async()=>ok});

@@ -187,11 +187,16 @@ void CSE_ALifeOnlineOfflineGroup::try_switch_online()
             "personal "
             "properties",
             (*I).second->name_replace());
-        if (alife().graph().actor()->o_Position.distance_to((*I).second->o_Position) > alife().online_distance())
+        if (!alife().near_switch_interest((*I).second->o_Position, alife().online_distance()))
         {
             continue;
         }
-        inherited1::try_switch_online();
+        // The member is in range. In hosted mode the group's representative
+        // vertex can be farther away than the member and the activating player.
+        if (alife().uses_host_interests())
+            alife().switch_online(this);
+        else
+            inherited1::try_switch_online();
         return;
     }
     on_failed_switch_online();
@@ -228,7 +233,7 @@ void CSE_ALifeOnlineOfflineGroup::try_switch_offline()
             "properties",
             (*I).second->name_replace());
 
-        if (alife().graph().actor()->o_Position.distance_to((*I).second->o_Position) <= alife().offline_distance())
+        if (alife().near_switch_interest((*I).second->o_Position, alife().offline_distance()))
             return;
     }
 

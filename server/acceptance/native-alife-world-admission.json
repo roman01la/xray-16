@@ -1,0 +1,85 @@
+{
+  "date": "2026-11-08",
+  "environment": "Optimized macOS ARM64 CoP native host, optimized Rust schema 22 server, and disposable stock Zaton",
+  "setup": "The private socket relay supplied one grounded player pose. A disposable Lua fixture spawned and killed a stock armed stalker. The first Rust process committed the resulting loot. After restarting Rust against the same database, the test tried an earlier matched save and fence with the newer journal still present, then restored the current pair and original journal to simulate a lost acknowledgement.",
+  "results": {
+    "initialGeneration": 1,
+    "committedGeneration": 2,
+    "restartedRust": true,
+    "oldNativePairLoadedLocally": true,
+    "olderPairDeniedByRust": true,
+    "newerOutboxRecordPreserved": true,
+    "staleHostReceivedPoses": false,
+    "staleHostPublishedNpcsOrLoot": false,
+    "currentCheckpointAdmitted": true,
+    "originalCorpseReplayedAndAcknowledged": true,
+    "rustCorpses": 1,
+    "unchangedItemIdsAndStates": 11
+  },
+  "simulationCaptureMs": [
+    86.85,
+    72.65
+  ],
+  "rustTestsPassed": 133,
+  "unifiedBrowserSinglePlayer": {
+    "singlePlayer": true,
+    "chunks": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "initialFailure": "The first macOS relay bound its socket using Python\u2019s default address length. A direct probe verified the correct native address length before the passing run.",
+  "remaining": "Production rollout, multi-map ownership, rendered attack effects and sustained WAN population checks remain open.",
+  "packetReuseRecheck": {
+    "date": "2026-11-09",
+    "scope": "Optimized native and release Rust with a disposable stock Zaton fixture and private pose relay. The object registry reused its serialization packet.",
+    "result": {
+      "initialGeneration": 1,
+      "committedGeneration": 2,
+      "restartedRust": true,
+      "oldNativePairLoadedLocally": true,
+      "olderPairDeniedByRust": true,
+      "newerOutboxRecordPreserved": true,
+      "staleHostReceivedPoses": false,
+      "staleHostPublishedNpcsOrLoot": false,
+      "currentCheckpointAdmitted": true,
+      "originalCorpseReplayedAndAcknowledged": true,
+      "rustCorpses": 1,
+      "unchangedItemIdsAndStates": 12
+    },
+    "singlePlayerRegression": {
+      "singlePlayer": true,
+      "saveAndReload": true,
+      "saveInput": "console",
+      "saveBytes": [
+        624401
+      ],
+      "archiveChunkRequests": 0,
+      "rendering": "WebGPU",
+      "validationErrors": 0
+    }
+  },
+  "flyX86InPlaceRestart": {
+    "date": "2026-11-09",
+    "scope": "Disposable Fly Machine in Frankfurt running optimized Ubuntu 24.04 x86-64 native CoP and Rust 1.93.1 release builds. The host ran displayless with stock Zaton archives verified by chunk hash. The private relay supplied one grounded pose. A test fixture generated one stock stalker death.",
+    "firstRun": "The older pair loaded locally without admission, but the harness stopped before observing Rust log an explicit durable fence rejection. The passing repeat waited for that log and deliberately dropped the first loot acknowledgement to retain the journal in place.",
+    "result": {
+      "initialGeneration": 1,
+      "committedGeneration": 2,
+      "restartedRust": true,
+      "firstAcknowledgementIntentionallyDropped": true,
+      "oldNativePairLoadedLocally": true,
+      "olderPairDeniedByRust": true,
+      "newerOutboxRecordPreserved": true,
+      "staleHostReceivedPoses": false,
+      "staleHostPublishedNpcsOrLoot": false,
+      "currentCheckpointAdmitted": true,
+      "restoredInPlace": true,
+      "originalCorpseReplayedAndAcknowledged": true,
+      "rustCorpses": 1,
+      "unchangedItemIdsAndStates": 11
+    },
+    "initialCapturesMs": [
+      82.01,
+      59.87
+    ]
+  }}

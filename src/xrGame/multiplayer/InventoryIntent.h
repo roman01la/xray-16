@@ -11,6 +11,12 @@ EM_JS(void, zone_weapon_trigger_start, (unsigned tick, float yaw, float pitch, c
 EM_JS(void, zone_weapon_trigger_stop, (), {
     globalThis.zoneEngineTriggerStop?.();
 });
+EM_JS(void, zone_grenade, (unsigned phase, unsigned tick, float yaw, float pitch, const char* item), {
+    globalThis.zoneEngineGrenade?.(['prime','release','cancel'][phase], {tick:tick>>>0,yaw,pitch}, UTF8ToString(Number(item)));
+});
+EM_JS(void, zone_knife, (bool stab, unsigned tick, float yaw, float pitch, const char* item), {
+    globalThis.zoneEngineKnife?.(stab?'stab':'slash', {tick:tick>>>0,yaw,pitch}, UTF8ToString(Number(item)));
+});
 
 EM_JS(void, zone_inventory_intent, (const char* id, unsigned revision, unsigned life, unsigned action, unsigned index), {
     const placement = action===2 ? {kind:'rucksack'} : action===3 ? {kind:'slot',slot:index} : {kind:'belt',cell:index};

@@ -24,7 +24,7 @@ const itemCatalogSha256 = hash(catalogBytes);
 if (catalog.schema !== 1 || authored.schema !== 1 || review.schema !== 1 ||
     authored.spawn?.sha256 !== source.sha256 || review.spawnSha256 !== source.sha256 ||
     authored.itemCatalogSha256 !== itemCatalogSha256) throw Error('Loose loot input revisions do not match');
-if (review.level !== 'zaton' || !Array.isArray(review.spawnIds) || !review.spawnIds.length ||
+if (!/^[a-z0-9_]+$/.test(review.level ?? '') || !Array.isArray(review.spawnIds) || !review.spawnIds.length ||
     review.spawnIds.length > 8192 || new Set(review.spawnIds).size !== review.spawnIds.length ||
     review.spawnIds.some(id => !Number.isInteger(id) || id < 0 || id > 65535)) throw Error('Invalid review list');
 

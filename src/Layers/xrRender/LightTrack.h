@@ -80,8 +80,10 @@ private:
 #endif // RENDER!=R_R1
 public:
     virtual void force_mode(u32 mode) { MODE = mode; };
-    virtual float get_luminocity()
+    float get_luminocity(IRenderable* sample = nullptr) override
     {
+        if (sample)
+            update_smooth(sample);
         float result_ = _max(approximate.x, _max(approximate.y, approximate.z));
         clamp(result_, 0.f, 1.f);
         return (result_);

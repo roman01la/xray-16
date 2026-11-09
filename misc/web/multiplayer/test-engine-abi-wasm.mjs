@@ -26,6 +26,11 @@ void fire() {
   zone_weapon_fire(0, 0, 0, nullptr);
   zone_weapon_trigger_start(3, 0.25f, 0.5f, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   zone_weapon_trigger_stop();
+  const auto* item = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  zone_knife(false, 0xffffffffu, 0.5f, -0.25f, item);
+  zone_knife(true, 0xffffffffu, 0.5f, -0.25f, item);
+  for (unsigned phase = 0; phase < 3; ++phase)
+    zone_grenade(phase, 0xffffffffu, 0.5f, -0.25f, item);
 }
 void inventory_pickup() {zone_inventory_pickup("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",0xffffffffu,0x80000000u);}
 void inventory_store() {zone_inventory_store("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",0xffffffffu,0x80000000u);}
@@ -50,14 +55,22 @@ int inventory_alive() {return inventory.alive;}
   const module=join(dir,'probe.mjs');
   execFileSync('em++',[join(dir,'probe.cpp'),'-O3','-std=c++17','--no-entry','-sMEMORY64=1','-sALLOW_MEMORY_GROWTH=1','-sMODULARIZE=1','-sEXPORT_ES6=1','-sENVIRONMENT=node','-sEXPORTED_FUNCTIONS=["_fire","_address","_apply","_tick","_reset","_inventory_address","_inventory_apply","_inventory_life","_inventory_alive","_inventory_intent","_inventory_batch_begin","_inventory_batch_end","_inventory_pickup","_inventory_store","_inventory_attachments"]','-sEXPORTED_RUNTIME_METHODS=["HEAPU8"]','-o',module],{stdio:'inherit'});
   const {default:create}=await import(pathToFileURL(module));const wasm=await create();
-  const shots=[];let released=0;
+  const shots=[],swings=[],throws=[];let released=0;
   globalThis.zoneEngineFire=(aim,item,held=false)=>shots.push({aim,item,held});
   globalThis.zoneEngineTriggerStop=()=>released++;
+  globalThis.zoneEngineKnife=(...command)=>swings.push(command);
+  globalThis.zoneEngineGrenade=(...command)=>throws.push(command);
   try{
     wasm._fire();
     assert.deepEqual(shots,[{aim:{tick:0xffffffff,yaw:0.5,pitch:-0.25},item:'a'.repeat(32),held:false},{aim:{tick:0,yaw:0,pitch:0},item:null,held:false},{aim:{tick:3,yaw:0.25,pitch:0.5},item:'a'.repeat(32),held:true}]);
     assert.equal(released,1);
-  }finally{delete globalThis.zoneEngineFire;delete globalThis.zoneEngineTriggerStop;}
+    const aim={tick:0xffffffff,yaw:0.5,pitch:-0.25},item='b'.repeat(32);
+    assert.deepEqual(swings,[['slash',aim,item],['stab',aim,item]]);
+    assert.deepEqual(throws,[['prime',aim,item],['release',aim,item],['cancel',aim,item]]);
+  }finally{
+    delete globalThis.zoneEngineFire;delete globalThis.zoneEngineTriggerStop;
+    delete globalThis.zoneEngineKnife;delete globalThis.zoneEngineGrenade;
+  }
   const batches=[];globalThis.zoneEngineInventoryBatch=async intents=>{batches.push(intents);};
   const intents=[];globalThis.zoneEngineInventoryMove=async intent=>{intents.push(intent);};
   try {

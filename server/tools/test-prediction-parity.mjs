@@ -6,7 +6,7 @@ const m=JSON.parse(await readFile(manifestPath)),probe=JSON.parse(await readFile
 assert.equal(probe.sha256,m.sha256);assert.ok(probe.motor);
 const assets={geometry:new Uint8Array(await readFile(join(dirname(manifestPath),m.sha256+'.cform'))),materials:new Uint8Array(await readFile(join(dirname(manifestPath),m.materials.sha256+'.gamemtl')))};
 const wasm=await readFile(resolve(import.meta.dirname,'../prediction/target/wasm32-unknown-unknown/release/zone_prediction.wasm'));
-const start=performance.now();const motor=await createWasmMotor({geometry:m.sha256,materials:m.materials.sha256},assets,wasm);
+const start=performance.now();const motor=await createWasmMotor(m.level,{geometry:m.sha256,materials:m.materials.sha256},assets,wasm);
 const initMs=performance.now()-start;
 const [x,y,z]=probe.motor.spawn;motor.reset({x,y,z,vy:0,flags:0});
 for(let i=0;i<probe.motor.ticks;i++)motor.step({x:1,z:0,sprint:false});

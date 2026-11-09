@@ -21,6 +21,7 @@ fn main() {
             health: 100,
             kind: 1,
             flags: 14,
+            native_motion: None,
         })
         .collect();
     let mut r = Replicator::default();

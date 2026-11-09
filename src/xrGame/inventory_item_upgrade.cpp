@@ -80,16 +80,20 @@ bool CInventoryItem::get_upgrades_str(string2048& res) const
     res[0] = 0;
     auto ib = m_upgrades.cbegin();
     auto ie = m_upgrades.cend();
-    inventory::upgrade::Upgrade* upgr;
     for (; ib != ie; ++ib)
     {
-        upgr = ai().alife().inventory_upgrade_manager().get_upgrade(*ib);
-        if (!upgr)
-        {
+        LPCSTR upgr_section = nullptr;
+#ifdef XRAY_WEB_MULTIPLAYER
+        // Multiplayer already owns the installed upgrade IDs. Resolve their
+        // parameter sections for the stock tooltip without creating A-Life.
+        if (!ai().get_alife())
+            upgr_section = pSettings->read_if_exists<LPCSTR>(ib->c_str(), "section", nullptr);
+        else
+#endif
+        if (const auto* upgrade = ai().alife().inventory_upgrade_manager().get_upgrade(*ib))
+            upgr_section = upgrade->section();
+        if (!upgr_section)
             continue;
-        }
-
-        LPCSTR upgr_section = upgr->section();
         if (prop_count > 0)
         {
             xr_strcat(res, sizeof(res), ", ");

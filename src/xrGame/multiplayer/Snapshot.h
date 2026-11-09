@@ -11,17 +11,23 @@
 namespace zone {
 constexpr std::size_t maxEntities = 7424;
 constexpr std::size_t headerBytes = 24;
-constexpr std::size_t entityBytes = 36;
+constexpr std::size_t entityBytes = 44;
 constexpr std::size_t maxSnapshotBytes = headerBytes + entityBytes * maxEntities;
 struct Entity {
     std::uint32_t id;
     float x, y, z, vx, vy, vz, yaw;
     std::uint16_t health;
     std::uint8_t kind, flags;
+    std::uint32_t motion;
+    std::uint16_t motionTimeMs;
 };
+constexpr std::uint32_t noMotion = 0xffffffffu;
 inline std::uint32_t u32(const unsigned char* p) {
     return std::uint32_t(p[0]) | (std::uint32_t(p[1]) << 8) |
         (std::uint32_t(p[2]) << 16) | (std::uint32_t(p[3]) << 24);
+}
+inline std::uint16_t readU16(const unsigned char* p) {
+    return std::uint16_t(p[0] | (std::uint16_t(p[1]) << 8));
 }
 inline float f32(const unsigned char* p) {
     const auto bits = u32(p); float f; std::memcpy(&f, &bits, 4); return f;
@@ -34,8 +40,8 @@ public:
     bool apply(const unsigned char* data, std::size_t size) {
         if (!data || size < headerBytes || size > maxSnapshotBytes) return false;
         const auto count = u32(data + 20), nextTick = u32(data + 8), self = u32(data + 12);
-        // Magic ZENG, ABI 1, tick, local player, input ack, count.
-        if (u32(data) != 0x474e455a || u32(data + 4) != 1 || !self ||
+        // Magic ZENG, ABI 2, tick, local player, input ack, count.
+        if (u32(data) != 0x474e455a || u32(data + 4) != 2 || !self ||
             count > maxEntities || size != headerBytes + count * entityBytes ||
             (valid && (self != playerId || !newer(nextTick, tick)))) return false;
         scratch.clear();
@@ -43,10 +49,11 @@ public:
             const auto* p = data + headerBytes + i * entityBytes;
             Entity e{u32(p), f32(p+4), f32(p+8), f32(p+12), f32(p+16),
                 f32(p+20), f32(p+24), f32(p+28),
-                std::uint16_t(p[32] | (std::uint16_t(p[33]) << 8)), p[34], p[35]};
+                readU16(p+32), p[34], p[35], u32(p+36), readU16(p+40)};
             if (!e.id || !std::isfinite(e.x) || !std::isfinite(e.y) || !std::isfinite(e.z) ||
                 !std::isfinite(e.vx) || !std::isfinite(e.vy) || !std::isfinite(e.vz) ||
-                !std::isfinite(e.yaw) || (e.kind != 1 && e.kind != 2) || (e.flags & ~15u)) return false;
+                !std::isfinite(e.yaw) || (e.kind != 1 && e.kind != 2) || (e.flags & ~15u) || readU16(p+42) ||
+                (e.motion != noMotion ? e.kind != 2 : e.motionTimeMs != 0)) return false;
             scratch.push_back(e);
         }
         std::sort(scratch.begin(), scratch.end(), [](const Entity& a, const Entity& b) {return a.id < b.id;});

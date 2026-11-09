@@ -80,6 +80,43 @@ function arrayCount(expression) {
     throw Error("Unsupported uniform array size");
   return n;
 }
+function applyOptionalQualityDefaults(source, error) {
+  // A #line directive would make shaderc's location ambiguous.
+  if (/^\s*#\s*line\b/m.test(source)) throw error;
+  const diagnostics = String(error.message).split("\n").filter(line => line.includes(": error:"));
+  const optionalQuality = /:(\d+):\s*error:.*undefined macro in expression not allowed in es profile (SUN_QUALITY|SSAO_QUALITY)\s*$/;
+  if (!diagnostics.length) throw error;
+  const lines = source.split("\n"), defaults = new Map();
+  for (const diagnostic of diagnostics) {
+    const match = diagnostic.match(optionalQuality);
+    if (!match) throw error;
+    const index = Number(match[1]) - 1;
+    if (!defaults.has(index)) defaults.set(index,new Set());
+    defaults.get(index).add(match[2]);
+  }
+  for (const [index,names] of defaults) {
+    const line = lines[index];
+    if (!/^\s*#\s*(?:if|elif)\b/.test(line)) throw error;
+    // CoP treats the disabled quality option as zero in numeric tests while
+    // keeping it undefined for feature tests. Keep the original ES profile.
+    const words = /\bdefined(?:\s*\(\s*\w+\s*\)|\s+\w+)|\b\w+\b/g;
+    lines[index] = line.replace(words, word => names.has(word) ? "0" : word);
+    if (lines[index] === line) throw error;
+  }
+  return lines.join("\n");
+}
+
+async function preprocess(source, stage, toolchain) {
+  let es = source.replace("#version 300 es", "#version 310 es");
+  for (;;) {
+    try {
+      return await toolchain.preprocess(es, stage);
+    } catch (error) {
+      // Every successful retry removes at least one diagnosed identifier.
+      es = applyOptionalQualityDefaults(es, error);
+    }
+  }
+}
 // Shared by offline native and browser WASM toolchains. Same key and output schema.
 export async function compileProgram(request, toolchain) {
   const key = shaderKey(request);
@@ -88,7 +125,7 @@ export async function compileProgram(request, toolchain) {
   );
   const sources = {};
   for (const [stage, src] of Object.entries(request.sources)) {
-    sources[stage] = (await toolchain.preprocess(src.replace("#version 300 es", "#version 310 es"), stage)).replace(/\buniform\s+(\w+)\s+([^;{}]+);/g, (all, type, names) =>
+    sources[stage] = (await preprocess(src, stage, toolchain)).replace(/\buniform\s+(\w+)\s+([^;{}]+);/g, (all, type, names) =>
       names
         .split(",")
         .map((name) => `uniform ${type} ${name.trim()};`)

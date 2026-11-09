@@ -16,6 +16,7 @@ pub mod replication;
 pub mod lifecycle;
 
 pub mod combat;
+pub mod ballistics;
 
 pub mod persistence;
 
@@ -29,11 +30,25 @@ pub mod network;
 pub mod control;
 
 pub mod inventory;
+pub mod ladder;
 pub mod catalog;
+pub mod reload_timing;
+mod artefact;
 mod armour;
 pub mod equipment;
 pub mod survival_rules;
 pub mod survival;
+pub mod environment;
+mod authored_shape;
+pub mod travel;
 pub mod loot;
+pub mod alife_checkpoint;
+pub mod alife_interests;
+pub mod alife_npcs;
+pub mod alife_attacks;
+pub mod alife_corpse;
 mod weapon_inventory;
 mod projectile;
+
+pub mod hand_grenade;
+pub mod knife;

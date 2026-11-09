@@ -4,7 +4,7 @@ export class Reconciler {
  constructor(motor,now=()=>performance.now()){this.motor=motor;this.now=now;this.snapshot=null;this.history=[];this.result=null;this.updated=0;this.replays=0;}
  snapshotReceived(snapshot,vitals=null){this.snapshot=snapshot;this.vitals=vitals;this.updated=this.now();this.reconcile();}
  inputsReceived(history){
-  if(!Array.isArray(history)||history.length>MAX_HISTORY||history.some((i,n)=>!Number.isInteger(i.sequence)||i.sequence<0||i.sequence>0xffffffff||!['x','z','yaw'].every(k=>Number.isFinite(i[k]))||Math.abs(i.x)>1.001||Math.abs(i.z)>1.001||typeof i.sprint!=='boolean'||(i.jump!==undefined&&typeof i.jump!=='boolean')||(i.crouch!==undefined&&typeof i.crouch!=='boolean')||(n>0&&!newer(i.sequence,history[n-1].sequence))))throw Error('Invalid prediction history');
+  if(!Array.isArray(history)||history.length>MAX_HISTORY||history.some((i,n)=>!Number.isInteger(i.sequence)||i.sequence<0||i.sequence>0xffffffff||!['x','z','yaw'].every(k=>Number.isFinite(i[k]))||Math.abs(i.x)>1.001||Math.abs(i.z)>1.001||typeof i.sprint!=='boolean'||['jump','crouch','walk'].some(k=>i[k]!==undefined&&typeof i[k]!=='boolean')||(n>0&&!newer(i.sequence,history[n-1].sequence))))throw Error('Invalid prediction history');
   this.history=history;this.reconcile();
  }
  reconcile(){
@@ -29,20 +29,21 @@ export class Reconciler {
  }
  position(){return this.now()-this.updated<=350?this.result:null;}
 }
-export async function createWasmMotor(content,assets,wasmBytes=null){
+export async function createWasmMotor(level,content,assets,wasmBytes=null){
  const geometry=assets.geometry,materials=assets.materials,v=new DataView(geometry.buffer,geometry.byteOffset,geometry.byteLength);
- const manifest={format:'xray-collision-v1',level:'zaton',coordinates:'metres-y-up',sha256:content.geometry,bytes:geometry.byteLength,vertices:v.getUint32(4,true),triangles:v.getUint32(8,true),bounds:{min:[0,1,2].map(i=>v.getFloat32(12+i*4,true)),max:[0,1,2].map(i=>v.getFloat32(24+i*4,true))},source:{archive:'verified-engine',path:'levels/zaton/level.cform'},materials:{sha256:content.materials,bytes:materials.byteLength}};
+ const manifest={format:'xray-collision-v1',level,coordinates:'metres-y-up',sha256:content.geometry,bytes:geometry.byteLength,vertices:v.getUint32(4,true),triangles:v.getUint32(8,true),bounds:{min:[0,1,2].map(i=>v.getFloat32(12+i*4,true)),max:[0,1,2].map(i=>v.getFloat32(24+i*4,true))},source:{archive:'verified-engine',path:`levels/${level}/level.cform`},materials:{sha256:content.materials,bytes:materials.byteLength}};
+ if(content.ladders!==undefined)manifest.ladders=content.ladders;
  const bytes=wasmBytes||await (await fetch(new URL('./zone_prediction.wasm',import.meta.url))).arrayBuffer();
  const {instance}=await WebAssembly.instantiate(bytes,{}),e=instance.exports;
- if(e.zone_version?.()!==4)throw Error('Stale prediction ABI');
+ if(e.zone_version?.()!==6)throw Error('Stale prediction ABI');
  function put(b){const p=e.zone_alloc(b.length);if(!p)throw Error('Prediction allocation failed');new Uint8Array(e.memory.buffer,p,b.length).set(b);return p;}
  const json=new TextEncoder().encode(JSON.stringify(manifest)),pointers=[];
  try{for(const b of [json,geometry,materials])pointers.push([put(b),b.length]);if(e.zone_load(...pointers.flat())!==1)throw Error('Prediction collision validation failed');}
  finally{for(const [p,n]of pointers)e.zone_free(p,n);}
- const out=e.zone_alloc(28);
+ const out=e.zone_alloc(32);
  return {
-  reset(p){if(e.zone_reset(p.x,p.y,p.z,p.flags&2?0:p.vy,p.flags&14)!==1)throw Error('Prediction reset failed');},
-  step(i){if(e.zone_step(i.x,i.z,i.sprint?1:0,i.jump?1:0,i.crouch?1:0)!==1)throw Error('Prediction step failed');},
-  state(){if(e.zone_state(out)!==1)throw Error('Prediction read failed');const f=new Float32Array(e.memory.buffer,out,7);return {x:f[0],y:f[1],z:f[2],vy:f[3],grounded:!!f[4],crouched:!!f[5],jumpHeld:!!f[6]};},
+  reset(p){if(e.zone_reset(p.x,p.y,p.z,p.flags&2?0:p.vy,p.flags&30)!==1)throw Error('Prediction reset failed');},
+  step(i){if(e.zone_step(i.x,i.z,i.sprint?1:0,i.jump?1:0,i.crouch?1:0,i.walk?1:0)!==1)throw Error('Prediction step failed');},
+  state(){if(e.zone_state(out)!==1)throw Error('Prediction read failed');const f=new Float32Array(e.memory.buffer,out,8);return {x:f[0],y:f[1],z:f[2],vy:f[3],grounded:!!f[4],crouched:!!f[5],jumpHeld:!!f[6],climbing:!!f[7]};},
  };
 }

@@ -54,6 +54,162 @@
 #include "xrNetServer/NET_Messages.h"
 #include "xrEngine/GameFont.h"
 
+#ifndef XR_PLATFORM_WEB
+#include "CustomMonster.h"
+#include "ai/monsters/basemonster/base_monster.h"
+#include "alife_simulator.h"
+#include "alife_object_registry.h"
+#include "enemy_manager.h"
+#include "memory_manager.h"
+#include "visual_memory_manager.h"
+#include "xrServer_Objects_ALife_Monsters.h"
+#include <cstdio>
+
+namespace
+{
+bool zoneAlifeProbeEnabled()
+{
+    static const bool enabled = std::strstr(Core.Params, "-zone-alife-probe") != nullptr;
+    return enabled;
+}
+
+// Publish a bounded diagnostic snapshot of the real host simulation. The
+// default browser and native paths do no filesystem work here.
+void writeZoneAlifeProbe(CLevel& level)
+{
+    if (!zoneAlifeProbeEnabled() || !ai().get_alife() || !ai().alife().initialized())
+        return;
+    static u32 last = 0;
+    const u32 now = Device.dwTimeGlobal;
+    if (now - last < 1000)
+        return;
+    last = now;
+
+    string_path output, staging;
+    FS.update_path(output, "$app_data_root$", "zone-alife-probe.tsv");
+    FS.update_path(staging, "$app_data_root$", "zone-alife-probe.tmp");
+    convert_path_separators(output);
+    convert_path_separators(staging);
+    auto* file = std::fopen(staging, "w");
+    if (!file)
+        return;
+
+    unsigned online = 0, offline = 0;
+    for (const auto& [id, object] : ai().alife().objects().objects())
+    {
+        const auto* creature = smart_cast<const CSE_ALifeCreatureAbstract*>(object);
+        if (!creature || smart_cast<const CSE_ALifeCreatureActor*>(creature) || creature->get_health() <= 0.f)
+            continue;
+        ++(creature->m_bOnline ? online : offline);
+    }
+    if (ai().alife().uses_host_interests())
+        std::fprintf(file, "zone-alife-probe\t2\t%u\t%s\t%u\t%u\t%zu\n", now,
+            ai().alife().level_name().c_str(), online, offline, ai().alife().host_interest_count());
+    else
+        std::fprintf(file, "zone-alife-probe\t1\t%u\t%s\t%u\t%u\n", now,
+            ai().alife().level_name().c_str(), online, offline);
+    if (ai().alife().uses_host_interests())
+    {
+        static const bool sampleSquads = std::strstr(Core.Params, "-zone-alife-probe-squads") != nullptr;
+        unsigned sampledOnline = 0;
+        unsigned sampledMembers = 0;
+        for (const auto& [id, object] : ai().alife().objects().objects())
+        {
+            if (sampleSquads && sampledMembers < 2048)
+            {
+                if (const auto* squad = smart_cast<const CSE_ALifeOnlineOfflineGroup*>(object))
+                    for (const auto& [memberId, member] : squad->squad_members())
+                    {
+                        const auto& graph = ai().game_graph();
+                        if (!graph.valid_vertex_id(member->m_tGraphID) ||
+                            graph.vertex(member->m_tGraphID)->level_id() != ai().level_graph().level_id() ||
+                            !_valid(member->o_Position))
+                            continue;
+                        const auto& position = member->o_Position;
+                        std::fprintf(file, "#squad\t%u\t%s\t%u\t%u\t%u\t%.6f\t%.6f\t%.6f\n",
+                            unsigned(id), squad->s_name.c_str(), unsigned(memberId), unsigned(member->m_bOnline),
+                            unsigned(member->m_tGraphID), position.x, position.y, position.z);
+                        if (++sampledMembers == 2048)
+                            break;
+                    }
+            }
+            if (sampledOnline == 2048)
+            {
+                if (!sampleSquads || sampledMembers == 2048)
+                    break;
+                continue;
+            }
+            const auto* creature = smart_cast<const CSE_ALifeCreatureAbstract*>(object);
+            if (!creature || !creature->m_bOnline || creature->get_health() <= 0.f ||
+                smart_cast<const CSE_ALifeCreatureActor*>(creature) || !_valid(creature->o_Position))
+                continue;
+            const auto& position = creature->o_Position;
+            std::fprintf(file, "#online\t%u\t%.6f\t%.6f\t%.6f\n", unsigned(id), position.x, position.y, position.z);
+            ++sampledOnline;
+        }
+    }
+    const auto count = level.Objects.o_count();
+#if defined(XR_PLATFORM_POSIX)
+    xr_vector<const CActor*> targets;
+    if (ai().alife().uses_host_interests())
+        for (u32 i = 0; i < count; ++i)
+            if (const auto* actor = smart_cast<const CActor*>(level.Objects.o_get_by_iterator(i));
+                actor && actor->zoneAlifeTarget() && !actor->getDestroy())
+            {
+                targets.push_back(actor);
+                const auto& position = actor->Position();
+                std::fprintf(file, "#target\t%u\t%.6f\t%.6f\t%.6f\t%u\t%u\t%u\t%u\t%u\t%.6f\n", unsigned(actor->ID()),
+                    position.x, position.y, position.z, actor->zoneAlifeHits(), unsigned(actor->g_Team()),
+                    unsigned((actor->spatial.type & STYPE_VISIBLEFORAI) != 0), unsigned(actor->g_Alive()),
+                    unsigned(actor->GetCForm() != nullptr), const_cast<CActor*>(actor)->ROS()->get_luminocity());
+            }
+    unsigned awarenessRows = 0;
+#endif
+    unsigned sampled = 0;
+    for (u32 i = 0; i < count && sampled < 2048; ++i)
+    {
+        const auto* monster = smart_cast<const CCustomMonster*>(level.Objects.o_get_by_iterator(i));
+        if (!monster || monster->getDestroy() || !monster->Local())
+            continue;
+        const auto& position = monster->Position();
+        const auto& direction = monster->Direction();
+        const float health = monster->GetfHealth();
+        if (!_valid(position) || !_valid(direction) || !std::isfinite(health))
+            continue;
+        std::fprintf(file, "%u\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\n", unsigned(monster->ID()),
+            monster->cNameSect().c_str(), position.x, position.y, position.z,
+            std::atan2(direction.x, direction.z), health);
+        if (ai().alife().uses_host_interests() && monster->g_Alive())
+        {
+            const auto* mutant = smart_cast<const CBaseMonster*>(monster);
+            const auto* enemy = mutant ? mutant->EnemyMan.get_enemy() : monster->memory().enemy().selected();
+            if (const auto* actor = smart_cast<const CActor*>(enemy); actor && actor->zoneAlifeTarget())
+                std::fprintf(file, "#engaged\t%u\t%u\n", unsigned(monster->ID()), unsigned(actor->ID()));
+#if defined(XR_PLATFORM_POSIX)
+            for (const auto* target : targets)
+            {
+                if (awarenessRows == 512)
+                    break;
+                if (monster->Position().distance_to_sqr(target->Position()) > 25.f * 25.f)
+                    continue;
+                std::fprintf(file, "#awareness\t%u\t%u\t%u\t%u\t%u\n", unsigned(monster->ID()),
+                    unsigned(target->ID()), unsigned(monster->g_Team()),
+                    unsigned(mutant ? mutant->EnemyMan.is_enemy(target) : monster->is_relation_enemy(target)),
+                    unsigned(monster->memory().visual().visible_now(target)));
+                ++awarenessRows;
+            }
+#endif
+        }
+        ++sampled;
+    }
+    const bool written = !std::ferror(file);
+    if (std::fclose(file) == 0 && written && std::rename(staging, output) == 0)
+        return;
+    std::remove(staging);
+}
+}
+#endif
+
 #ifdef DEBUG
 #include "level_debug.h"
 #include "ai/stalker/ai_stalker.h"
@@ -79,6 +235,11 @@ CLevel::CLevel()
 {
     ZoneScoped;
 
+#ifndef XR_PLATFORM_WEB
+    // The probe reads both registries on the frame thread.
+    if (zoneAlifeProbeEnabled())
+        g_mt_config.set(mtALife, false);
+#endif
     g_bDebugEvents = strstr(Core.Params, "-debug_ge") != nullptr;
     game_events = xr_new<NET_Queue_Event>();
     eChangeRP = Engine.Event.Handler_Attach("LEVEL:ChangeRP", this);
@@ -474,6 +635,14 @@ void CLevel::OnFrame()
     }
     // Inherited update
     inherited::OnFrame();
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    if (CALifeSwitchManager::host_interests_requested())
+        if (const auto* alife = ai().get_alife())
+            alife->publish_host_npcs(*this);
+#endif
+#ifndef XR_PLATFORM_WEB
+    writeZoneAlifeProbe(*this);
+#endif
     // Draw client/server stats
     if (!GEnv.isDedicatedServer && psDeviceFlags.test(rsStatistic))
     {

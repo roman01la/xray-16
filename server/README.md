@@ -1,18 +1,14 @@
 # Rust multiplayer foundation
 
-Opt-in STALKER CoP browser multiplayer development mode. Rust owns the Zaton
-simulation; the optimized browser engine renders map assets and presentation
-actors. The existing single-player entry, saves and deployed engine artifacts
-remain separate. See [PLAN.md](PLAN.md) for acceptance evidence and outstanding
-work, and [ARCHITECTURE.md](ARCHITECTURE.md) for ownership boundaries.
+The unified Call of Pripyat browser game uses one optimized WebGPU engine for
+single player and the multiplayer alpha. Rust owns the multiplayer simulation
+and the browser engine renders map assets and presentation actors. Single-player
+saves and simulation remain local to the browser. [Unified web build](../misc/web/README.md)
 
-This is a prototype, not a complete survival game. It has static-map movement,
-shared WASM prediction, replication, a fixed test weapon and a stationary NPC.
-Stable development identities and a durable versioned test record are available
-when `ZONE_DATABASE` is configured, together with durable ownership, trusted
-persistent scene fixtures and operational recovery tools. Inventory mechanics,
-active NPC AI, dynamic cover and production account management remain future work.
-See [deployment and recovery](deploy/README.md) for the operational baseline.
+The synthetic harness and isolated Zaton preview below exercise movement,
+prediction, replication, and development combat scenarios. See the plan,
+mechanics and architecture docs for the alpha's gameplay and acceptance status.
+[Plan](PLAN.md) · [Mechanics](MECHANICS.md) · [Manual test plan](MECHANICS_TEST_PLAN.md) · [Architecture](ARCHITECTURE.md) · [Deployment](deploy/README.md)
 
 ## Run the synthetic network harness
 
@@ -45,6 +41,7 @@ emcmake cmake --preset web-multiplayer-release
 cmake --build --preset web-multiplayer-release --parallel 6
 cargo +1.93.1 build --release --locked --target wasm32-unknown-unknown --manifest-path server/prediction/Cargo.toml
 cargo +1.93.1 build --release --locked --manifest-path server/Cargo.toml
+node misc/web/tools/build_dist.mjs
 node misc/web/multiplayer/stage.mjs build/web-multiplayer-release/artifacts ../multiplayer-preview
 ```
 
@@ -64,9 +61,10 @@ For a second engine, append `&slot=b`. Each slot has a separate writable OPFS
 root, including settings and saves; immutable asset cache entries are shared.
 Close extra engine tabs after testing.
 
-Controls include WASD movement, Shift sprint, Space jump, C crouch, J to toggle
-first-person view, V for launcher mode, mouse aim in first person, left-click
-fire, R reload and Enter respawn.
+Controls use the stock bindings for WASD movement, X sprint, Shift walk, Space
+jump and Ctrl crouch. J toggles first-person view, V selects launcher mode,
+left-click fires, R reloads and Enter respawns. First-person view supports mouse
+aim.
 The development page displays authoritative ammo and action results.
 Survival mode uses the original inventory screen and item-backed HUD.
 
@@ -81,8 +79,8 @@ engine's **Test combat cycle** button runs the same scenario with rendered
 proxies. Start combat tests in the spawn safe zone. These are explicit development
 tests, not production launcher flows.
 
-The experimental preset writes only beneath its build tree. The normal
-single-player preset and deployed files remain unchanged. Capability metadata
+The multiplayer-capable preset writes engine artifacts beneath its build tree.
+The isolated harness stages those artifacts with development controls. Capability metadata
 still says `actorAdapter: false`: full native actor/weapon gameplay adaptation
 is incomplete. The local build creates a native CActor and original item objects
 for inventory presentation, while world actors remain proxies. It does not run
@@ -147,7 +145,10 @@ prolonged-soak or 200-independent-machine capacity claim.
 
 Binary fields are little endian, magic `0x5a58`, version 3. Inputs are 20 bytes:
 magic:u16, version:u8, type=1:u8, sequence:u32, x:i16, z:i16, yaw:f32,
-flags:u16 (sprint/jump/crouch bits 0/1/2), reserved:u16=0.
+flags:u16 (sprint, jump, crouch, walk and aim in bits 0–4), pitch:i16.
+Pitch uses radians scaled by 32767/1.55. The 28-byte held-trigger form appends
+the control sequence:u32 and snapshot tick:u32 and shares the input yaw
+and pitch.
 
 Live snapshot type 3 has a 28-byte header: magic/version/type, tick:u32,
 self:u32, input-ack:u32, part:u16, parts:u16, count:u16, flags:u16
@@ -173,11 +174,21 @@ APIs and internal structured values. There is no dual-format compatibility path.
 Reliable control starts with magic:u16, version:u8, opcode:u8. Client commands
 then carry sequence:u32: attack=1 adds target:u32 (12 bytes total); reload=2
 and leave=5 are 8 bytes. Respawn=3 adds a 16-byte request ID and life:u32
-(28 bytes); fire=4 adds tick:u32, yaw:f32, pitch:f32 (20 bytes).
+(28 bytes); fire=4 adds tick:u32, yaw:f32, pitch:f32 and a 16-byte item ID
+(36 bytes total, all-zero ID for fixture fire).
 Inventory_list=6 carries a 16-byte cursor and generation:u64 (32 bytes total;
 all-zero cursor starts a view, all-one generation means unspecified).
 Inventory_move=7 carries request ID:16 bytes, life:u32, item ID:16 bytes,
 revision:u32, action:u8, placement:u8 and source ID:16 bytes (66 bytes total).
+Select_weapon=14 adds slot:u8 and life:u32 (13 bytes total). Slot 1 draws the
+knife, slot 4 draws a grenade and slot 6 draws a bolt. Grenade=15 uses the
+fire fields and appends phase:u8 for the drawn throwable (37 bytes total).
+Phase values 0, 1 and 2 prime, release and cancel the hold.
+The server derives throw force from elapsed simulation ticks.
+Knife=27 uses the fire fields and appends mode:u8 (37 bytes total). Values 0
+and 1 start a slash or stab. The optional aim sample on movement packets
+refreshes the swing only when its action sequence matches the pending knife
+command.
 Unknown opcodes, extra bytes, wrong versions and nonfinite aim fail closed.
 All commands use session sequence protection; inventory mutations and survival
 respawn additionally use durable request IDs and recorded transaction outcomes.
@@ -193,6 +204,34 @@ common envelope names and action names are replaced by opcodes/positions.
 Decoding bounds event size to 16 KiB, nesting to eight, and collection size to
 1024; malformed UTF-8, duplicate/prototype map keys and trailing bytes reject the
 message. Rust/JS acceptance fixtures exercise both directions with actual codecs.
+
+The ordered control channel carries weapon_reload=30 (life, item, alias,
+milliseconds, sound, cancelled). An active phase names a HUD animation and a
+stock sound category. Sound IDs 1 through 8 select magazine, empty magazine,
+jam clear, launcher, break-action single-shell, tube open, tube insert and tube
+close. Terminal cues have an empty alias and zeros for duration and sound.
+Cancellation stops the first-person audio while normal completion lets the
+sample finish.
+
+The unordered state channel also carries grenades=26 (tick, entries) at 10 Hz
+for nearby peers. Each frame contains up to eight hand grenade, launcher round
+or bolt records with projectile ID, original item section and position.
+At capacity the feed prioritizes hand grenades, then launcher rounds, then
+bolts, using distance within each group. An empty frame clears the view.
+The worker expires older positions if that frame is lost.
+
+The same channel carries gunshots=31 (effects) after a firearm round commits.
+Each packet has up to eight entries with shooter entity ID, weapon section,
+sound mode (0 normal, 1 suppressed, 2 underbarrel), and world-space x, y and z.
+Only other players in the same region within the 100 m interest radius receive it.
+
+Lifecycle upserts for living players can include `appearance` with the stock
+`outfit`, `helmet` and drawn `weapon` section names. An optional
+`weaponAddons` mask uses X-Ray's bit order for visible scope, launcher and
+suppressor. It requires a drawn weapon. An upsert replaces the previous
+descriptor, so an omitted field clears that visual. These changes follow the
+same interest area and reliable queue as other lifecycle updates.
+Own-inventory requests use their separate authenticated path.
 
 One UDP socket serves all sessions. An address-to-peer hash map routes established
 traffic, revalidated by `Rtc::accepts`; cache misses search sessions (O(N)) for ICE
@@ -212,8 +251,9 @@ a conservative raw static-map ray. Aim timestamps are bounded to six ticks
 with 30 rounds and 90 reserve, does 35 damage, permits one shot per six ticks and
 reloads over 90 server ticks. Clients cannot specify target, damage or shot origin.
 
-The spawn safe zone is an explicit 10 m sphere around the validated spawn, not
-an authored Skadovsk building zone. Respawn requires 90 dead ticks, resets at a
+The development fallback is a 10 m sphere around the validated spawn. Matching
+stock Zaton, Jupiter and Pripyat maps use the authored hub volumes below.
+Prototype respawn requires 90 dead ticks, resets at a
 validated server-selected location, retains input sequence ordering and removes
 the previous life from rewind. A separate non-lootable corpse expires after
 900 ticks. Current corpses use a static death animation, not local ragdoll physics.
@@ -233,9 +273,73 @@ are implemented separately below; this build is not a public survival server.
 | `ZONE_ORIGIN` | HTTP bind origin | Exact browser Origin accepted |
 | `ZONE_DEV_TOKEN` | unset | Dev Bearer gate; required off loopback |
 | `ZONE_MAX_PLAYERS` | `200` | Includes pending connections, max 4096 |
-| `ZONE_COLLISION_MANIFEST` | unset | Enables pinned Zaton map simulation |
-| `ZONE_SPAWN_X`, `ZONE_SPAWN_Z` | `87.599976`, `115` | Validated map spawn |
+| `ZONE_CAMPAIGN_CONFIG` | unset | JSON defining two to five maps and optional approved travel routes |
+| `ZONE_COLLISION_MANIFEST` | unset | Selects the server's campaign map and its pinned collision files |
+| `ZONE_RELOAD_TIMINGS` | unset | Catalog-matched stock reload timings for authoritative phases and sound cues |
+| `ZONE_SPAWN_X`, `ZONE_SPAWN_Z` | `87.599976`, `115` on Zaton | Validated map spawn. Set both on other maps. |
 | `ZONE_SPAWN_Y` | unset | Optional floor-height anchor for map spawn and respawn |
+| `ZONE_ENVIRONMENT_FIELDS` | unset | Authored radiation, acid, heat and psy fields, with optional Electra simulation and private Svarog markers for the active collision map |
+| `ZONE_RADIATION_FIELDS` | unset | Legacy manifest path when `ZONE_ENVIRONMENT_FIELDS` is unset |
+| `ZONE_LADDERS` | unset | Original climbable geometry for the single active map |
+
+The single-map configuration selects one of Zaton, Jupiter, Pripyat, Jupiter
+Underground and Lab X8. Supply `ZONE_SPAWN_Y` to choose the intended floor in
+underground levels. The unified browser selects its level and verifies its
+geometry and materials using the server's world contract.
+
+The server includes the reviewed Skadovsk, Yanov and laundromat no-weapon
+volumes, keyed by the original CFORM hashes. Regenerate the export from the
+same CoP installation and collision manifests with this command.
+
+```sh
+node server/tools/export-safe-zones.mjs "$game_dir" server/config/cop-safe-zones.json \
+  "$zaton_collision" "$jupiter_collision" "$pripyat_collision"
+```
+
+To extract and check stock HUD reload timings from the same installation as
+the item catalog, run these commands from the repository root.
+
+```sh
+node server/tools/export-reload-timings.mjs "$game_dir" "$item_catalog" "$reload_timings"
+cargo +1.93.1 run --locked --manifest-path server/Cargo.toml --bin catalog-check -- "$item_catalog" "$reload_timings"
+```
+
+The output contains duration metadata and source hashes. Set
+`ZONE_RELOAD_TIMINGS` to that file alongside `ZONE_ITEM_CATALOG` to enable
+server-timed reloads. The server checks the timing export against the item
+catalog at startup. Deployments without a timing export retain their
+immediate reload behavior.
+
+With `ZONE_CAMPAIGN_CONFIG`, one process uses one database and UDP endpoint for
+all configured maps. Set `ZONE_DATABASE` and `ZONE_ITEM_CATALOG`. Omit the
+single-map collision, spawn, loose-loot, environment-field and ladder variables.
+The config file has a `regions` array in entry-map order. Each entry supplies
+`collision` and a walkable `spawn` as `[x,y,z]`. Optional `looseLoot` and
+`environmentFields` paths apply to that map. Generate fields with
+`server/tools/export-radiation-fields.mjs GAME_DIR ITEM_CATALOG LEVEL OUTPUT_JSON --all`.
+Use `--electra` in place of `--all` to include stock Electra mine placements
+and Svarog markers for the original binders' layer 1. Regenerate older field
+exports with this option to enable the markers.
+`ladders` selects that map's records
+from the stock export produced by `server/tools/export-ladders.mjs`.
+`ZONE_AUTHORED_LOOT` may supply one
+stash export for all maps. The optional `travel` object supplies the `export`
+and `approvals` paths. Paths in the config resolve relative to the config file.
+Route approvals have `schema: 1`, the export's `spawnSha256`, and a `routes`
+array of reviewed spawn IDs. Leave travel unconfigured until the intended
+crossings and their campaign dependencies have been reviewed.
+For a local Lab X8 round trip, generate a fresh export and approve 4422 and
+5934. Use at the original Pripyat rooftop generator powers the lift and saves
+its state in the world database. Both buttons require the original
+`zat_a23_labx8_key`. A disposable `ZONE_SURVIVAL_RULES` file can grant the card
+in the starter kit for testing. The standard starter kit has no card.
+
+Public `/world.json` gives the entry map. Authenticated `/world.json` with
+`X-Zone-Identity` gives an existing character's map. Each region has separate
+collision, simulation and visibility. A committed crossing sends a reliable
+binary `travel` event, and the browser reloads using the saved route.
+Ladder-enabled maps pin the exact ladder data in their movement revision.
+The same WASM predictor also accepts maps with the existing static revision.
 
 The dev token is not player authentication. Internet deployment still needs
 HTTPS/signaling proxy, reachable UDP/TURN, account/session authentication,
@@ -268,11 +372,14 @@ serializes first-use enrollment across tabs for the same slot. The server stores
 assigns a stable principal ID and repeats that ID in the private welcome.
 Transport entity IDs remain ephemeral. A second active connection for the same
 principal is rejected, including during negotiation; a dropped connection must
-expire (currently up to 20 seconds) before resuming. This is explicit rejection,
-not automatic takeover. Losing browser storage loses this development credential;
-account recovery and multi-server leases are not implemented. Trusted administrative
-rotation/revocation is available; the durable authorization epoch invalidates live
-sessions and stale queued admissions. Unknown resume credentials never silently create a new identity.
+expire (currently up to 20 seconds) before resuming. The unified multiplayer
+save panel can copy an enrolled key even while the server is offline. After
+closing the first session, use Open save in a separate browser to validate the
+key and resume the same principal. Keep a copy of the key outside browser
+storage for recovery. Trusted administrative rotation and revocation are
+available. The durable authorization epoch invalidates live sessions and stale
+queued admissions. Unknown keys preserve the browser's current save.
+[Save key acceptance](acceptance/multiplayer-save-key.json)
 
 The pinned `rusqlite` 0.41.1 binding (bundled SQLite) runs on a dedicated
 thread with a 32-job queue. WAL + FULL synchronous commits precede successful
@@ -506,6 +613,14 @@ Sources reviewed on 2026-11-07, pinned to exact revisions:
   importing the native server's authority or replacing the inventory with HTML
   is not part of the implementation. The native actor/menu binding now opens the
   original screen and routes a single-item Drop; broader UI acceptance is open.
+- xrMPE's Call of Pripyat co-op release (0.8) shows the original campaign
+  mechanics adapted for four players. Our survival world uses independently
+  active maps and moves one character at a time. The original CoP level
+  changer supplies the crossing volume and destination, and the Rust server
+  persists the destination before the browser switches. Acceptance requires
+  an observer to stay active in the source map while the traveller joins the
+  destination with the same save.
+  [xrMPE 0.8 release](https://www.moddb.com/mods/x-ray-multiplayer-extension/news/xrmpe-update-08-call-of-pripyat-coop-release).
 - [Zone authority](https://github.com/AnarchadiaMC/Zone/blob/1eb99802b41e525f3896d710dee881f67c7e8fa9/docs/AUTHORITY_MODEL.md),
   [AOI](https://github.com/AnarchadiaMC/Zone/blob/1eb99802b41e525f3896d710dee881f67c7e8fa9/zone-server/internal/game/aoi_manager.go),
   [safe zones](https://github.com/AnarchadiaMC/Zone/blob/1eb99802b41e525f3896d710dee881f67c7e8fa9/zone-server/internal/game/safezone.go):

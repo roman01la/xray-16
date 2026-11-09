@@ -49,6 +49,7 @@ mod tests {
 pub struct Admission {
     pub principal: String,
     pub auth_epoch: i64,
+    pub campaign_visit: u32,
 }
 impl Admission {
     pub fn valid_at(&self, epoch: i64) -> bool {
@@ -63,6 +64,7 @@ mod admission_tests {
         let ticket = Admission {
             principal: "a".into(),
             auth_epoch: 4,
+            campaign_visit: 0,
         };
         assert!(ticket.valid_at(4));
         assert!(!ticket.valid_at(5));

@@ -169,6 +169,45 @@ void dir_delete_script_2(CLocatorAPI* fs, LPCSTR path, LPCSTR nm, int remove_fil
 }
 
 void dir_delete_script(CLocatorAPI* fs, LPCSTR full_path, int remove_files) { fs->dir_delete(full_path, remove_files); }
+#ifdef XR_PLATFORM_WEB
+static s32 browser_sound_variant_count(CLocatorAPI* fs, pcstr prefix)
+{
+    if (xr_strlen(prefix) + 15 >= sizeof(string_path))
+        return -2; // Ask the script to use the original probes.
+
+    xr_vector<u32> numbers;
+    bool unnumbered = false;
+    if (!fs->list_numbered_files(numbers, "$game_sounds$", prefix, ".ogg", std::numeric_limits<s32>::max(), &unnumbered))
+        return -2;
+    if (unnumbered)
+        return -1;
+    u32 next = 1;
+    for (const u32 number : numbers)
+    {
+        if (number == 0)
+            continue;
+        if (number != next)
+            break;
+        ++next;
+    }
+    return s32(next - 1);
+}
+
+static int browser_stock_sound_count(lua_State* state)
+{
+    const auto prefix = lua_type(state, 1) == LUA_TSTRING ? lua_tostring(state, 1) : nullptr;
+    lua_pushinteger(state, prefix ? browser_sound_variant_count(&FS, prefix) : -2);
+    return 1;
+}
+
+static int browser_sound_lookup_bindings(lua_State* state)
+{
+    lua_pushcfunction(state, browser_stock_sound_count);
+    lua_pushvalue(state, lua_upvalueindex(1));
+    return 2;
+}
+#endif
+
 LPCSTR get_file_age_str(CLocatorAPI* fs, LPCSTR nm)
 {
     time_t t = fs->get_file_age(nm);
@@ -268,6 +307,9 @@ void fs_registrator::script_register(lua_State* luaState)
             })
             .def("exist", (FileStatus(CLocatorAPI::*)(LPCSTR, FSType))(&CLocatorAPI::exist))
             .def("exist", (FileStatus(CLocatorAPI::*)(LPCSTR, LPCSTR, FSType))(&CLocatorAPI::exist))
+#ifdef XR_PLATFORM_WEB
+            .def("browser_sound_variant_count", &browser_sound_variant_count)
+#endif
 
             .def("get_file_age", &CLocatorAPI::get_file_age)
             .def("get_file_age_str", &get_file_age_str)
@@ -285,4 +327,11 @@ void fs_registrator::script_register(lua_State* luaState)
 
         def("getFS", getFS)
     ];
+
+#ifdef XR_PLATFORM_WEB
+    // The stock sound script can bypass the wrapper only while this is getFS.
+    lua_getglobal(luaState, "getFS");
+    lua_pushcclosure(luaState, browser_sound_lookup_bindings, 1);
+    lua_setglobal(luaState, "__xray_browser_sound_lookup_bindings");
+#endif
 }

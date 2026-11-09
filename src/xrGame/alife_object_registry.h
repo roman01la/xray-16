@@ -20,7 +20,7 @@ protected:
     OBJECT_REGISTRY m_objects;
 
 private:
-    void save(IWriter& memory_stream, CSE_ALifeDynamicObject* object, u32& object_count);
+    void save(IWriter& memory_stream, CSE_ALifeDynamicObject* object, u32& object_count, NET_Packet& packet);
 
 public:
     static CSE_ALifeDynamicObject* get_object(IReader& file_stream);

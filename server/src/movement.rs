@@ -14,6 +14,7 @@ pub struct Character {
     pub grounded: bool,
     pub crouched: bool,
     pub jump_held: bool,
+    pub climbing: bool,
 }
 impl Character {
     pub fn new(feet: Vector) -> Self {
@@ -23,10 +24,12 @@ impl Character {
             grounded: false,
             crouched: false,
             jump_held: false,
+            climbing: false,
         }
     }
     pub fn step(&mut self, map: &CollisionMap, x: f32, z: f32, sprint: bool) -> Result<()> {
-        self.step_command(map, x, z, sprint, false, false).map(|_| ())
+        self.step_command(map, x, z, sprint, false, false, false)
+            .map(|_| ())
     }
     pub fn step_command(
         &mut self,
@@ -36,6 +39,7 @@ impl Character {
         sprint: bool,
         jump: bool,
         crouch: bool,
+        walk: bool,
     ) -> Result<bool> {
         ensure!(
             map.actor_ready(),
@@ -59,6 +63,12 @@ impl Character {
         {
             next.crouched = false;
         }
+        if !jump && !next.crouched && next.climb(map, Vector::new(x / scale, 0., z / scale))? {
+            next.jump_held = false;
+            *self = next;
+            return Ok(false);
+        }
+        next.climbing = false;
         let jumped = jump && !next.jump_held && next.grounded && !next.crouched;
         if jumped {
             next.vertical_speed = 5.0;
@@ -66,7 +76,7 @@ impl Character {
         }
         next.jump_held = jump;
         let height = if next.crouched { 1.2 } else { 1.8 };
-        let speed = if next.crouched {
+        let speed = if next.crouched || walk {
             2.0
         } else if sprint {
             SPRINT_SPEED
@@ -160,6 +170,33 @@ impl Character {
         ensure!(next.feet.is_finite(), "non-finite movement result");
         *self = next;
         Ok(jumped)
+    }
+
+    fn climb(&mut self, map: &CollisionMap, direction: Vector) -> Result<bool> {
+        let mut contacts = map.ladders.iter().filter_map(|ladder| {
+            let along = ladder.contact(self.feet)?;
+            Some((ladder.axis, ladder.speed(direction, along, self.climbing)?))
+        });
+        let Some((axis, speed)) = contacts.next() else {
+            return Ok(false);
+        };
+        if contacts.next().is_some() {
+            return Ok(false);
+        }
+        let mut delta = axis * speed * DT;
+        if speed != 0.0
+            && let Some(hit) = map.sweep_actor_clear(self.feet, delta, 1.8)?
+        {
+            if !self.climbing || speed < 0.0 && map.walkable_contact(&hit) {
+                return Ok(false);
+            }
+            delta *= (hit.time_of_impact - 0.005 / delta.length()).clamp(0., 1.);
+        }
+        self.feet += delta;
+        self.vertical_speed = delta.y / DT;
+        self.grounded = false;
+        self.climbing = true;
+        Ok(true)
     }
 }
 

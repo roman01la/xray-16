@@ -6,7 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 use zone_server::{
+    ballistics::{RoundProfile, SurfaceProfile},
     catalog::Catalog,
+    combat::FireState,
     equipment::Placement,
     inventory::{AttachmentSlot, Context, ItemPayload, ItemState, Move, MoveAction},
     persistence::{Database, Operation, Persistence},
@@ -15,7 +17,20 @@ use zone_server::{
 // Synthetic values exercise rules without checking copyrighted configuration data
 // into Git. The separate catalog-check tool validates the actual extracted catalog.
 fn catalog() -> Arc<Catalog> {
+    fixture_catalog(false)
+}
+fn fixture_catalog(ballistics: bool) -> Arc<Catalog> {
     let definitions = [
+        ("hand_f1", vec![("class", "G_F1_S"), ("slot", "3"), ("inv_weight", "0.6"),
+            ("force_min", "10"), ("force_const", "25"), ("force_max", "30"), ("force_grow_speed", "20"),
+            ("destroy_time", "2500"), ("blast", "3"), ("blast_r", "5"), ("hit_type_blast", "explosion")]),
+        ("hand_smoke", vec![("class", "G_RGD5_S"), ("slot", "3"), ("inv_weight", "0.4"),
+            ("force_min", "10"), ("force_const", "25"), ("force_max", "30"), ("force_grow_speed", "15"),
+            ("destroy_time", "2500"), ("blast", "0"), ("blast_r", "0"), ("hit_type_blast", "strike")]),
+        ("actor", vec![("condition_sect", "actor_condition")]),
+        ("actor_condition", vec![("health_hit_part", "1"), ("power_hit_part", "0.1")]),
+        ("actor_immunities_gd_master", vec![("radiation_immunity", "1"), ("chemical_burn_immunity", "1"),
+            ("burn_immunity", "1"), ("telepatic_immunity", "1")]),
         ("inventory_box", vec![("class", "S_INVBOX")]),
         ("treatment", vec![("class", "S_FOOD"), ("inv_weight", "0.1"),
             ("eat_portions_num", "2"), ("max_uses", "2"), ("use_condition", "true"), ("empty_weight", "0.02"), ("eat_health", "0.1"),
@@ -101,6 +116,9 @@ fn catalog() -> Arc<Catalog> {
                 ("bones_koeff_protection", "outfit_bones"),
                 ("immunities_sect", "outfit_immunity"),
                 ("explosion_protection", "0.35"),
+                ("radiation_protection", "0.003"),
+                ("chemical_burn_protection", "0.2"),
+                ("bleeding_restore_speed", "0.001"),
                 ("upgrades", "group"),
                 ("hit_fraction_actor", "0.25"),
             ],
@@ -119,11 +137,12 @@ fn catalog() -> Arc<Catalog> {
             "helmet",
             vec![("class", "E_HLMET"), ("slot", "11"), ("inv_weight", "1"),
                 ("bones_koeff_protection", "helmet_bones"), ("immunities_sect", "helmet_immunity"),
-                ("hit_fraction_actor", "0.2"), ("explosion_protection", "0.2")],
+                ("hit_fraction_actor", "0.2"), ("explosion_protection", "0.2"),
+                ("radiation_protection", "0.001")],
         ),
         ("outfit_bones", vec![("bip01_head", "1,-1"), ("bip01_spine2", "1,0.65")]),
         ("helmet_bones", vec![("bip01_head", "1,0.55"), ("bip01_spine2", "1,-1")]),
-        ("outfit_immunity", vec![("fire_wound_immunity", "0.1"), ("explosion_immunity", "0.1")]),
+        ("outfit_immunity", vec![("fire_wound_immunity", "0.1"), ("explosion_immunity", "0.1"), ("chemical_burn_immunity", "0.1")]),
         ("helmet_immunity", vec![("fire_wound_immunity", "0.2"), ("explosion_immunity", "0.25")]),
         ("artefact_absorption", vec![("explosion_immunity", "0.2")]),
         (
@@ -134,6 +153,8 @@ fn catalog() -> Arc<Catalog> {
                 ("inv_weight", "0.5"),
                 ("belt", "true"),
                 ("additional_inventory_weight", "4"),
+                ("health_restore_speed", "0.002"),
+                ("radiation_restore_speed", "0.006"),
                 ("hit_absorbation_sect", "artefact_absorption"),
                 ("inv_grid_width", "1"),
                 ("inv_grid_height", "1"),
@@ -179,11 +200,118 @@ fn catalog() -> Arc<Catalog> {
         }
         sections.insert(name, json!({"source":"fixture.ltx","values":values}));
     }
+    if ballistics {
+        sections.insert("mp_bullet_manager", json!({"source":"fixture.ltx","values":{"gravity_const":"9.81"}}));
+        sections.insert("bullet_manager", json!({"source":"fixture.ltx","values":{"air_resistance_k":"1"}}));
+        sections.get_mut("rifle").unwrap()["values"]["bullet_speed"] = json!("600");
+        sections.get_mut("ammo_ap").unwrap()["values"]["k_air_resistance"] = json!("1.5");
+        let mut buck = sections["ammo"].clone();
+        buck["values"]["inv_name"] = json!("buck");
+        buck["values"]["buck_shot"] = json!("15");
+        buck["values"]["k_hit"] = json!("0.3");
+        buck["values"]["k_disp"] = json!("15");
+        sections.insert("buck", buck);
+        let shotgun = &mut sections.get_mut("shotgun").unwrap()["values"];
+        shotgun["ammo_class"] = json!("ammo,ammo_ap,buck");
+        shotgun["bullet_speed"] = json!("240");
+        shotgun["fire_distance"] = json!("100");
+        shotgun["fire_dispersion_base"] = json!("0.2");
+        shotgun["fire_dispersion_condition_factor"] = json!("1.5");
+        shotgun["condition_shot_dec"] = json!("0.0045");
+        shotgun["rpm"] = json!("600");
+        shotgun["hit_power"] = json!("0.52");
+    }
     Arc::new(Catalog::from_bytes(&serde_json::to_vec(&json!({"schema":1,"entry":"system.ltx","files":[{"path":"fixture.ltx","sha256":"0".repeat(64)}],"sections":sections})).unwrap()).unwrap())
 }
+
+#[tokio::test]
+async fn buckshot_debits_once_and_rolls_back_every_victim_on_failure() {
+    use zone_server::{combat::ShotTarget, survival::{FireVictim, Location, Record, ShotVictim, State}, world::CharacterKey};
+    let root = std::env::temp_dir().join(format!("zone-buckshot-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("zone.sqlite");
+    let catalog = fixture_catalog(true);
+    let mut db = Database::open(&path).unwrap();
+    db.set_catalog(catalog.clone());
+    let [(shooter, carry), (victim_a, carry_a), (victim_b, carry_b)] = ['a', 'b', 'c'].map(|key| {
+        let principal = db.execute(&key.to_string().repeat(64), Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
+        let carried = db.initialize_inventory(&principal).unwrap()["carried"].as_str().unwrap().to_owned();
+        (principal, carried)
+    });
+    let mut loaded = catalog.initial_state("shotgun").unwrap();
+    let ItemPayload::Weapon { cartridges, .. } = &mut loaded.payload else { unreachable!() };
+    cartridges.extend(["ammo".into(), "buck".into()]);
+    let gun = db.provision_inventory_item(&carry, "shotgun", &loaded, "slot:3").unwrap();
+    let carried_to_corpse = item(&mut db, &catalog, &carry_a, "ammo");
+    let outfit = db.provision_inventory_item(&carry_b, "outfit", &catalog.initial_state("outfit").unwrap(), "slot:7").unwrap();
+    drop(db);
+
+    let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
+    let context = Context { principal: shooter, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(),
+        position: [0.0; 3], eye_height: 1.55, interaction_radius: 2.0, collision: None,
+        expires: Instant::now() + Duration::from_secs(30) };
+    let at = |position| Location { world: context.world.clone(), content_revision: "fixture".into(), position,
+        yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 };
+    let group = |principal: &str, x, health, count: usize| {
+        let target = ShotTarget { character: CharacterKey { principal: principal.into(), life: 0 },
+            bone: "bip01_spine2", distance: 8.0, speed_factor: 1.0, penetration: None };
+        let mut state = State::default();
+        state.health = health;
+        let authority = ShotVictim {
+            target: target.clone(), context: Context { principal: principal.into(), position: [x, 0.0, 8.0], ..context.clone() },
+            before: Record { revision: 0, state },
+            location: at([x as f32, 0.0, 8.0]), shooter_location: at([0.0; 3]), combat_lock_ms: 60_000,
+        };
+        FireVictim { authority, additional: vec![target; count - 1] }
+    };
+    let joined = store.inventory_request(context.clone(), Operation::LoadCondition).unwrap().await.unwrap().unwrap();
+    let profile: RoundProfile = serde_json::from_value(joined["loadout"]["ballistics"].clone()).unwrap();
+    assert_eq!(profile.pellets, 15);
+    assert!(profile.spread.first > 3.0_f32.to_radians());
+    let fire = || store.inventory_request(context.clone(), Operation::FireWeapon(gun.clone(),
+        vec![group(&victim_a, -0.4, 0.2, 3), group(&victim_b, 0.4, 1.0, 2)],
+        FireState { traced: Some(profile), ..Default::default() })).unwrap();
+
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute_batch(&format!("CREATE TRIGGER reject_second_victim BEFORE UPDATE OF condition ON inventory_characters
+        WHEN OLD.principal='{victim_b}' BEGIN SELECT RAISE(ABORT,'second victim failed'); END;")).unwrap();
+    let item_revision = |id: &str| sql.query_row("SELECT revision FROM inventory_items WHERE id=?1", [id], |row| row.get::<_, u32>(0)).unwrap();
+    let char_state = |id: &str| sql.query_row("SELECT alive,condition_revision,corpse FROM inventory_characters WHERE principal=?1", [id],
+        |row| Ok((row.get::<_, bool>(0)?, row.get::<_, u32>(1)?, row.get::<_, Option<String>>(2)?))).unwrap();
+    assert!(fire().await.unwrap().is_err());
+    assert_eq!(item_revision(&gun), 0);
+    assert_eq!(item_revision(&outfit), 0);
+    assert_eq!(char_state(&victim_a), (true, 0, None));
+    assert_eq!(char_state(&victim_b), (true, 0, None));
+    sql.execute_batch("DROP TRIGGER reject_second_victim").unwrap();
+
+    let outcome = fire().await.unwrap().unwrap();
+    assert_eq!(outcome["shot"]["ammo"], 1);
+    assert_eq!(outcome["ballistics"]["pellets"], 1);
+    assert_eq!(outcome["volley"][0]["applied_pellets"], 2);
+    assert_eq!(outcome["volley"][1]["applied_pellets"], 2);
+    assert_eq!(item_revision(&gun), 1);
+    assert_eq!(item_revision(&outfit), 2);
+    assert_eq!(char_state(&victim_b), (true, 1, None));
+    let (alive, revision, corpse) = char_state(&victim_a);
+    assert_eq!((alive, revision), (false, 1));
+    let corpse_item_container: String = sql.query_row("SELECT container FROM inventory_items WHERE id=?1", [&carried_to_corpse], |row| row.get(0)).unwrap();
+    assert_eq!(corpse, Some(corpse_item_container));
+    let raw: String = sql.query_row("SELECT state FROM inventory_items WHERE id=?1", [&gun], |row| row.get(0)).unwrap();
+    let weapon: ItemState = serde_json::from_str(&raw).unwrap();
+    assert!((weapon.condition - 0.9955).abs() < 0.000_001);
+    assert!(matches!(weapon.payload, ItemPayload::Weapon { cartridges, .. } if cartridges == ["ammo"]));
+    drop(sql);
+    store.flush().await.unwrap();
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
 fn setup() -> (Database, Arc<Catalog>, Context, String) {
+    setup_at(Path::new(":memory:"))
+}
+fn setup_at(path: &Path) -> (Database, Arc<Catalog>, Context, String) {
     let catalog = catalog();
-    let mut db = Database::open(Path::new(":memory:")).unwrap();
+    let mut db = Database::open(path).unwrap();
     db.set_catalog(catalog.clone());
     let principal = db.execute(&"a".repeat(64), Operation::Register).unwrap()["principalId"]
         .as_str()
@@ -196,7 +324,7 @@ fn setup() -> (Database, Arc<Catalog>, Context, String) {
     let ctx = Context {
         principal,
         life: 0,
-        auth_epoch: 0,
+        visit: 0, auth_epoch: 0,
         world: "zaton".into(),
         position: [0.0; 3],
         interaction_radius: 2.0,
@@ -518,28 +646,43 @@ fn replaying_an_old_respawn_after_another_death_cannot_restore_a_life_or_kit() {
 }
 
 #[test]
-fn corpse_and_drop_expiry_never_remove_carried_or_private_items() {
-    use zone_server::survival_rules::SurvivalRules;
-    let (mut db, cat, ctx, carry) = setup();
-    db.set_survival_rules(Arc::new(SurvivalRules {
+fn corpse_and_drop_expiry_preserve_carried_and_private_items_across_restart() {
+    use zone_server::survival_rules::{SurvivalRules, unix_millis};
+    let root = std::env::temp_dir().join(format!("zone-inventory-expiry-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("zone.sqlite");
+    let (mut db, cat, ctx, carry) = setup_at(&path);
+    let rules = Arc::new(SurvivalRules {
         starter_kit: vec![],
+        respawn_delay_seconds: 3600,
         ..SurvivalRules::default()
-    }))
-    .unwrap();
+    });
+    db.set_survival_rules(rules.clone()).unwrap();
     let stored_container = db.initialize_inventory(&ctx.principal).unwrap()["storage"]
         .as_str()
         .unwrap()
         .to_owned();
-    item(&mut db, &cat, &stored_container, "ammo");
+    let stored = item(&mut db, &cat, &stored_container, "ammo");
     let carried = item(&mut db, &cat, &carry, "rifle");
     let dropped = item(&mut db, &cat, &carry, "ammo");
-    db.execute(
+    let other_secret = "b".repeat(64);
+    let other = db.execute(&other_secret, Operation::Register).unwrap()["principalId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other_carry = db.initialize_inventory(&other).unwrap()["carried"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other_item = item(&mut db, &cat, &other_carry, "rifle");
+    let before_drop = unix_millis().unwrap();
+    let drop_result = db.execute(
         &"a".repeat(64),
         Operation::MoveInventory(
             Move {
                 request_id: "drop-expiry".into(),
                 life: 0,
-                item: dropped,
+                item: dropped.clone(),
                 revision: 0,
                 action: MoveAction::Drop,
             },
@@ -547,16 +690,28 @@ fn corpse_and_drop_expiry_never_remove_carried_or_private_items() {
         ),
     )
     .unwrap();
+    assert_eq!(drop_result["status"], "committed");
+    assert_eq!(list(&mut db)["items"][0]["id"], carried);
+    let death = db
+        .execute(&"a".repeat(64), Operation::InventoryDeath(ctx.clone()))
+        .unwrap();
+    assert_eq!(death["status"], "committed");
+    let after_death = unix_millis().unwrap();
+    drop(db);
+
+    let mut db = Database::open(&path).unwrap();
+    db.set_catalog(cat);
+    db.set_survival_rules(rules.clone()).unwrap();
+    assert_eq!(db.expire_inventory(before_drop).unwrap(), 0);
+    assert_eq!(list(&mut db)["corpse"], death["corpse"]);
     assert_eq!(
-        db.expire_inventory(zone_server::survival_rules::unix_millis().unwrap() + 901000)
+        db.expire_inventory(after_death + i64::from(rules.dropped_item_lifetime_seconds) * 1000)
             .unwrap(),
         1
     );
-    assert_eq!(list(&mut db)["items"][0]["id"], carried);
-    db.execute(&"a".repeat(64), Operation::InventoryDeath(ctx.clone()))
-        .unwrap();
+    assert_eq!(list(&mut db)["corpse"], death["corpse"]);
     assert_eq!(
-        db.expire_inventory(zone_server::survival_rules::unix_millis().unwrap() + 1801000)
+        db.expire_inventory(after_death + i64::from(rules.corpse_lifetime_seconds) * 1000)
             .unwrap(),
         1
     );
@@ -576,14 +731,30 @@ fn corpse_and_drop_expiry_never_remove_carried_or_private_items() {
         .unwrap()["reason"],
         "respawn_delay"
     );
-    // Existing private container remains valid after both expiry passes.
-    db.provision_inventory_item(
-        &stored_container,
-        "ammo",
-        &cat.initial_state("ammo").unwrap(),
-        "rucksack",
-    )
-    .unwrap();
+    let other_inventory = db
+        .execute(&other_secret, Operation::ListInventory(String::new(), None))
+        .unwrap();
+    assert_eq!(other_inventory["items"][0]["id"], other_item);
+    drop(db);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let stored_after: String = sql
+        .query_row(
+            "SELECT container FROM inventory_items WHERE id=?1",
+            [&stored],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_after, stored_container);
+    let expired_items: i64 = sql
+        .query_row(
+            "SELECT COUNT(*) FROM inventory_items WHERE id IN (?1,?2)",
+            [&dropped, &carried],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(expired_items, 0);
+    drop(sql);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -881,7 +1052,7 @@ async fn launcher_debit_uses_stock_round_definition_without_spending_rifle_ammun
     let principal = db.execute(&secret, Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
     let carry = db.initialize_inventory(&principal).unwrap()["carried"].as_str().unwrap().to_owned();
     let context = Context {
-        principal, life: 0, auth_epoch: 0, world: "zaton".into(), position: [0.0; 3],
+        principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(), position: [0.0; 3],
         interaction_radius: 2.0, eye_height: 1.55, collision: None,
         expires: Instant::now() + Duration::from_secs(10),
     };
@@ -897,10 +1068,10 @@ async fn launcher_debit_uses_stock_round_definition_without_spending_rifle_ammun
     drop(db);
 
     let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
-    let fire = |queue| store.inventory_request(context.clone(), Operation::FireWeapon(rifle.clone(), None, queue)).unwrap();
+    let fire = |queue| store.inventory_request(context.clone(), Operation::FireWeapon(rifle.clone(), Vec::new(), FireState { queue_index: queue, ..Default::default() })).unwrap();
     assert_eq!(fire(Some(1)).await.unwrap().unwrap()["reason"], "queue_complete");
     let charged = fire(Some(0)).await.unwrap().unwrap();
-    assert_eq!(charged["shot"]["launcher"], json!({"section":"projectile","speed":30.0,"fuse_ticks":300,"blast_power":3.0,"blast_radius":4.0}));
+    assert_eq!(charged["shot"]["launcher"], json!({"section":"projectile","speed":30.0,"timed":false,"fuse_ticks":300,"blast_power":3.0,"blast_radius":4.0}));
     assert_eq!(charged["shot"]["ammo"], 0);
     assert_eq!(charged["shot"]["mass_spent"], 0.2);
     assert_eq!(fire(None).await.unwrap().unwrap()["reason"], "empty");
@@ -925,7 +1096,7 @@ async fn owned_fire_charges_last_cartridge_and_wear_only_in_live_equipped_invent
     let root = std::env::temp_dir().join(format!("zone-equipment-fire-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("zone.sqlite");
-    let catalog = catalog();
+    let catalog = fixture_catalog(true);
     let secret = "a".repeat(64);
     let mut db = Database::open(&path).unwrap();
     db.set_catalog(catalog.clone());
@@ -936,7 +1107,7 @@ async fn owned_fire_charges_last_cartridge_and_wear_only_in_live_equipped_invent
     let context = Context {
         principal,
         life: 0,
-        auth_epoch: 0,
+        visit: 0, auth_epoch: 0,
         world: "zaton".into(),
         position: [0.0; 3],
         interaction_radius: 2.0,
@@ -951,14 +1122,14 @@ async fn owned_fire_charges_last_cartridge_and_wear_only_in_live_equipped_invent
     }
     let rifle = db.provision_inventory_item(&carry, "rifle", &state, "slot:3").unwrap();
     let stowed = db.provision_inventory_item(&carry, "rifle", &state, "rucksack").unwrap();
-    assert!(db.execute(&secret, Operation::FireWeapon(rifle.clone(), None, None)).is_err());
+    assert!(db.execute(&secret, Operation::FireWeapon(rifle.clone(), Vec::new(), Default::default())).is_err());
     let other = db.execute(&"b".repeat(64), Operation::Register).unwrap()["principalId"]
         .as_str().unwrap().to_owned();
     drop(db);
 
     let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
     let shoot = |item: &str, context: Context| {
-        store.inventory_request(context, Operation::FireWeapon(item.into(), None, None)).unwrap()
+        store.inventory_request(context, Operation::FireWeapon(item.into(), Vec::new(), Default::default())).unwrap()
     };
     let mut wrong_context = context.clone();
     wrong_context.life = 1;
@@ -967,8 +1138,37 @@ async fn owned_fire_charges_last_cartridge_and_wear_only_in_live_equipped_invent
     wrong_context.principal = other;
     assert_eq!(shoot(&rifle, wrong_context).await.unwrap().unwrap()["reason"], "weapon_not_equipped");
     assert_eq!(shoot(&stowed, context.clone()).await.unwrap().unwrap()["reason"], "weapon_not_equipped");
-    let result = shoot(&rifle, context).await.unwrap().unwrap();
-    assert_eq!(result["shot"], json!({"ammo":1,"range":160.0,"damage":45,"interval":3,"mass_spent":0.5/15.0}));
+    let select = |slot| store.inventory_request(context.clone(), Operation::SelectWeapon { life: 0, slot }).unwrap();
+    let holstered = select(0).await.unwrap().unwrap();
+    assert_eq!(holstered["status"], "selected");
+    assert_eq!(holstered["loadout"]["active_weapon_slot"], 0);
+    assert_eq!(shoot(&rifle, context.clone()).await.unwrap().unwrap()["reason"], "weapon_not_drawn");
+    let drawn = select(3).await.unwrap().unwrap();
+    assert_eq!(drawn["loadout"]["active_weapon_slot"], 3);
+    let profile: RoundProfile = serde_json::from_value(drawn["loadout"]["ballistics"].clone()).unwrap();
+    let surface = SurfaceProfile { penetration: 0.75, ricochet: true, magnetic: false, energy_min: 0.8, energy_max: 0.5 };
+    assert_eq!(profile, RoundProfile { revision: 0, range: 160.0, speed: 600.0, drag: 1.5, gravity: 9.81, pellets: 1, spread: Default::default(), surface });
+    let fire = |traced| store.inventory_request(context.clone(), Operation::FireWeapon(
+        rifle.clone(), Vec::new(), FireState { traced: Some(traced), ..Default::default() },
+    )).unwrap();
+    let stale = fire(RoundProfile { revision: 1, ..profile }).await.unwrap().unwrap();
+    assert_eq!(stale["reason"], "stale_ballistics");
+    let result = fire(profile).await.unwrap().unwrap();
+    let next: RoundProfile = serde_json::from_value(result["ballistics"].clone()).unwrap();
+    assert_eq!(next, RoundProfile { revision: 1, range: 200.0, drag: 1.0, surface: SurfaceProfile { penetration: 0.35, ..surface }, ..profile });
+    assert_eq!(result["shot"], json!({
+        "ammo": 1,
+        "range": 160.0,
+        "damage": 45,
+        "interval": 3,
+        "mass_spent": 0.5 / 15.0,
+        "native_damage": {
+            "kind": "Bullet",
+            "power": [f64::from(0.45_f32), 0.0, 0.0],
+            "penetration": 0.75,
+            "impulse": 0.0,
+        },
+    }));
     store.flush().await.unwrap();
     drop(store);
     let conn = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
@@ -1025,7 +1225,7 @@ async fn equipped_selector_wraps_and_held_rounds_use_cop_cadence_and_wear() {
     let carry = db.initialize_inventory(&principal).unwrap()["carried"]
         .as_str().unwrap().to_owned();
     let ctx = Context {
-        principal, life: 0, auth_epoch: 0, world: "zaton".into(),
+        principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(),
         position: [0.0; 3], interaction_radius: 2.0, eye_height: 1.55,
         collision: None, expires: Instant::now() + Duration::from_secs(30),
     };
@@ -1044,7 +1244,7 @@ async fn equipped_selector_wraps_and_held_rounds_use_cop_cadence_and_wear() {
 
     let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
     let fire = |index| {
-        store.inventory_request(ctx.clone(), Operation::FireWeapon(weapon.clone(), None, Some(index))).unwrap()
+        store.inventory_request(ctx.clone(), Operation::FireWeapon(weapon.clone(), Vec::new(), FireState { queue_index: Some(index), ..Default::default() })).unwrap()
     };
     let first = fire(0).await.unwrap().unwrap();
     assert_eq!(first["shot"]["queue"], json!({"limit":2,"ticks":1.5}));
@@ -1074,7 +1274,7 @@ async fn owned_misfire_preserves_cartridge_and_wear_and_requires_reload_after_re
     let carry = db.initialize_inventory(&principal).unwrap()["carried"]
         .as_str().unwrap().to_owned();
     let context = Context {
-        principal, life: 0, auth_epoch: 0, world: "zaton".into(),
+        principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(),
         position: [0.0; 3], interaction_radius: 2.0, eye_height: 1.55,
         collision: None, expires: Instant::now() + Duration::from_secs(30),
     };
@@ -1091,7 +1291,7 @@ async fn owned_misfire_preserves_cartridge_and_wear_and_requires_reload_after_re
     conn.execute("UPDATE inventory_items SET state=?1 WHERE id=?2", [legacy.to_string(), rifle.clone()]).unwrap();
     drop(conn);
     let fire = |store: &Persistence| {
-        store.inventory_request(context.clone(), Operation::FireWeapon(rifle.clone(), None, None)).unwrap()
+        store.inventory_request(context.clone(), Operation::FireWeapon(rifle.clone(), Vec::new(), Default::default())).unwrap()
     };
     let store = Persistence::start_with_catalog(&path, Some(catalog.clone())).unwrap();
     assert_eq!(fire(&store).await.unwrap().unwrap()["reason"], "misfire");
@@ -1154,15 +1354,15 @@ fn private_storage_checks_owner_reach_revision_and_life_then_survives_death() {
         .as_str().unwrap().to_owned();
     let rifle = item(&mut db, &catalog, &carried, "rifle");
     let ammo = item(&mut db, &catalog, &carried, "ammo");
-    let discovery = db.execute(&a, Operation::WorldItems(String::new(), context.clone())).unwrap();
+    let discovery = db.execute(&a, Operation::WorldItems(String::new(), context.clone(),Default::default())).unwrap();
     assert_eq!(discovery["storage"]["id"], own_store);
     assert_eq!(discovery["storage"]["position"], json!([0.0,0.0,0.0]));
     assert!(discovery["items"].as_array().unwrap().is_empty());
-    let other_discovery = db.execute(&b, Operation::WorldItems(String::new(), foreign.clone())).unwrap();
+    let other_discovery = db.execute(&b, Operation::WorldItems(String::new(), foreign.clone(),Default::default())).unwrap();
     assert_eq!(other_discovery["storage"]["id"], other_store);
     let mut far = context.clone();
     far.position[0] = 33.0;
-    assert!(db.execute(&a, Operation::WorldItems(String::new(), far)).unwrap().get("storage").is_none());
+    assert!(db.execute(&a, Operation::WorldItems(String::new(), far,Default::default())).unwrap().get("storage").is_none());
 
     let deposit = |id: &str, destination: &str, request: &str, context: &Context| Operation::MoveInventory(
         Move {request_id: request.into(), life: context.life, item: id.into(), revision: 0,
@@ -1208,9 +1408,9 @@ fn private_storage_checks_owner_reach_revision_and_life_then_survives_death() {
 }
 
 fn blast_command(power: f32, revision: u32, state: zone_server::survival::State) -> Operation {
-    use zone_server::survival::{Blast, Location, Record};
-    Operation::ResolveBlast(Blast {
-        power, before: Record { revision, state },
+    use zone_server::survival::{Impact, ImpactKind, Location, Record};
+    Operation::ResolveImpact(Impact {
+        kind: ImpactKind::Blast, power, before: Record { revision, state },
         location: Location { world: "zaton".into(), content_revision: "fixture".into(),
             position: [0.0; 3], yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 },
         combat_lock_ms: 60_000,
@@ -1219,7 +1419,7 @@ fn blast_command(power: f32, revision: u32, state: zone_server::survival::State)
 
 #[tokio::test]
 async fn blast_absorption_and_armour_wear_are_life_scoped_and_atomic() {
-    use zone_server::{combat::ArmourImpact, survival::{BlastOutcome, State}};
+    use zone_server::{combat::ArmourImpact, survival::{ImpactOutcome, State}};
 
     let root = std::env::temp_dir().join(format!("zone-blast-armour-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
@@ -1247,7 +1447,7 @@ async fn blast_absorption_and_armour_wear_are_life_scoped_and_atomic() {
     let sql = rusqlite::Connection::open(&path).unwrap();
     sql.execute_batch("CREATE TRIGGER reject_helmet_wear BEFORE UPDATE OF state ON inventory_items WHEN OLD.section='helmet' BEGIN SELECT RAISE(ABORT,'fixture rejected helmet wear'); END;").unwrap();
     let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
-    let context = Context { principal, life: 0, auth_epoch: 0, world: "zaton".into(),
+    let context = Context { principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(),
         position: [0.0; 3], eye_height: 1.55, interaction_radius: 2.0, collision: None,
         expires: Instant::now() + Duration::from_secs(30) };
     let impact = |life| store.inventory_request(Context { life, ..context.clone() }, blast_command(0.9, 0, State::default())).unwrap();
@@ -1268,14 +1468,14 @@ async fn blast_absorption_and_armour_wear_are_life_scoped_and_atomic() {
     assert_eq!(condition().1.health, 1.0);
     sql.execute_batch("DROP TRIGGER reject_helmet_wear").unwrap();
     assert_eq!(impact(1).await.unwrap().unwrap()["status"], "stale");
-    let result: BlastOutcome = serde_json::from_value(impact(0).await.unwrap().unwrap()).unwrap();
-    assert!(matches!(result, BlastOutcome::Applied { revision: 1, alive: true,
-        impact: ArmourImpact::Hit { power, wound: true, gear_changed: true } } if (power - 0.2).abs() < 1e-6));
+    let result: ImpactOutcome = serde_json::from_value(impact(0).await.unwrap().unwrap()).unwrap();
+    assert!(matches!(result, ImpactOutcome::Applied { revision: 1, alive: true,
+        impact: ArmourImpact::Hit { power, wound: true, gear_changed: true, .. }, power_loss: 0.0 } if (power - 0.2).abs() < 1e-6));
     assert_eq!(impact(0).await.unwrap().unwrap()["status"], "stale");
     let (revision, state) = condition();
     assert_eq!(revision, 1);
     assert!((state.health - 0.8).abs() < 1e-6 && (state.bleeding - 0.2).abs() < 1e-6);
-    let Operation::ResolveBlast(stale) = blast_command(0.9, 0, State::default()) else { unreachable!() };
+    let Operation::ResolveImpact(stale) = blast_command(0.9, 0, State::default()) else { unreachable!() };
     let checkpoint = store.inventory_request(context.clone(), Operation::SaveCondition(stale.before, stale.location)).unwrap();
     assert_eq!(checkpoint.await.unwrap().unwrap()["saved"], false);
     sql.execute_batch("CREATE TRIGGER reject_corpse_transfer BEFORE UPDATE OF container ON inventory_items BEGIN SELECT RAISE(ABORT,'fixture rejected corpse transfer'); END;").unwrap();
@@ -1311,7 +1511,7 @@ fn blast_commit_survives_exit_before_the_simulation_receives_it() {
         let store = Persistence::start_with_catalog(&path, Some(catalog())).unwrap();
         let [first, second] = players;
         let request = |principal, power| {
-            let context = Context { principal, life: 0, auth_epoch: 0, world: "zaton".into(),
+            let context = Context { principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(),
                 position: [0.0; 3], eye_height: 1.55, interaction_radius: 2.0, collision: None,
                 expires: Instant::now() + Duration::from_secs(30) };
             store.inventory_request(context, blast_command(power, 0, State::default())).unwrap()
@@ -1370,8 +1570,124 @@ fn blast_commit_survives_exit_before_the_simulation_receives_it() {
 }
 
 #[tokio::test]
+async fn hand_throw_consumes_the_drawn_item_and_replaces_it_atomically() {
+    use zone_server::hand_grenade::Force;
+    let root = std::env::temp_dir().join(format!("zone-hand-grenade-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("zone.sqlite");
+    let catalog = catalog();
+    let mut db = Database::open(&path).unwrap();
+    db.set_catalog(catalog.clone());
+    let principal = db.execute(&"a".repeat(64), Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
+    let containers = db.initialize_inventory(&principal).unwrap();
+    let carry = containers["carried"].as_str().unwrap();
+    let first = db.provision_inventory_item(carry, "hand_f1", &catalog.initial_state("hand_f1").unwrap(), "slot:4").unwrap();
+    let smoke = db.provision_inventory_item(carry, "hand_smoke", &catalog.initial_state("hand_smoke").unwrap(), "rucksack").unwrap();
+    let spare = db.provision_inventory_item(carry, "hand_f1", &catalog.initial_state("hand_f1").unwrap(), "rucksack").unwrap();
+    let _rifle = db.provision_inventory_item(carry, "rifle", &catalog.initial_state("rifle").unwrap(), "slot:3").unwrap();
+    drop(db);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
+    let context = Context { principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(), position: [0.; 3],
+        interaction_radius: 2.0, eye_height: 1.55, collision: None, expires: Instant::now() + Duration::from_secs(30) };
+    let throw = |id: &str, force| store.inventory_request(context.clone(), Operation::ThrowGrenade(id.into(), force)).unwrap();
+    let slot = || -> Option<String> {
+        use rusqlite::OptionalExtension;
+        sql.query_row("SELECT id FROM inventory_items WHERE container=?1 AND place='slot:4'", [carry], |row| row.get(0)).optional().unwrap()
+    };
+    assert_eq!(throw(&first, Force::Quick).await.unwrap().unwrap()["reason"], "grenade_not_drawn");
+    let drawn = store.inventory_request(context.clone(), Operation::SelectWeapon { life: 0, slot: 4 }).unwrap().await.unwrap().unwrap();
+    assert_eq!(drawn["appearance"]["weapon"], "hand_f1");
+    assert_eq!(throw(&smoke, Force::Quick).await.unwrap().unwrap()["reason"], "grenade_not_equipped");
+    sql.execute_batch("CREATE TRIGGER reject_replacement BEFORE UPDATE OF place ON inventory_items
+        WHEN NEW.place='slot:4' BEGIN SELECT RAISE(ABORT,'fixture rejected replacement'); END;").unwrap();
+    assert!(throw(&first, Force::Quick).await.unwrap().is_err());
+    assert_eq!(slot().as_deref(), Some(first.as_str()));
+    sql.execute_batch("DROP TRIGGER reject_replacement").unwrap();
+    let quick = throw(&first, Force::Quick).await.unwrap().unwrap();
+    assert_eq!(quick["shot"]["launcher"]["speed"], 25.0);
+    assert_eq!(quick["shot"]["launcher"]["fuse_ticks"], 75);
+    assert_eq!(slot().as_deref(), Some(spare.as_str()));
+    assert_eq!(throw(&first, Force::Quick).await.unwrap().unwrap()["reason"], "grenade_not_equipped");
+    let charged = throw(&spare, Force::Held(12)).await.unwrap().unwrap();
+    assert_eq!(charged["shot"]["launcher"]["speed"], 18.0);
+    assert_eq!(slot().as_deref(), Some(smoke.as_str()));
+    let last = throw(&smoke, Force::Held(400)).await.unwrap().unwrap();
+    assert_eq!(last["shot"]["launcher"]["speed"], 30.0);
+    assert_eq!(last["shot"]["launcher"]["blast_power"], 0.0);
+    assert_eq!(last["loadout"]["active_weapon_slot"], 3);
+    assert_eq!(slot(), None);
+    store.flush().await.unwrap();
+    drop(store);
+    drop(sql);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn field_wear_damage_and_full_loss_commit_together() {
+    use zone_server::{environment::{Exposure, Kind, Outcome, Pulse}, survival::{Location, Record, State}};
+    let root = std::env::temp_dir().join(format!("zone-field-exposure-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("zone.sqlite");
+    let catalog = catalog();
+    let mut db = Database::open(&path).unwrap();
+    db.set_catalog(catalog.clone());
+    let principal = db.execute(&"a".repeat(64), Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
+    let containers = db.initialize_inventory(&principal).unwrap();
+    let carry = containers["carried"].as_str().unwrap();
+    let outfit = db.provision_inventory_item(carry, "outfit", &catalog.initial_state("outfit").unwrap(), "slot:7").unwrap();
+    drop(db);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
+    let context = Context { principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(), position: [0.; 3],
+        interaction_radius: 2.0, eye_height: 1.55, collision: None, expires: Instant::now() + Duration::from_secs(30) };
+    let location = Location { world: context.world.clone(), content_revision: "fixture".into(), position: [0.; 3],
+        yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 };
+    let resolve = |revision, state, power| {
+        let pulse = Pulse { kind: Kind::Acid, power };
+        store.inventory_request(context.clone(), Operation::ResolveFields(Exposure {
+            pulses: Arc::from([pulse]), before: Record { revision, state }, location: location.clone(),
+        })).unwrap()
+    };
+    let outfit_state = || -> (u32, ItemState, String) {
+        sql.query_row("SELECT i.revision,i.state,c.kind FROM inventory_items i JOIN item_containers c ON i.container=c.id WHERE i.id=?1",
+            [&outfit], |r| Ok((r.get(0)?, serde_json::from_str(&r.get::<_, String>(1)?).unwrap(), r.get(2)?))).unwrap()
+    };
+    let state = || -> (u32, State) {
+        sql.query_row("SELECT condition_revision,condition FROM inventory_characters WHERE principal=?1", [&context.principal],
+            |r| Ok((r.get(0)?, serde_json::from_str(&r.get::<_, String>(1)?).unwrap()))).unwrap()
+    };
+    let first: Outcome = serde_json::from_value(resolve(0, State::default(), 0.22).await.unwrap().unwrap()).unwrap();
+    assert!(first.commit.alive && first.armour.is_some());
+    let (revision, survived) = state();
+    assert_eq!(revision, 1);
+    assert!((survived.health - 0.8).abs() < 1e-6 && (survived.power - 0.98).abs() < 1e-6);
+    assert_eq!(survived.bleeding, 0.0);
+    let before = outfit_state();
+    assert_eq!(before.0, 1);
+    assert!((before.1.condition - 0.978).abs() < 1e-6);
+    assert!(resolve(0, survived.clone(), 2.0).await.unwrap().unwrap().is_null());
+    sql.execute_batch("CREATE TRIGGER reject_field_corpse BEFORE UPDATE OF container ON inventory_items BEGIN SELECT RAISE(ABORT,'fixture rejected corpse transfer'); END;").unwrap();
+    assert!(resolve(revision, survived.clone(), 2.0).await.unwrap().is_err());
+    assert_eq!(outfit_state(), before);
+    assert_eq!(state().0, revision);
+    assert_eq!(state().1.health, survived.health);
+    sql.execute_batch("DROP TRIGGER reject_field_corpse").unwrap();
+    let final_hit: Outcome = serde_json::from_value(resolve(revision, survived, 2.0).await.unwrap().unwrap()).unwrap();
+    assert!(!final_hit.commit.alive);
+    assert_eq!(state().1.health, 0.0);
+    let (revision, worn, kind) = outfit_state();
+    assert_eq!((revision, kind.as_str()), (3, "corpse"));
+    assert!((worn.condition - 0.778).abs() < 1e-6);
+    store.flush().await.unwrap();
+    drop(store);
+    drop(sql);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn owned_shots_commit_ammunition_and_condition_of_the_correct_armour_together() {
-    use zone_server::{combat::{ArmourImpact, ChargedShot, ShotTarget}, world::CharacterKey};
+    use zone_server::{combat::{ArmourImpact, ChargedShot, ShotTarget}, survival::{Location, Record, ShotVictim, State}, world::CharacterKey};
     let root = std::env::temp_dir().join(format!("zone-armoured-shot-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
     let path = root.join("zone.sqlite");
@@ -1395,11 +1711,24 @@ async fn owned_shots_commit_ammunition_and_condition_of_the_correct_armour_toget
     let sql = rusqlite::Connection::open(&path).unwrap();
     sql.execute_batch("CREATE TRIGGER reject_shot_debit BEFORE UPDATE OF state ON inventory_items WHEN OLD.section='rifle' BEGIN SELECT RAISE(ABORT,'fixture rejected debit'); END;").unwrap();
     let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
-    let context = Context { principal: shooter, life: 0, auth_epoch: 0, world: "zaton".into(), position: [0.; 3],
+    let context = Context { principal: shooter, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(), position: [0.; 3],
         interaction_radius: 2.0, eye_height: 1.55, collision: None, expires: Instant::now() + Duration::from_secs(30) };
+    let condition = || -> (u32, State) {
+        sql.query_row("SELECT condition_revision,condition FROM inventory_characters WHERE principal=?1", [&victim], |row| {
+            Ok((row.get(0)?, serde_json::from_str(&row.get::<_, String>(1)?).unwrap()))
+        }).unwrap()
+    };
     let shoot = |bone, distance, life| {
-        let target = ShotTarget { character: CharacterKey { principal: victim.clone(), life }, bone, distance };
-        store.inventory_request(context.clone(), Operation::FireWeapon(gun.clone(), Some(target), None)).unwrap()
+        let target = ShotTarget { character: CharacterKey { principal: victim.clone(), life }, bone, distance, speed_factor: 1.0, penetration: None };
+        let (revision, state) = condition();
+        let shooter_location = Location { world: context.world.clone(), content_revision: "fixture".into(), position: [0.; 3],
+            yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 };
+        let victim = ShotVictim { target, before: Record { revision, state },
+            context: Context { principal: victim.clone(), life, position: [0., 0., 8.], ..context.clone() },
+            location: Location { position: [0., 0., 8.], ..shooter_location.clone() }, shooter_location,
+            combat_lock_ms: 60_000,
+        };
+        store.inventory_request(context.clone(), Operation::FireWeapon(gun.clone(), vec![zone_server::survival::FireVictim { authority: victim, additional: Vec::new() }], Default::default())).unwrap()
     };
     let read = |id: &str| -> (u32, ItemState) {
         sql.query_row("SELECT revision,state FROM inventory_items WHERE id=?1", [id], |r| {
@@ -1409,11 +1738,24 @@ async fn owned_shots_commit_ammunition_and_condition_of_the_correct_armour_toget
     assert!(shoot("bip01_spine2", 8.0, 0).await.unwrap().is_err());
     assert_eq!(read(&gun), (0, rifle));
     assert_eq!(read(&outfit).0, 0);
+    assert_eq!(condition().0, 0);
     sql.execute_batch("DROP TRIGGER reject_shot_debit").unwrap();
     let hit = |value: Value, rounds, expected_power, expected_wound| {
+        let radiation = &value["shot"]["armour"]["Hit"]["field_armour"];
+        let generation: i64 = sql.query_row(
+            "SELECT generation FROM inventory_characters WHERE principal=?1", [&victim], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(radiation["generation"], generation);
+        let outfit_rating = f64::from(read(&outfit).1.condition) * 0.0003;
+        let helmet_rating = f64::from(read(&helmet).1.condition) * 0.0001;
+        assert!(((radiation["outfit"]["protection"][0].as_f64().unwrap() * radiation["outfit"]["condition"].as_f64().unwrap()) - outfit_rating).abs() < 1e-8);
+        assert!(((radiation["helmet"]["protection"][0].as_f64().unwrap() * radiation["helmet"]["condition"].as_f64().unwrap()) - helmet_rating).abs() < 1e-8);
         let charged: ChargedShot = serde_json::from_value(value["shot"].clone()).unwrap();
         assert_eq!(charged.ammo, rounds);
-        let Some(ArmourImpact::Hit {power, wound, gear_changed}) = charged.armour else { panic!("expected armoured impact"); };
+        let commit = charged.target_commit.unwrap();
+        assert!(commit.alive);
+        assert_eq!(commit.revision, condition().0);
+        let Some(ArmourImpact::Hit {power, wound, gear_changed, ..}) = charged.armour else { panic!("expected armoured impact"); };
         assert!((power - expected_power as f32).abs() < 1e-6);
         assert_eq!(wound, expected_wound);
         assert!(gear_changed);
@@ -1426,9 +1768,29 @@ async fn owned_shots_commit_ammunition_and_condition_of_the_correct_armour_toget
     assert!((read(&helmet).1.condition - 0.94).abs() < 1e-6);
     let far = shoot("bip01_spine2", 250.0, 0).await.unwrap().unwrap();
     assert!(far["shot"].get("armour").is_none());
+    assert_eq!(condition().0, 2);
     assert_eq!(read(&outfit).0, 1);
     hit(shoot("bip01_spine2", 8.0, 0).await.unwrap().unwrap(), 1, 0.1125, true);
     assert!((read(&outfit).1.condition - 0.925).abs() < 1e-6);
+    let (revision, mut state) = condition();
+    assert_eq!(revision, 3);
+    assert!((state.health - 0.7525).abs() < 1e-6 && (state.bleeding - 0.1125).abs() < 1e-6);
+    let deadline = |id: &str| sql.query_row::<i64, _, _>(
+        "SELECT json_extract(location,'$.combat_until_ms') FROM inventory_characters WHERE principal=?1", [id], |r| r.get(0),
+    ).unwrap();
+    assert!(deadline(&victim) > 0);
+    assert_eq!(deadline(&context.principal), deadline(&victim));
+    let previous_deadline = deadline(&context.principal);
+    state.health = 0.01;
+    sql.execute("UPDATE inventory_characters SET condition=?1 WHERE principal=?2", rusqlite::params![serde_json::to_string(&state).unwrap(),victim]).unwrap();
+    sql.execute_batch("CREATE TRIGGER reject_shot_death BEFORE UPDATE OF container ON inventory_items BEGIN SELECT RAISE(ABORT,'fixture rejected corpse transfer'); END;").unwrap();
+    assert!(shoot("bip01_spine2", 8.0, 0).await.unwrap().is_err());
+    assert_eq!(read(&gun).0, 4);
+    assert_eq!(read(&outfit).0, 2);
+    assert_eq!(condition().0, 3);
+    assert_eq!(condition().1.health, 0.01);
+    assert_eq!(deadline(&context.principal), previous_deadline);
+    sql.execute_batch("DROP TRIGGER reject_shot_death").unwrap();
     let stale = shoot("bip01_spine2", 8.0, 1).await.unwrap().unwrap();
     assert_eq!(stale["shot"]["armour"], "Stale");
     assert_eq!(read(&outfit).0, 2);
@@ -1458,7 +1820,7 @@ async fn consumption_spends_one_portion_with_effect_and_replays_across_restart()
     let artefact = ItemState { condition: 0.5, ..catalog.initial_state("artefact").unwrap() };
     db.provision_inventory_item(&carry, "artefact", &artefact, "belt:0").unwrap();
     let context = Context {
-        principal, life: 0, auth_epoch: 0, world: "zaton".into(), position: [0.0; 3],
+        principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(), position: [0.0; 3],
         interaction_radius: 2.0, eye_height: 1.55, collision: None,
         expires: Instant::now() + Duration::from_secs(30),
     };
@@ -1481,6 +1843,10 @@ async fn consumption_spends_one_portion_with_effect_and_replays_across_restart()
     assert_eq!(loadout["capacity_bonus"], 12.0);
     assert_eq!(loadout["power_loss"], 0.75);
     assert_eq!(loadout["outfit_allows_sprint"], false);
+    let restoration = &loadout["restoration"];
+    for (stat, expected) in [("health", 0.001), ("bleeding", 0.001), ("radiation", 0.003)] {
+        assert!((restoration[stat].as_f64().unwrap() - expected).abs() < 1e-8);
+    }
     let treated: Record = serde_json::from_value(outcome["condition"].clone()).unwrap();
     assert_eq!(treated.revision, 1);
     assert!((treated.state.health - 0.6).abs() < 1e-6);
@@ -1505,6 +1871,7 @@ async fn consumption_spends_one_portion_with_effect_and_replays_across_restart()
     assert_eq!(logouts[0].location.position, location.position);
     assert!((logouts[0].loadout.mass - 5.56).abs() < 1e-8);
     let loaded = store.inventory_request(context.clone(), Operation::LoadCondition).unwrap().await.unwrap().unwrap();
+    assert_eq!(loaded["loadout"], *loadout);
     assert_eq!(loaded["condition"], outcome["condition"]);
     assert_eq!(loaded["location"], serde_json::to_value(location).unwrap());
     assert_eq!(store.inventory_request(context.clone(), operation()).unwrap().await.unwrap().unwrap(), outcome);

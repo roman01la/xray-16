@@ -1,6 +1,10 @@
 #include "stdafx.h"
 
+#ifdef XR_PLATFORM_WEB
+#include "SoundRender_Web.h"
+#else
 #include "SoundRender_CoreA.h"
+#endif
 
 XRSOUND_API u32 snd_device_id = u32(-1);
 
@@ -12,7 +16,11 @@ void CSoundManager::CreateDevicesList()
 
     static bool noSound = strstr(Core.Params, "-nosound");
 
+#ifdef XR_PLATFORM_WEB
+    SoundRender = xr_new<CSoundRender_Web>(*this);
+#else
     SoundRender = xr_new<CSoundRender_CoreA>(*this);
+#endif
 
     if (!noSound)
         SoundRender->_initialize_devices_list();

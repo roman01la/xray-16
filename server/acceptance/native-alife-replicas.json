@@ -1,0 +1,45 @@
+{
+  "date": "2026-11-08",
+  "environment": "Optimized native CoP, Rust WebRTC and unified WebGPU Chrome on loopback Zaton, two nearby grounded disposable saves",
+  "transport": {
+    "wire": "ZAN1",
+    "maximumOnlineNpcRecords": 512,
+    "commitsOnlyCompleteFrames": true,
+    "partialAndStaleFrameRegressionPassed": true
+  },
+  "sharedNpc": {
+    "runtimeId": 13,
+    "stockModel": "monsters\\dog\\dog_red",
+    "health": 100,
+    "sampledPosition": [
+      -121.19,
+      3.78,
+      312.21
+    ],
+    "sampledVelocity": [
+      -0.82,
+      -0.06,
+      1.02
+    ],
+    "primaryMotion": {
+      "id": 28,
+      "timeMs": 820
+    },
+    "minimumObservedMovementMetres": 0.35,
+    "bothClientsReceivedSameModelAndMotionRecords": true
+  },
+  "browser": {
+    "webrtcPeers": 2,
+    "bothCppClientsLoadedNativeMeshesAndMotionTracks": true,
+    "bothRemovedReplicasAfterHostStopped": true,
+    "webgpuValidationErrors": [
+      0,
+      0
+    ],
+    "packChunkDownloads": 0,
+    "singlePlayerReachedPlayableZatonWithSameBuild": true,
+    "visualCapture": "The background tab screenshot was black. Both clients acknowledged the replicated models and tracks. A full visual pursuit and attack-effects playthrough remains open."
+  },
+  "rustTestsPassed": 126,
+  "webTestsPassed": 202
+}

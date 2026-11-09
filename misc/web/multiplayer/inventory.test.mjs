@@ -3,6 +3,19 @@ import {InventoryClient} from './inventory.mjs';
 const principal='a'.repeat(32),item={id:'b'.repeat(32),revision:0,section:'fixture',place:'rucksack',state:{condition:1}};
 const page=(items,generation=1,nextCursor=null)=>({items,generation,nextCursor,life:0,alive:true,corpse:null});
 const storage=()=>{const map=new Map();return {getItem:key=>map.get(key)||null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)};};
+test('a committed shell reaches the view before the reload journal closes',async()=>{
+ const saved=storage();let revision=0,complete;
+ const client={inventoryPage:async()=>page([{...item,revision}],revision+1),
+  moveInventory:()=>new Promise(resolve=>{complete=resolve;})};
+ const adapter=new InventoryClient(client,{principal,storage:saved});await adapter.refresh();
+ const reloading=adapter.move(item,{kind:'reload'});
+ revision=1;
+ await adapter.refresh();
+ assert.equal(adapter.view.items[0].revision,1);
+ assert.equal(JSON.parse(saved.getItem(adapter.key)).command.revision,0);
+ complete({status:'committed'});await reloading;
+ assert.equal(saved.getItem(adapter.key),null);adapter.close();
+});
 test('batch resumes after a lost middle reply without repeating completed items or rebasing life',async()=>{
  const items=[item,{...item,id:'c'.repeat(32)},{...item,id:'d'.repeat(32)}],saved=storage(),sent=[];
  let lose=true;

@@ -5,10 +5,84 @@
 
 #include <vorbis/vorbisfile.h>
 
+#ifdef XR_PLATFORM_WEB
+#include <array>
+#include <cstring>
+#include <tuple>
+#endif
+
 CSoundRender_Source::~CSoundRender_Source() { unload(); }
 
 namespace
 {
+#ifdef XR_PLATFORM_WEB
+struct PackedSoundMetadata
+{
+    u32 crc, size, offset;
+    u32 rate, channels, frames, commentSize;
+    std::array<u8, 24> comment;
+
+    auto key() const { return std::tie(crc, size, offset); }
+};
+static_assert(sizeof(PackedSoundMetadata) == 52);
+
+const auto& packed_sound_metadata()
+{
+    static const auto data = [] {
+        xr_vector<PackedSoundMetadata> entries;
+        IReader* file = FS.r_open("$game_config$", "browser_sound_metadata.bin");
+        if (!file)
+            return entries;
+        if (file->length() >= 8 && std::memcmp(file->pointer(), "XSA1", 4) == 0)
+        {
+            file->advance(4);
+            const u32 count = file->r_u32();
+            if (count && count <= 100000 && file->elapsed() == count * sizeof(PackedSoundMetadata))
+            {
+                entries.resize(count);
+                file->r(entries.data(), count * sizeof(PackedSoundMetadata));
+                const auto unordered = std::adjacent_find(entries.begin(), entries.end(),
+                    [](const auto& a, const auto& b) { return a.key() >= b.key(); });
+                if (unordered != entries.end())
+                    entries.clear();
+            }
+        }
+        FS.r_close(file);
+        Msg("* Browser sound metadata: %zu archive entries", entries.size());
+        return entries;
+    }();
+    return data;
+}
+
+const PackedSoundMetadata* find_packed_sound_metadata(pcstr path)
+{
+    const auto& entries = packed_sound_metadata();
+    if (entries.empty())
+        return nullptr;
+    const auto* asset = FS.GetFileDesc(path);
+    if (!asset || asset->vfs == size_t(-1) || asset->size_real != asset->size_compressed)
+        return nullptr;
+    const auto key = std::tie(asset->crc, asset->size_real, asset->ptr);
+    const auto item = std::lower_bound(entries.begin(), entries.end(), key,
+        [](const auto& entry, const auto& value) { return entry.key() < value; });
+    if (item == entries.end() || item->key() != key || !item->rate || item->rate > 384000 ||
+        !item->channels || item->channels > 8 || !item->frames || item->frames > UINT32_MAX / (item->channels * 4) ||
+        item->commentSize > item->comment.size())
+        return nullptr;
+    if (item->commentSize)
+    {
+        IReader comment(const_cast<u8*>(item->comment.data()), item->commentSize);
+        if (comment.length() < 4)
+            return nullptr;
+        const u32 version = comment.r_u32();
+        if ((version == 1 && comment.length() < 16) || (version == 2 && comment.length() < 20) ||
+            (version == OGG_COMMENT_VERSION && comment.length() < 24))
+            return nullptr;
+    }
+    return &*item;
+}
+#endif
+
 bool ov_can_continue_read(long res)
 {
     switch (res)
@@ -157,8 +231,13 @@ bool CSoundRender_Source::LoadWave(pcstr pName)
     ZoneScoped;
 
     pname = pName;
+#ifdef XR_PLATFORM_WEB
+    if (const auto* packed = find_packed_sound_metadata(pName))
+        return set_metadata(packed->rate, u16(packed->channels), packed->frames,
+            packed->commentSize ? packed->comment.data() : nullptr, packed->commentSize);
+#endif
 
-    // Load file into memory and parse WAV-format
+    // Load file into memory and parse the original Vorbis metadata.
     OggVorbis_File ovf;
     {
         IReader* wave = FS.r_open(pname.c_str());
@@ -175,10 +254,26 @@ bool CSoundRender_Source::LoadWave(pcstr pName)
         return false;
     });
 
+    const vorbis_comment* ovm = ov_comment(&ovf, -1);
+    const bool valid = set_metadata(ovi->rate, u16(ovi->channels), ov_pcm_total(&ovf, -1),
+        ovm->comments ? ovm->user_comments[0] : nullptr, ovm->comments ? ovm->comment_lengths[0] : 0);
+    ov_clear(&ovf);
+    return valid;
+}
+
+#ifdef XR_PLATFORM_WEB
+void CSoundRender_Source::InitializePackedMetadata()
+{
+    (void)packed_sound_metadata();
+}
+#endif
+
+bool CSoundRender_Source::set_metadata(u32 rate, u16 channels, s64 frames, const void* comment, size_t commentSize)
+{
     m_data_info = {};
 
-    m_data_info.samplesPerSec = ovi->rate;
-    m_data_info.channels = u16(ovi->channels);
+    m_data_info.samplesPerSec = rate;
+    m_data_info.channels = channels;
 
     if (SoundRender->supports_float_pcm)
     {
@@ -195,16 +290,14 @@ bool CSoundRender_Source::LoadWave(pcstr pName)
     m_data_info.avgBytesPerSec = m_data_info.samplesPerSec * m_data_info.blockAlign;
     m_data_info.bytesPerBuffer = sdef_target_block * m_data_info.avgBytesPerSec / 1000;
 
-    const s64 pcm_total = ov_pcm_total(&ovf, -1);
-    dwBytesTotal = u32(pcm_total * m_data_info.blockAlign);
+    dwBytesTotal = u32(frames * m_data_info.blockAlign);
     fTimeTotal = dwBytesTotal / float(m_data_info.avgBytesPerSec);
 
     m_info = {};
 
-    const vorbis_comment* ovm = ov_comment(&ovf, -1);
-    if (ovm->comments)
+    if (comment)
     {
-        IReader F(ovm->user_comments[0], ovm->comment_lengths[0]);
+        IReader F(const_cast<void*>(comment), commentSize);
         const u32 vers = F.r_u32();
         if (vers == 0x0001)
         {
@@ -233,24 +326,19 @@ bool CSoundRender_Source::LoadWave(pcstr pName)
         else
         {
 #ifndef MASTER_GOLD
-            Log("! Invalid ogg-comment version, file: ", pName);
+            Log("! Invalid ogg-comment version, file: ", pname.c_str());
 #endif
         }
     }
     else
     {
 #ifndef MASTER_GOLD
-        Log("! Missing ogg-comment, file: ", pName);
+        Log("! Missing ogg-comment, file: ", pname.c_str());
 #endif
     }
 
-    R_ASSERT3_CURE(m_info.maxAIDist >= 0.1f && m_info.maxDist >= 0.1f, "Invalid max distance.", pName,
-    {
-        ov_clear(&ovf);
-        return false;
-    });
-
-    ov_clear(&ovf);
+    R_ASSERT3_CURE(m_info.maxAIDist >= 0.1f && m_info.maxDist >= 0.1f, "Invalid max distance.", pname.c_str(),
+        { return false; });
     return true;
 }
 

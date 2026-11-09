@@ -17,5 +17,50 @@
     "gpu": "WebGPU: 55.4 FPS, 1415 frames, 22640 draws, 0 validation errors",
     "overlayHidden": true,
     "status": "engine running"
-  }
-}
+  },
+  "localCombatInputCandidate": {
+    "date": "2026-11-09",
+    "scope": "Optimized unified browser stage with the wasm64 knife and grenade pointer fix. The existing installed archive pack stayed warm. The single-player run used the native console to save and reload.",
+    "wasmSha256": "3813c7cca4ca3819cadab9e1563398427bca5d4f07071296307ec10d5e39ae3b",
+    "singlePlayer": {
+      "singlePlayer": true,
+      "saveAndReload": true,
+      "saveInput": "console",
+      "saveBytes": [
+        623198
+      ],
+      "archiveChunkRequests": 0,
+      "rendering": "WebGPU",
+      "validationErrors": 0
+    },
+    "combatEvidence": "native-alife-close-combat.json",
+    "quickSaveAndLoad": {
+        "singlePlayer": true,
+        "saveAndReload": true,
+        "saveInput": "quicksave",
+        "keyEvents": [
+            {
+                "code": "F5",
+                "focused": "canvas",
+                "locked": "canvas"
+            },
+            {
+                "code": "F5",
+                "focused": "canvas",
+                "locked": "canvas"
+            },
+            {
+                "code": "F9",
+                "focused": "canvas",
+                "locked": "canvas"
+            }
+        ],
+        "saveBytes": [
+            624518
+        ],
+        "archiveChunkRequests": 0,
+        "rendering": "WebGPU",
+        "validationErrors": 0
+    },
+    "quickSaveSetup": "The first F5 coincided with a localized save at campaign startup. After that completed, the second F5 wrote the normal quicksave. F9 reloaded it with the game active and the console closed."
+  }}

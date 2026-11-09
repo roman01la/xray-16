@@ -4,10 +4,12 @@ use std::collections::BTreeMap;
 pub const PASSABLE: u32 = 1 << 7;
 pub const DYNAMIC: u32 = 1 << 8;
 pub const ACTOR_OBSTACLE: u32 = 1 << 12;
+pub const NO_RICOCHET: u32 = 1 << 13;
 #[derive(Debug)]
 pub struct Material {
     pub flags: u32,
     pub shoot_factor: f32,
+    pub density: f32,
 }
 
 pub fn blocks_actor(flags: u32) -> bool {
@@ -63,8 +65,13 @@ pub fn parse(bytes: &[u8]) -> Result<BTreeMap<u32, Material>> {
         ensure!(factors.len() >= 4, "truncated material factors");
         let shoot_factor = f32::from_le_bytes(factors[..4].try_into()?);
         ensure!((0.0..=1.0).contains(&shoot_factor), "invalid material shoot factor");
+        let density = fields.get(&0x1007).map(|raw| -> Result<f32> {
+            ensure!(raw.len() == 4, "invalid material density chunk");
+            Ok(f32::from_le_bytes((*raw).try_into()?))
+        }).transpose()?.unwrap_or_default();
+        ensure!(density.is_finite() && density >= 0.0, "invalid material density");
         let id = u32::from_le_bytes(main[..4].try_into()?);
-        let material = Material { flags: u32::from_le_bytes(flags[..4].try_into()?), shoot_factor };
+        let material = Material { flags: u32::from_le_bytes(flags[..4].try_into()?), shoot_factor, density };
         ensure!(
             out.insert(id, material).is_none(),
             "duplicate material ID"

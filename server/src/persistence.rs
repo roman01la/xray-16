@@ -19,7 +19,7 @@ struct StoreMetrics {
     last_us: AtomicU64,
     max_us: AtomicU64,
 }
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 use tokio::sync::{broadcast, oneshot, watch};
 #[derive(Clone, Debug)]
 pub struct OwnershipChange {
@@ -45,13 +45,24 @@ pub enum Operation {
     ListInventory(String, Option<u64>),
     Corpses(String, crate::inventory::Context),
     CorpseItems(String, String, Option<u64>, crate::inventory::Context),
-    WorldItems(String, crate::inventory::Context),
+    WorldItems(String, crate::inventory::Context, crate::inventory::DetectorScan),
     MoveInventory(crate::inventory::Move, crate::inventory::Context),
+    TimedReload(crate::inventory::Move, Option<std::sync::Arc<crate::reload_timing::ReloadTimings>>),
     // Internal operation; never route a client command to this variant.
     InventoryDeath(crate::inventory::Context),
-    ResolveBlast(crate::survival::Blast),
-    FireWeapon(String, Option<crate::combat::ShotTarget>, Option<u32>),
+    AuthorizeNativeWorld(String, crate::alife_checkpoint::Checkpoint),
+    ImportNativeCorpse(crate::alife_corpse::Corpse, crate::alife_checkpoint::Checkpoint),
+    ResolveImpact(crate::survival::Impact),
+    ResolveFields(crate::environment::Exposure),
+    FireWeapon(String, Vec<crate::survival::FireVictim>, crate::combat::FireState),
+    ThrowGrenade(String, crate::hand_grenade::Force),
+    ThrowBolt(String, crate::hand_grenade::Force),
+    StrikeKnife(String, crate::knife::Mode, Option<Box<crate::survival::ShotVictim>>, bool),
+    SelectWeapon { life: u32, slot: u8 },
+    SelectDetector { life: u32, active: bool },
     LoadCondition,
+    PowerLabLift,
+    Travel(crate::travel::Handoff),
     SaveCondition(crate::survival::Record, crate::survival::Location),
     Consume(crate::inventory::Move, crate::inventory::Context, crate::survival::Record),
     InventoryRespawn(crate::inventory::Respawn,crate::inventory::Context),
@@ -69,8 +80,9 @@ pub struct Persistence {
     runtime: watch::Receiver<crate::scene::RuntimeState>,
     stats: Arc<StoreMetrics>,
     updates: broadcast::Sender<OwnershipChange>,
-    loot_presence: Option<watch::Sender<Option<crate::loot::Presence>>>,
+    loot_presence: Arc<BTreeMap<String, LootPresence>>,
 }
+type LootPresence = watch::Sender<Option<crate::loot::Presence>>;
 impl Persistence {
     pub fn start(path: &Path) -> Result<Self> {
         Self::start_with_catalog(path,None)
@@ -95,6 +107,16 @@ impl Persistence {
         rules: Option<Arc<crate::survival_rules::SurvivalRules>>,
         loot: Option<crate::loot::AuthoredLoot>,
         world: Option<&crate::contract::Contract>,
+    ) -> Result<(Self, Vec<crate::survival::SavedLogout>)> {
+        Self::start_for_worlds(path, catalog, rules, loot.into_iter().collect(), &world.into_iter().collect::<Vec<_>>())
+    }
+
+    pub fn start_for_worlds(
+        path: &Path,
+        catalog: Option<Arc<crate::catalog::Catalog>>,
+        rules: Option<Arc<crate::survival_rules::SurvivalRules>>,
+        loot: Vec<crate::loot::AuthoredLoot>,
+        worlds: &[&crate::contract::Contract],
     ) -> Result<(Self, Vec<crate::survival::SavedLogout>)> {
         if let Some(rules)=&rules{rules.validate(catalog.as_deref().context("survival rules require item catalog")?)?;}
         let canonical;
@@ -129,23 +151,29 @@ impl Persistence {
             Some(file)
         };
         let mut db = Database::open(path)?;
-        let logouts = if let (Some(contract), Some(catalog)) = (world, catalog.as_deref()) {
-            crate::survival::load_logouts(&db.connection.transaction()?, contract, catalog)?
-        } else { Vec::new() };
+        let mut logouts = Vec::new();
+        if let Some(catalog) = catalog.as_deref() {
+            let tx = db.connection.transaction()?;
+            for contract in worlds {
+                logouts.extend(crate::survival::load_logouts(&tx, contract, catalog)?);
+                ensure!(logouts.len() <= 4096, "logout body capacity exceeded");
+            }
+        }
         db.catalog=catalog;
         db.rules=rules;
-        if let Some(loot) = &loot {
+        let mut loot_presence = BTreeMap::new();
+        let mut refill = Vec::new();
+        if !loot.is_empty() {
             let rules = db.rules.as_deref().context("authored loot requires survival rules")?;
             let tx = db.connection.transaction()?;
-            loot.seed(&tx, rules)?;
+            for loot in loot {
+                loot.seed(&tx, rules)?;
+                let (sender, receiver) = watch::channel(None::<crate::loot::Presence>);
+                ensure!(loot_presence.insert(loot.world().to_owned(), sender).is_none(), "duplicate loot world");
+                refill.push((loot, receiver));
+            }
             tx.commit()?;
         }
-        let (loot_presence, presence_updates) = if loot.is_some() {
-            let (tx, rx) = watch::channel(None::<crate::loot::Presence>);
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
         let stats = Arc::new(StoreMetrics::default());
         let worker_stats = stats.clone();
         let (tx, rx) = mpsc::sync_channel::<Job>(32);
@@ -160,7 +188,7 @@ impl Persistence {
                 loop {
                     if polled.elapsed() >= Duration::from_secs(1) {
                         if let Err(error)=db.expire_inventory(crate::survival_rules::unix_millis().unwrap_or(0)){tracing::error!("inventory expiry failed: {error}");}
-                        if let (Some(loot), Some(updates)) = (&loot, &presence_updates) {
+                        for (loot, updates) in &refill {
                             let sample = updates.borrow().clone();
                             if let Some(sample) = sample.filter(|sample| sample.fresh())
                                 && let Err(error) = db.replenish_loot(loot, &sample) {
@@ -197,9 +225,11 @@ impl Persistence {
                     } else {
                         None
                     };
-                    let result = match job.session {
-                        Some(context)=>db.execute_session(&context,operation),
-                        None=>db.execute(&job.secret, operation),
+                    let result = match (job.session, operation) {
+                        (None, Operation::AuthorizeNativeWorld(world, checkpoint)) => db.authorize_native_world(&world, checkpoint),
+                        (None, Operation::ImportNativeCorpse(corpse, checkpoint)) => db.import_native_corpse(corpse, checkpoint),
+                        (Some(context), operation) => db.execute_session(&context, operation),
+                        (None, operation) => db.execute(&job.secret, operation),
                     }.map_err(|error| {
                         tracing::warn!("persistence operation failed: {error}");
                         "persistence unavailable".to_string()
@@ -232,7 +262,7 @@ impl Persistence {
             updates,
             runtime,
             stats,
-            loot_presence,
+            loot_presence: Arc::new(loot_presence),
         }, logouts))
     }
     pub async fn flush(&self) -> Result<(), String> {
@@ -267,8 +297,8 @@ impl Persistence {
     pub fn metrics(&self) -> Value {
         json!({"queued":self.stats.queued.load(Ordering::Relaxed),"peakQueued":self.stats.peak.load(Ordering::Relaxed),"completed":self.stats.completed.load(Ordering::Relaxed),"rejected":self.stats.rejected.load(Ordering::Relaxed),"lastUs":self.stats.last_us.load(Ordering::Relaxed),"maxUs":self.stats.max_us.load(Ordering::Relaxed)})
     }
-    pub fn observe_loot_players(&self, world: &crate::world::World) {
-        if let Some(presence) = &self.loot_presence {
+    pub fn observe_loot_players(&self, id: &str, world: &crate::world::World) {
+        if let Some(presence) = self.loot_presence.get(id) {
             presence.send_replace(Some(crate::loot::Presence::capture(world)));
         }
     }
@@ -279,7 +309,7 @@ impl Persistence {
         self.updates.subscribe()
     }
     pub async fn execute(&self, secret: String, operation: Operation) -> Result<Value, String> {
-        if !valid_secret(&secret) {
+        if !valid_secret(&secret) || matches!(operation, Operation::AuthorizeNativeWorld(..) | Operation::ImportNativeCorpse(..)) {
             return Err("invalid identity credential".into());
         }
         let rx=self.enqueue(secret,None,operation)?;
@@ -293,6 +323,12 @@ impl Persistence {
     pub fn inventory_request(&self,context:crate::inventory::Context,operation:Operation)->Result<oneshot::Receiver<Result<Value,String>>,String>{
         validate_session_operation(&operation).map_err(|_|"invalid session operation")?;
         self.enqueue(String::new(),Some(context),operation)
+    }
+    pub fn native_world_request(&self, world: String, checkpoint: crate::alife_checkpoint::Checkpoint) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
+        self.enqueue(String::new(), None, Operation::AuthorizeNativeWorld(world, checkpoint))
+    }
+    pub fn native_corpse_request(&self, corpse: crate::alife_corpse::Corpse, checkpoint: crate::alife_checkpoint::Checkpoint) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
+        self.enqueue(String::new(), None, Operation::ImportNativeCorpse(corpse, checkpoint))
     }
     fn enqueue(&self,secret:String,session:Option<crate::inventory::Context>,operation:Operation)->Result<oneshot::Receiver<Result<Value,String>>,String>{
         validate_operation(&operation).map_err(|_| "invalid mutation")?;
@@ -318,7 +354,7 @@ impl Persistence {
     }
 }
 fn validate_session_operation(operation:&Operation)->Result<()> {
-    ensure!(matches!(operation,Operation::Corpses(..)|Operation::CorpseItems(..)|Operation::WorldItems(..)|Operation::ListInventory(..)|Operation::MoveInventory(..)|Operation::InventoryDeath(..)|Operation::InventoryRespawn(..)|Operation::ResolveBlast(..)|Operation::FireWeapon(..)|Operation::LoadCondition|Operation::SaveCondition(..)|Operation::Consume(..)),"not an inventory session operation");Ok(())
+    ensure!(matches!(operation,Operation::Corpses(..)|Operation::CorpseItems(..)|Operation::WorldItems(..)|Operation::ListInventory(..)|Operation::MoveInventory(..)|Operation::TimedReload(..)|Operation::InventoryDeath(..)|Operation::InventoryRespawn(..)|Operation::ResolveImpact(..)|Operation::ResolveFields(..)|Operation::FireWeapon(..)|Operation::ThrowGrenade(..)|Operation::ThrowBolt(..)|Operation::StrikeKnife(..)|Operation::SelectWeapon{..}|Operation::SelectDetector{..}|Operation::LoadCondition|Operation::PowerLabLift|Operation::Travel(..)|Operation::SaveCondition(..)|Operation::Consume(..)),"not an inventory session operation");Ok(())
 }
 fn valid_secret(s: &str) -> bool {
     s.len() == 64
@@ -336,32 +372,77 @@ pub(crate) fn validate_request_id(id: &str) -> Result<()> {
     );
     Ok(())
 }
+fn validate_shot_target(target: &crate::combat::ShotTarget) -> Result<()> {
+    ensure!(crate::ownership::valid_id(&target.character.principal)
+        && (0.0..=crate::combat::MAX_OWNED_RANGE).contains(&target.distance)
+        && target.speed_factor.is_finite() && target.speed_factor >= 0.0
+        && target.penetration.is_none_or(|value| (0.0..=crate::ballistics::MAX_PENETRATION).contains(&value)), "invalid shot target");
+    Ok(())
+}
+
 fn validate_operation(operation: &Operation) -> Result<()> {
     match operation {
+        Operation::AuthorizeNativeWorld(world, checkpoint) => {
+            ensure!(crate::inventory::section_valid(world) && checkpoint.lineage != 0
+                && checkpoint.generation >= 0, "invalid native checkpoint");
+            Ok(())
+        }
+        Operation::SelectWeapon { slot, .. } => {
+            ensure!(matches!(slot, 0..=4 | 6), "invalid active weapon slot");
+            Ok(())
+        }
+        Operation::Travel(handoff) => validate_request_id(&handoff.request_id),
         Operation::InventoryRespawn(command,_)=>validate_request_id(&command.request_id),
         Operation::Write(m) => validate_mutation(m),
         Operation::Transfer(m) | Operation::TransferWithContext(m, _) => {
             crate::ownership::validate(m)
         }
-        Operation::MoveInventory(command, _) => command.validate(),
+        Operation::MoveInventory(command, _) | Operation::TimedReload(command, _) => command.validate(),
         Operation::Consume(command, _, _) => {
             ensure!(matches!(command.action, crate::inventory::MoveAction::Consume), "expected consume action");
             command.validate()
         }
-        Operation::FireWeapon(item, target, _) => {
+        Operation::FireWeapon(item, targets, fire) => {
             ensure!(crate::ownership::valid_id(item), "invalid weapon id");
-            if let Some(target) = target {
-                ensure!(crate::ownership::valid_id(&target.character.principal)
-                    && (0.0..=crate::combat::MAX_OWNED_RANGE).contains(&target.distance), "invalid shot target");
+            let limit = usize::from(fire.traced.map_or(1, |round| round.pellets));
+            ensure!(limit <= usize::from(crate::ballistics::MAX_PELLETS) && targets.len() <= limit, "invalid shot volley");
+            let mut seen = std::collections::HashSet::new();
+            let mut contacts = 0;
+            for group in targets {
+                let target = &group.authority.target;
+                contacts += 1 + group.additional.len();
+                ensure!(contacts <= limit && seen.insert(target.character.principal.as_str()), "invalid volley targets");
+                validate_shot_target(target)?;
+                for pellet in &group.additional {
+                    ensure!(pellet.character.principal == target.character.principal
+                        && pellet.character.life == target.character.life, "pellet target differs from volley victim");
+                    validate_shot_target(pellet)?;
+                }
             }
             Ok(())
         }
-        Operation::ResolveBlast(blast) => {
-            ensure!((0.0..=100.0).contains(&blast.power), "invalid blast power");
+        Operation::StrikeKnife(item, _, target, _) => {
+            ensure!(crate::ownership::valid_id(item), "invalid weapon id");
+            if let Some(victim) = target {
+                validate_shot_target(&victim.target)?;
+            }
+            Ok(())
+        }
+        Operation::ThrowGrenade(item, _) | Operation::ThrowBolt(item, _) => {
+            ensure!(crate::ownership::valid_id(item), "invalid grenade id");
+            Ok(())
+        }
+        Operation::ResolveImpact(impact) => {
+            ensure!((0.0..=100.0).contains(&impact.power), "invalid impact power");
+            Ok(())
+        }
+        Operation::ResolveFields(exposure) => {
+            ensure!((1..=crate::environment::MAX_PENDING_PULSES).contains(&exposure.pulses.len())
+                && exposure.pulses.iter().all(|pulse| (0.0..=10.0).contains(&pulse.power)), "invalid field pulses");
             Ok(())
         }
 
-        Operation::WorldItems(cursor,_) | Operation::Corpses(cursor,_) => {
+        Operation::WorldItems(cursor,..) | Operation::Corpses(cursor,_) => {
             ensure!(cursor.is_empty() || crate::ownership::valid_id(cursor), "invalid world item cursor");Ok(())
         }
         Operation::CorpseItems(source,cursor,generation,_) => {
@@ -408,7 +489,7 @@ impl Database {
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(version <= 13, "unsupported persistence schema {version}");
+        ensure!(version <= 22, "unsupported persistence schema {version}");
         if version == 0 {
             let tx = connection.transaction()?;
             tx.execute_batch("CREATE TABLE principals (id TEXT PRIMARY KEY, credential_hash TEXT NOT NULL UNIQUE);
@@ -485,7 +566,67 @@ impl Database {
             tx.execute_batch(crate::survival::LOCATION_SCHEMA)?;
             tx.commit()?;
         }
+        if version < 14 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::travel::SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 15 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::travel::LIFT_SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 16 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::inventory::ACTIVE_WEAPON_SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 17 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::inventory::GRENADE_SLOT_SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 18 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::inventory::KNIFE_SLOT_SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 19 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::inventory::BOLT_SLOT_SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 20 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::artefact::SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 21 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::alife_corpse::SCHEMA)?;
+            tx.commit()?;
+        }
+        if version < 22 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(crate::alife_checkpoint::SCHEMA)?;
+            tx.commit()?;
+        }
         Ok(Self { connection, catalog: None, rules:None })
+    }
+    fn authorize_native_world(&mut self, world: &str, checkpoint: crate::alife_checkpoint::Checkpoint) -> Result<Value> {
+        let tx = self.connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let accepted = checkpoint.admit(&tx, world)?;
+        tx.commit()?;
+        Ok(json!({ "accepted": accepted }))
+    }
+    fn import_native_corpse(&mut self, corpse: crate::alife_corpse::Corpse, checkpoint: crate::alife_checkpoint::Checkpoint) -> Result<Value> {
+        let catalog = self.catalog.as_deref().context("native corpse requires the stock catalog")?;
+        let rules = self.rules.as_deref().context("native corpse requires survival rules")?;
+        let tx = self.connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        ensure!(checkpoint.is_current(&tx, &corpse.world)?, "native corpse checkpoint is no longer current");
+        let result = crate::alife_corpse::commit(&tx, catalog, rules, corpse)?;
+        tx.commit()?;
+        Ok(result)
     }
     fn replenish_loot(&mut self, loot: &crate::loot::AuthoredLoot, sample: &crate::loot::Presence) -> Result<()> {
         let rules = self.rules.as_deref().context("authored loot requires survival rules")?;
@@ -622,16 +763,34 @@ impl Database {
             }
             return Ok(json!({"error":"unauthorized identity"}));
         };
+        let campaign_visit = if session.is_some() {
+            crate::travel::authority(&tx, &principal)?
+        } else {
+            None
+        };
+        if let Some(context) = session && !matches!(operation, Operation::Travel(..)) {
+            let current = campaign_visit.as_ref().map_or(context.visit == 0, |visit| {
+                visit.world == context.world && visit.visit == context.visit
+            });
+            if !current {
+                return Ok(json!({"error":"stale campaign visit"}));
+            }
+        }
         tx.execute("INSERT INTO records(principal,revision,value) VALUES(?1,0,'null') ON CONFLICT DO NOTHING", [&principal])?;
         let loadout_update = session.is_some() && matches!(operation,
-            Operation::MoveInventory(..) | Operation::InventoryDeath(..) | Operation::InventoryRespawn(..) | Operation::Consume(..));
+            Operation::MoveInventory(..) | Operation::TimedReload(..) | Operation::InventoryDeath(..) | Operation::InventoryRespawn(..) | Operation::Consume(..) | Operation::SelectWeapon { .. } | Operation::SelectDetector { .. });
         let mut result = match operation {
+            Operation::AuthorizeNativeWorld(..) | Operation::ImportNativeCorpse(..) => bail!("native world requires the private host"),
             Operation::Register | Operation::Resume => {
                 let epoch: i64 =
                     tx.query_row("SELECT auth_epoch FROM runtime_meta WHERE id=1", [], |r| {
                         r.get(0)
                     })?;
-                json!({"principalId":principal,"authEpoch":epoch})
+                let mut result = json!({"principalId":principal,"authEpoch":epoch});
+                if let Some(visit) = crate::travel::authority(&tx, &principal)? {
+                    result["campaign"] = serde_json::to_value(visit)?;
+                }
+                result
             }
             Operation::Read => {
                 let (revision, value): (u32, String) = tx.query_row(
@@ -656,54 +815,107 @@ impl Database {
             }
             Operation::Corpses(after,context)=>{
                 crate::inventory::initialize(&tx,&principal)?;
-                crate::inventory::corpses(&tx,&principal,&after,&context)?
+                crate::inventory::corpses(&tx,&principal,&after,session.unwrap_or(&context))?
             }
             Operation::CorpseItems(source,after,generation,context)=>{
                 crate::inventory::initialize(&tx,&principal)?;
-                crate::inventory::container_items(&tx,&principal,&source,&after,generation,&context,self.rules.as_deref())?
+                crate::inventory::container_items(&tx,&principal,&source,&after,generation,session.unwrap_or(&context),self.rules.as_deref())?
             }
-            Operation::WorldItems(after, context) => {
+            Operation::WorldItems(after, context, detector_scan) => {
                 crate::inventory::initialize(&tx, &principal)?;
-                crate::inventory::world_items(&tx, &principal, &after, &context, self.rules.as_deref())?
+                crate::inventory::world_items(&tx, &principal, &after, session.unwrap_or(&context), self.rules.as_deref(), self.catalog.as_deref(), &detector_scan)?
             }
             Operation::MoveInventory(command, context) => {
                 crate::inventory::initialize_with_rules(&tx, &principal,self.catalog.as_deref(),self.rules.as_deref())?;
-                crate::inventory::move_item(&tx, &principal, &command, &context, self.catalog.as_deref(),self.rules.as_deref(),None)?
+                crate::inventory::move_item(&tx, &principal, &command, session.unwrap_or(&context), self.catalog.as_deref(),self.rules.as_deref(),None)?
+            }
+            Operation::TimedReload(command, timings) => {
+                let context = session.context("timed reload requires a live session")?;
+                crate::inventory::timed_reload(&tx, context, &command,
+                    self.catalog.as_deref().context("timed reload requires an item catalog")?,
+                    self.rules.as_deref(), timings.as_deref())?
             }
             Operation::LoadCondition => {
-                session.context("condition requires a live session")?;
+                let context = session.context("condition requires a live session")?;
                 crate::inventory::initialize_with_rules(&tx, &principal, self.catalog.as_deref(), self.rules.as_deref())?;
+                crate::travel::bind(&tx, context)?;
                 let (life, alive, record, location) = crate::survival::load(&tx, &principal)?;
-                let loadout = self.catalog.as_deref().map(|catalog| crate::inventory::loadout(&tx, &principal, catalog)).transpose()?.unwrap_or_default();
-                json!({"life":life,"alive":alive,"condition":record,"location":location,"loadout":loadout})
+                let (loadout, appearance) = self.catalog.as_deref().map(|catalog| crate::inventory::carried_equipment(&tx, &principal, catalog)).transpose()?.unwrap_or_default();
+                let visit = campaign_visit.map_or(0, |visit| visit.visit);
+                json!({"life":life,"visit":visit,"alive":alive,"condition":record,"location":location,"loadout":loadout,"appearance":appearance})
+            }
+            Operation::Travel(handoff) => {
+                let context = session.context("travel requires a live session")?;
+                crate::travel::commit(&tx, context, handoff)?
+            }
+            Operation::PowerLabLift => {
+                let context = session.context("lift generator requires a live session")?;
+                crate::travel::power_lift(&tx, context)?
             }
             Operation::SaveCondition(record, location) => {
                 let context = session.context("condition requires a live session")?;
+                ensure!(campaign_visit.is_none() || location.world == context.world, "checkpoint world differs from campaign visit");
                 json!({"saved":crate::survival::checkpoint(&tx, &principal, context.life, &record, &location)?})
             }
-            Operation::Consume(command, context, record) => {
-                session.context("consumption requires a live session")?;
-                crate::inventory::move_item(&tx, &principal, &command, &context, self.catalog.as_deref(),
+            Operation::Consume(command, _, record) => {
+                let context = session.context("consumption requires a live session")?;
+                crate::inventory::move_item(&tx, &principal, &command, context, self.catalog.as_deref(),
                     self.rules.as_deref(), Some(record))?
             }
-            Operation::FireWeapon(item, target, queue_index) => {
+            Operation::FireWeapon(item, target, fire) => {
                 let context = session.context("firing requires a live session")?;
-                crate::weapon_inventory::debit_shot(&tx, &principal, context.life, &item,
-                    self.catalog.as_deref().context("firing requires item catalog")?, target.as_ref(), queue_index)?
+                crate::weapon_inventory::debit_shot(&tx, context, &item,
+                    self.catalog.as_deref().context("firing requires item catalog")?, target,
+                    fire, self.rules.as_deref())?
             }
-            Operation::ResolveBlast(blast) => {
-                let context = session.context("blast requires a live session")?;
-                let result = crate::survival::resolve_blast(&tx,
-                    self.catalog.as_deref().context("blast requires item catalog")?,
-                    self.rules.as_deref(), context, blast)?;
+            Operation::ThrowGrenade(item, force) => {
+                let context = session.context("throwing requires a live session")?;
+                crate::hand_grenade::debit(&tx, context, &item,
+                    self.catalog.as_deref().context("throwing requires item catalog")?, force)?
+            }
+            Operation::ThrowBolt(item, force) => {
+                let context = session.context("throwing requires a live session")?;
+                crate::hand_grenade::prepare_bolt(&tx, context, &item,
+                    self.catalog.as_deref().context("throwing requires item catalog")?, force)?
+            }
+            Operation::StrikeKnife(item, mode, target, splash) => {
+                let context = session.context("striking requires a live session")?;
+                crate::knife::strike(&tx, context, &item,
+                    self.catalog.as_deref().context("striking requires item catalog")?, (mode, splash),
+                    target.map(|target| *target), self.rules.as_deref())?
+            }
+            Operation::SelectWeapon { life, slot } => {
+                let context = session.context("weapon selection requires a live session")?;
+                crate::inventory::select_weapon(&tx, context, life, slot,
+                    self.catalog.as_deref().context("weapon selection requires item catalog")?)?
+            }
+            Operation::SelectDetector { life, active } => {
+                let context = session.context("detector selection requires a live session")?;
+                crate::artefact::select(&tx, context, life, active,
+                    self.catalog.as_deref().context("detector selection requires item catalog")?)?
+            }
+            Operation::ResolveImpact(impact) => {
+                let context = session.context("impact requires a live session")?;
+                ensure!(campaign_visit.is_none() || impact.location.world == context.world, "impact world differs from campaign visit");
+                let result = crate::survival::resolve_impact(&tx,
+                    self.catalog.as_deref().context("impact requires item catalog")?,
+                    self.rules.as_deref(), context, impact)?;
+                serde_json::to_value(result)?
+            }
+            Operation::ResolveFields(exposure) => {
+                let context = session.context("fields require a live session")?;
+                ensure!(exposure.location.world == context.world, "field world differs from campaign visit");
+                let result = crate::environment::resolve(&tx,
+                    self.catalog.as_deref().context("fields require item catalog")?,
+                    self.rules.as_deref(), context, exposure)?;
                 serde_json::to_value(result)?
             }
             Operation::InventoryDeath(context) => {
                 crate::inventory::initialize(&tx, &principal)?;
-                crate::inventory::die(&tx, &principal, &context,self.rules.as_deref())?
+                crate::inventory::die(&tx, &principal, session.unwrap_or(&context),self.rules.as_deref())?
             }
             Operation::InventoryRespawn(command,context)=>{
-                crate::inventory::respawn(&tx,&principal,&command,&context,self.catalog.as_deref().context("respawn requires catalog")?,self.rules.as_deref().context("respawn requires rules")?)?
+                crate::inventory::respawn(&tx,&principal,&command,session.unwrap_or(&context),self.catalog.as_deref().context("respawn requires catalog")?,self.rules.as_deref().context("respawn requires rules")?)?
             }
             Operation::Write(m) => {
                 let request = serde_json::to_string(&m)?;
@@ -746,10 +958,21 @@ impl Database {
                 response
             }
         };
-        if loadout_update && matches!(result["status"].as_str(), Some("committed" | "respawned"))
+        if loadout_update && matches!(result["status"].as_str(), Some("committed" | "respawned" | "selected"))
             && let Some(catalog) = self.catalog.as_deref()
         {
-            result["loadout"] = serde_json::to_value(crate::inventory::loadout(&tx, &principal, catalog)?)?;
+            tx.execute("UPDATE inventory_characters SET grenade_drawn=0 WHERE principal=?1 AND grenade_drawn=1 AND NOT EXISTS (
+                SELECT 1 FROM inventory_items i JOIN item_containers c ON c.id=i.container
+                WHERE c.owner=?1 AND c.kind='carried' AND i.place='slot:4')", [&principal])?;
+            let (loadout, appearance) = crate::inventory::carried_equipment(&tx, &principal, catalog)?;
+            if loadout.active_weapon_slot == 0 && result["status"] == "committed" {
+                // Moving the selected weapon out of its slot holsters it in the
+                // same transaction. NULL keeps the legacy auto-selection rule.
+                tx.execute("UPDATE inventory_characters SET active_weapon_slot=0
+                    WHERE principal=?1 AND active_weapon_slot IN (1,2,3,6)", [&principal])?;
+            }
+            result["loadout"] = serde_json::to_value(loadout)?;
+            result["appearance"] = serde_json::to_value(appearance)?;
         }
         tx.commit()?;
         Ok(result)
@@ -768,6 +991,117 @@ mod tests {
             expected_revision: revision,
             value: json!({"test":n}),
         })
+    }
+
+    fn campaign_context(principal: String, level: &str, visit: u32) -> crate::inventory::Context {
+        let mut collision = crate::collision::tests::actor_fixture(0);
+        collision.manifest.level = level.into();
+        crate::inventory::Context {
+            principal,
+            life: 0,
+            visit,
+            auth_epoch: 0,
+            world: format!("{level}-static-v1"),
+            position: [1.0, 0.0, 1.0],
+            interaction_radius: 2.0,
+            eye_height: 1.55,
+            collision: Some(Arc::new(collision)),
+            expires: std::time::Instant::now() + Duration::from_secs(30),
+        }
+    }
+
+    fn campaign_location(level: &str) -> crate::survival::Location {
+        crate::survival::Location {
+            world: format!("{level}-static-v1"),
+            content_revision: "a".repeat(64),
+            position: [1.0, 0.0, 1.0],
+            yaw: 1.0,
+            crouched: false,
+            combat_until_ms: 123,
+            logout_until_ms: 0,
+        }
+    }
+
+    fn campaign_handoff(to: &str, request_id: &str, revision: u32) -> Operation {
+        let mut state = crate::survival::State::default();
+        state.apply_hit(0.2, true);
+        Operation::Travel(crate::travel::Handoff {
+            request_id: request_id.into(),
+            route: 1012,
+            before: crate::survival::Record { revision, state },
+            arrival: campaign_location(to),
+        })
+    }
+
+    #[test]
+    fn campaign_handoff_survives_lost_reply_and_fences_prior_visits() {
+        let path = std::env::temp_dir().join(format!("zone-campaign-handoff-{}.sqlite", std::process::id()));
+        let key = secret('a');
+        let mut db = Database::open(&path).unwrap();
+        let principal = db.execute(&key, Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
+        let source = campaign_context(principal.clone(), "zaton", 0);
+        let destination = campaign_context(principal.clone(), "jupiter", 1);
+        db.execute_session(&source, Operation::LoadCondition).unwrap();
+        let carry = db.initialize_inventory(&principal).unwrap()["carried"].as_str().unwrap().to_owned();
+        db.provision_inventory_item(&carry, "bandage", &crate::inventory::ItemState {
+            condition: 0.8, upgrades: Vec::new(), payload: crate::inventory::ItemPayload::Consumable { uses: 1 },
+        }, "rucksack").unwrap();
+        let inventory = || Operation::ListInventory(String::new(), None);
+        let original = db.execute_session(&source, inventory()).unwrap();
+        let outbound = || campaign_handoff("jupiter", "outbound", 0);
+        db.connection.execute_batch(
+            "CREATE TRIGGER fail_receipt BEFORE INSERT ON outcomes
+             BEGIN SELECT RAISE(ABORT, 'lost receipt write'); END;"
+        ).unwrap();
+        assert!(db.execute_session(&source, outbound()).is_err());
+        let unchanged = db.execute_session(&source, Operation::LoadCondition).unwrap();
+        assert_eq!(unchanged["condition"]["revision"], 0);
+        assert_eq!(unchanged["location"], Value::Null);
+        db.connection.execute_batch("DROP TRIGGER fail_receipt;").unwrap();
+        drop(db);
+
+        // Exit before the simulation or client can consume the committed reply.
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "persistence::tests::campaign_handoff_crash_child"])
+            .env("ZONE_TEST_CAMPAIGN_CRASH_DB", &path)
+            .status().unwrap();
+        assert_eq!(child.code(), Some(73));
+
+        let mut db = Database::open(&path).unwrap();
+        let route = db.execute(&key, Operation::Resume).unwrap();
+        assert_eq!(route["campaign"], json!({"world":"jupiter-static-v1","visit":1}));
+        let replay = db.execute_session(&source, outbound()).unwrap();
+        assert_eq!(replay, json!({"status":"committed","world":"jupiter-static-v1","visit":1,"life":0}));
+        let arrival = db.execute_session(&destination, Operation::LoadCondition).unwrap();
+        assert_eq!(arrival["condition"]["revision"], 1);
+        assert_eq!(arrival["condition"]["state"]["health"], json!(0.8_f32));
+        assert_eq!(arrival["condition"]["state"]["bleeding"], json!(0.2_f32));
+        assert_eq!(arrival["location"], serde_json::to_value(campaign_location("jupiter")).unwrap());
+        assert_eq!(db.execute_session(&destination, inventory()).unwrap(), original);
+
+        let old = || Operation::SaveCondition(serde_json::from_value(arrival["condition"].clone()).unwrap(), campaign_location("zaton"));
+        assert_eq!(db.execute_session(&source, old()).unwrap()["error"], "stale campaign visit");
+        assert_eq!(db.execute_session(&source, Operation::LoadCondition).unwrap()["error"], "stale campaign visit");
+        assert_eq!(db.execute_session(&destination, campaign_handoff("zaton", "inbound", 1)).unwrap()["visit"], 2);
+        assert_eq!(db.execute_session(&source, inventory()).unwrap()["error"], "stale campaign visit");
+        assert_eq!(db.execute_session(&source, Operation::LoadCondition).unwrap()["error"], "stale campaign visit");
+        assert_eq!(db.execute_session(&source, outbound()).unwrap(), replay);
+        let returned = campaign_context(principal, "zaton", 2);
+        assert_eq!(db.execute_session(&returned, inventory()).unwrap(), original);
+        assert_eq!(db.execute_session(&returned, Operation::InventoryDeath(returned.clone())).unwrap()["status"], "committed");
+        assert_eq!(db.execute(&key, Operation::Resume).unwrap()["campaign"], json!({"world":"zaton-static-v1","visit":2}));
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn campaign_handoff_crash_child() {
+        let Some(path) = std::env::var_os("ZONE_TEST_CAMPAIGN_CRASH_DB") else { return; };
+        let mut db = Database::open(Path::new(&path)).unwrap();
+        let principal = db.execute(&secret('a'), Operation::Resume).unwrap()["principalId"].as_str().unwrap().to_owned();
+        let context = campaign_context(principal, "zaton", 0);
+        assert_eq!(db.execute_session(&context, campaign_handoff("jupiter", "outbound", 0)).unwrap()["status"], "committed");
+        std::process::exit(73);
     }
     #[test]
     fn durable_identity_cas_replay_and_isolation() {

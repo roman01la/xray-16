@@ -37,7 +37,7 @@ impl Presence {
         self.captured.elapsed() <= PRESENCE_MAX_AGE
     }
 
-    fn near_stash(&self, slots: &[Slot], radius: f64) -> bool {
+    pub(crate) fn near_positions(&self, positions: impl Iterator<Item = [f32; 3]> + Clone, radius: f64) -> bool {
         // Horizontal proximity covers the floors above and below a stash.
         // Allow for normal sprint movement between the sample and the commit.
         let margin = f64::from(crate::movement::SPRINT_SPEED) * PRESENCE_MAX_AGE.as_secs_f64();
@@ -45,8 +45,7 @@ impl Presence {
         self.players.iter().any(|player| {
             !player.x.is_finite()
                 || !player.z.is_finite()
-                || slots.iter().any(|slot| {
-                    let [x, _, z] = slot.position.position;
+                || positions.clone().any(|[x, _, z]| {
                     let dx = f64::from(player.x) - f64::from(x);
                     let dz = f64::from(player.z) - f64::from(z);
                     dx * dx + dz * dz <= radius_squared
@@ -83,7 +82,7 @@ CREATE TABLE authored_loose_slots(
 );
 PRAGMA user_version=11;";
 
-fn deadline(now: i64, rules: &SurvivalRules) -> i64 {
+pub(crate) fn deadline(now: i64, rules: &SurvivalRules) -> i64 {
     now.saturating_add(i64::from(rules.loot_respawn_seconds) * 1000)
 }
 
@@ -184,9 +183,15 @@ pub struct AuthoredLoot {
     digest: String,
     stashes: Vec<(String, Vec<Slot>)>,
     loose: Vec<LoosePlacement>,
+    spawn_digest: String,
+    artefacts: Option<crate::artefact::AuthoredArtefacts>,
 }
 
 impl AuthoredLoot {
+    pub(crate) fn world(&self) -> &str {
+        &self.world
+    }
+
     pub fn load(
         path: &Path,
         loose_path: Option<&Path>,
@@ -195,7 +200,7 @@ impl AuthoredLoot {
         catalog: &Catalog,
     ) -> Result<Self> {
         ensure!(
-            world == "zaton-static-v1" && collision.manifest.level == "zaton",
+            crate::session::campaign_level(world) == Some(collision.manifest.level.as_str()),
             "authored loot requires matching real-map authority"
         );
         ensure!(
@@ -209,7 +214,7 @@ impl AuthoredLoot {
             manifest.schema == 1 && manifest.item_catalog_sha256 == catalog.sha256,
             "authored loot manifest or catalog revision mismatch"
         );
-        ensure!(manifest.stashes.len() <= 1024, "too many authored stashes");
+        ensure!((1..=1024).contains(&manifest.stashes.len()), "invalid campaign stash count");
         let mut stashes = Vec::new();
         let mut stash_ids = BTreeSet::new();
         let mut spawn_ids = BTreeSet::new();
@@ -264,10 +269,9 @@ impl AuthoredLoot {
             }
             stashes.push((stash.id, slots));
         }
-        ensure!(
-            !stashes.is_empty() && spawn_ids.len() <= 8192,
-            "invalid authored loot count"
-        );
+        // Underground maps have no treasure-manager stashes. They can still
+        // have reviewed one-time loose placements in the same export.
+        ensure!(spawn_ids.len() <= 8192, "too many authored map placements");
         let loose = match loose_path {
             Some(path) => {
                 ensure!(
@@ -325,12 +329,23 @@ impl AuthoredLoot {
             digest,
             stashes,
             loose,
+            spawn_digest: manifest.spawn.sha256,
+            artefacts: None,
         })
+    }
+
+    pub fn with_artefacts(mut self, path: &Path, collision: &CollisionMap, catalog: &Catalog) -> Result<Self> {
+        self.artefacts = Some(crate::artefact::AuthoredArtefacts::load(path, &self.spawn_digest, collision, catalog)?);
+        Ok(self)
     }
 
     pub(crate) fn seed(&self, tx: &Transaction<'_>, rules: &SurvivalRules) -> Result<()> {
         self.seed_stashes(tx, rules)?;
-        self.seed_loose(tx)
+        self.seed_loose(tx)?;
+        if let Some(artefacts) = &self.artefacts {
+            artefacts.seed(tx, &self.world, rules)?;
+        }
+        Ok(())
     }
 
     fn seed_loose(&self, tx: &Transaction<'_>) -> Result<()> {
@@ -513,7 +528,7 @@ impl AuthoredLoot {
                 .iter()
                 .find(|(id, _)| *id == stash)
                 .context("missing authored stash definition")?;
-            if presence.near_stash(slots, rules.loot_player_exclusion_meters) {
+            if presence.near_positions(slots.iter().map(|slot| slot.position.position), rules.loot_player_exclusion_meters) {
                 blocked.insert(stash);
                 continue;
             }
@@ -544,6 +559,9 @@ impl AuthoredLoot {
                 params![container, next],
             )?;
         }
+        if let Some(artefacts) = &self.artefacts {
+            filled += artefacts.refill(tx, &self.world, rules, presence, now)?;
+        }
         Ok(filled)
     }
 }
@@ -573,6 +591,7 @@ mod tests {
             SCHEMA,
             REFILL_SCHEMA,
             LOOSE_SCHEMA,
+            crate::artefact::SCHEMA,
         ] {
             connection.execute_batch(schema).unwrap();
         }
@@ -606,6 +625,8 @@ mod tests {
             digest: "test".into(),
             stashes,
             loose: Vec::new(),
+            spawn_digest: "test".into(),
+            artefacts: None,
         }
     }
 
@@ -628,7 +649,7 @@ mod tests {
         let context = Context {
             principal: principal.clone(),
             life: 0,
-            auth_epoch: 0,
+            visit: 0, auth_epoch: 0,
             world: loot.world.clone(),
             position: [0.0; 3],
             interaction_radius: 2.0,

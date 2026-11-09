@@ -1,0 +1,120 @@
+{
+  "date": "2026-11-08",
+  "environment": "Optimized native macOS ARM64 A-Life and Rust, stock Zaton geometry, two Chrome WebGPU clients using the production WebRTC protocol on loopback.",
+  "setup": "A disposable Lua fixture spawned stock stalkers within knife and blast range. It did not apply any damage. The browser harness called ZoneClient with current authoritative aim samples. The thrower was outside the fixture safe zone and the observer was inside.",
+  "earlierSetupFailure": "The fixture tried to grant a second knife to the already occupied starter slot. The passing runs reused the granted knife instance.",
+  "runs": [
+    {
+      "collision": "Original grenade actor-capsule queries",
+      "knife": {
+        "id": 17,
+        "model": "actors\\stalker_neutral\\stalker_neutral_2_mask",
+        "healthBefore": 100,
+        "healthAfter": 15,
+        "sharedSnapshotTick": 508,
+        "mode": "slash",
+        "horizontalDistanceMetres": 0.78
+      },
+      "grenade": {
+        "id": 18,
+        "model": "actors\\stalker_neutral\\stalker_neutral_2_mask",
+        "healthBefore": 100,
+        "healthAfter": 46,
+        "sharedSnapshotTick": 632,
+        "section": "grenade_rgd5",
+        "bothClientsReceivedSameDetonation": true,
+        "position": [
+          -121.03346252441406,
+          3.319059371948242,
+          306.06256103515625
+        ]
+      },
+      "throwerHealthAfterBlast": 0,
+      "protectedObserverHealthAfterBlast": 100,
+      "webgpuValidationErrors": [
+        0,
+        0
+      ]
+    },
+    {
+      "collision": "Native model bounds for both grenade paths",
+      "knife": {
+        "id": 18,
+        "model": "actors\\stalker_neutral\\stalker_neutral_2",
+        "healthBefore": 100,
+        "healthAfter": 0,
+        "sharedSnapshotTick": 496,
+        "mode": "stab",
+        "horizontalDistanceMetres": 0.64
+      },
+      "grenade": {
+        "id": 19,
+        "model": "actors\\stalker_neutral\\stalker_neutral_2_mask",
+        "healthBefore": 100,
+        "healthAfter": 0,
+        "sharedSnapshotTick": 630,
+        "section": "grenade_rgd5",
+        "bothClientsReceivedSameDetonation": true,
+        "position": [
+          -117.6341552734375,
+          4.183557033538818,
+          305.6600036621094
+        ]
+      },
+      "throwerHealthAfterBlast": 23,
+      "protectedObserverHealthAfterBlast": 100,
+      "webgpuValidationErrors": [
+        0,
+        0
+      ]
+    }
+  ],
+  "durableRecheck": {
+    "spentRgd5InstanceAbsent": true,
+    "replacementRgd5EquippedInSlot4": true,
+    "f1RemainedInRucksack": true,
+    "nativeCorpseImports": 2
+  },
+  "regression": "A low rotated native collision box whose origin is across a grid boundary stops a direct contact grenade and reflects a timed grenade. Both clear it at standing eye height.",
+  "rustTestsPassed": 134,
+  "renderedInput": {
+    "date": "2026-11-09",
+    "scope": "Two optimized Chrome WebGPU engines and the production WebRTC protocol against local stock Zaton. Separate disposable trials used the original number keys and browser right-button input. The harness supplied relative DOM mouse motion to the normal engine camera path.",
+    "regression": "The original knife and grenade imports passed wasm64 BigInt pointers directly to the string decoder. The fixed imports normalize pointers like the existing firearm path. The optimized wasm64 ABI check covers both knife modes and grenade prime, release and cancel.",
+    "knife": {
+      "mode": "stab",
+      "npcId": 18,
+      "healthBefore": 100,
+      "healthAfter": 0,
+      "sharedSnapshotTick": 728,
+      "workerErrorsObservedThroughHit": 0
+    },
+    "grenade": {
+      "section": "grenade_rgd5",
+      "position": [
+        -119.03453063964844,
+        3.8064448833465576,
+        304.8710632324219
+      ],
+      "npcId": 16,
+      "healthBefore": 100,
+      "healthAfter": 30,
+      "sharedSnapshotTick": 818,
+      "throwerHealthAfterBlast": 0,
+      "protectedObserverHealthAfterBlast": 100,
+      "workerErrors": [
+        0,
+        0
+      ],
+      "webgpuValidationErrors": [
+        0,
+        0
+      ]
+    },
+    "limitations": "The combined attempt lost headless focus before aiming the grenade. The isolated grenade run passed. The harness verified input, replicated detonation and shared damage. It did not verify hands, attack animation, flight visuals or positional audio."
+  },
+  "remaining": [
+    "First-person weapon and throw animation, positional audio, and remaining manual knife and grenade cases",
+    "Rendered pursuit and attack effects"
+  ]
+}

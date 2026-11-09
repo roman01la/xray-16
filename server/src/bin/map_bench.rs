@@ -43,9 +43,12 @@ fn main() -> Result<()> {
                         x: angle.sin(),
                         z: angle.cos(),
                         yaw: angle,
+                        pitch: 0.0,
                         sprint: false,
                         jump: false,
                         crouch: false,
+                        walk: false,
+                        aiming: false,
                     },
                 );
             }

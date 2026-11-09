@@ -52,6 +52,7 @@ pub struct State {
     pub thirst: f32,
     pub bleeding: f32,
     pub radiation: f32,
+    pub psy_health: f32,
     pub alcohol: f32,
     sprint_blocked: bool,
     walk_blocked: bool,
@@ -59,6 +60,9 @@ pub struct State {
     medicine: Option<Medicine>,
     boosts: [Booster; 4],
     weight_boost: Booster,
+    radiation_protection: Booster,
+    acid_protection: Booster,
+    psy_protection: Booster,
 }
 impl Default for State {
     fn default() -> Self {
@@ -69,6 +73,7 @@ impl Default for State {
             thirst: 1.0,
             bleeding: 0.0,
             radiation: 0.0,
+            psy_health: 1.0,
             alcohol: 0.0,
             sprint_blocked: false,
             walk_blocked: false,
@@ -76,8 +81,18 @@ impl Default for State {
             medicine: None,
             boosts: [Booster::default(); 4],
             weight_boost: Booster::default(),
+            radiation_protection: Booster::default(),
+            acid_protection: Booster::default(),
+            psy_protection: Booster::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct AimProfile {
+    pub weapon: [u8; 16],
+    pub raise_ticks: u16,
+    pub launcher: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -86,7 +101,62 @@ pub struct Loadout {
     pub capacity_bonus: f64,
     pub power_loss: f64,
     pub outfit_allows_sprint: bool,
+    #[serde(default)]
+    pub active_weapon_slot: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_item: Option<[u8; 16]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ballistics: Option<crate::ballistics::RoundProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aim: Option<AimProfile>,
+    #[serde(default)]
+    pub active_item_blocks_sprint: bool,
+    #[serde(default)]
+    pub restoration: Restoration,
+    #[serde(default)]
+    pub fields: crate::environment::Protection,
 }
+
+impl Loadout {
+    pub fn with_newer_armour(mut self, current: Self) -> Self {
+        self.fields.armour.take_newer(current.fields.armour);
+        self
+    }
+}
+
+/// Per-second effects of the worn outfit and the artefacts on its belt.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct Restoration {
+    health: f32,
+    power: f32,
+    satiety: f32,
+    bleeding: f32,
+    radiation: f32,
+}
+
+impl Restoration {
+    pub(crate) fn add(
+        &mut self,
+        catalog: &Catalog,
+        section: &str,
+        state: &crate::inventory::ItemState,
+        scale: f32,
+    ) -> Result<()> {
+        for (total, key) in [
+            (&mut self.health, "health_restore_speed"),
+            (&mut self.power, "power_restore_speed"),
+            (&mut self.satiety, "satiety_restore_speed"),
+            (&mut self.bleeding, "bleeding_restore_speed"),
+            (&mut self.radiation, "radiation_restore_speed"),
+        ] {
+            let rate = catalog.effective_number(section, state, key, 0.0)? as f32;
+            *total += rate * scale;
+            ensure!(total.is_finite(), "invalid equipment restoration rate {key}");
+        }
+        Ok(())
+    }
+}
+
 impl Default for Loadout {
     fn default() -> Self {
         Self {
@@ -94,6 +164,13 @@ impl Default for Loadout {
             capacity_bonus: 0.0,
             power_loss: 0.5,
             outfit_allows_sprint: true,
+            active_weapon_slot: 0,
+            active_item: None,
+            ballistics: None,
+            aim: None,
+            active_item_blocks_sprint: false,
+            restoration: Restoration::default(),
+            fields: crate::environment::Protection::default(),
         }
     }
 }
@@ -133,26 +210,59 @@ pub struct Location {
 }
 
 #[derive(Clone)]
-pub struct Blast {
+pub struct Impact {
+    pub kind: ImpactKind,
     pub power: f32,
     pub before: Record,
     pub location: Location,
     pub combat_lock_ms: u32,
 }
 
+#[derive(Clone)]
+pub enum ImpactKind {
+    Blast,
+    Wound,
+    Strike,
+    Bullet { bone: String, penetration: f32 },
+}
+
+#[derive(Clone)]
+pub struct ShotVictim {
+    pub target: crate::combat::ShotTarget,
+    pub context: Context,
+    pub before: Record,
+    pub location: Location,
+    pub shooter_location: Location,
+    pub combat_lock_ms: u32,
+}
+
+#[derive(Clone)]
+pub struct FireVictim {
+    pub authority: ShotVictim,
+    pub additional: Vec<crate::combat::ShotTarget>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct ImpactCommit {
+    pub revision: u32,
+    pub alive: bool,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-pub enum BlastOutcome {
+pub enum ImpactOutcome {
     Stale,
-    Applied { revision: u32, alive: bool, impact: ArmourImpact },
+    Applied { revision: u32, alive: bool, impact: ArmourImpact, power_loss: f32 },
 }
 
 pub struct SavedLogout {
     pub principal: String,
     pub life: u32,
+    pub visit: u32,
     pub condition: Record,
     pub location: Location,
     pub loadout: Loadout,
+    pub appearance: crate::lifecycle::Appearance,
 }
 
 fn get(section: &Section, key: &str) -> Result<f32> {
@@ -164,6 +274,7 @@ fn get(section: &Section, key: &str) -> Result<f32> {
     Ok(n)
 }
 
+#[derive(Clone)]
 pub struct Tuning {
     satiety_decay: f32,
     satiety_critical: f32,
@@ -175,6 +286,7 @@ pub struct Tuning {
     health_restore: f32,
     radiation_damage: f32,
     radiation_decay: f32,
+    psy_recovery: f32,
     alcohol_decay: f32,
     sprint_min: f32,
     sprint_recover: f32,
@@ -215,6 +327,7 @@ impl Tuning {
             health_restore: get(c, "health_restore_v")?,
             radiation_damage: get(c, "radiation_health_v")?,
             radiation_decay: get(c, "radiation_v")?,
+            psy_recovery: get(c, "psy_health_v")?,
             alcohol_decay: get(c, "alcohol_v")?,
             sprint_min: get(c, "cant_sprint_power_begin")?,
             sprint_recover: get(c, "cant_sprint_power_end")?,
@@ -274,6 +387,9 @@ pub(crate) struct Dose {
     duration: f32,
     boosts: [Booster; 4],
     weight_boost: Booster,
+    radiation_protection: Booster,
+    acid_protection: Booster,
+    psy_protection: Booster,
 }
 impl Dose {
     pub(crate) fn from_catalog(
@@ -286,6 +402,9 @@ impl Dose {
             if (key.starts_with("boost_")
                 && key != "boost_time"
                 && key != "boost_max_weight"
+                && key != "boost_radiation_protection"
+                && key != "boost_chemburn_protection"
+                && key != "boost_telepat_protection"
                 && !BOOSTS.contains(&key.as_str())
                 || key == "eat_max_power")
                 && get(definition, key)? != 0.0
@@ -304,24 +423,21 @@ impl Dose {
         };
         let duration = get(definition, "apply_time_sec")?.max(0.0);
         let boost_time = get(definition, "boost_time")?;
-        let extra_weight = get(definition, "boost_max_weight")?;
-        let weight_boost = if extra_weight > 0.0 && boost_time > 0.0 {
-            Booster {
-                rate: extra_weight,
-                remaining: boost_time,
-            }
-        } else {
-            Booster::default()
+        let booster = |key| -> Result<Booster> {
+            let rate = get(definition, key)?;
+            Ok(if rate > 0.0 && boost_time > 0.0 {
+                Booster { rate, remaining: boost_time }
+            } else {
+                Booster::default()
+            })
         };
+        let weight_boost = booster("boost_max_weight")?;
+        let radiation_protection = booster("boost_radiation_protection")?;
+        let acid_protection = booster("boost_chemburn_protection")?;
+        let psy_protection = booster("boost_telepat_protection")?;
         let mut boosts = [Booster::default(); 4];
         for (boost, key) in boosts.iter_mut().zip(BOOSTS) {
-            let rate = get(definition, key)?;
-            if rate > 0.0 && boost_time > 0.0 {
-                *boost = Booster {
-                    rate,
-                    remaining: boost_time,
-                };
-            }
+            *boost = booster(key)?;
         }
         let effect = [
             influence.health,
@@ -335,12 +451,18 @@ impl Dose {
         .into_iter()
         .any(|n| n != 0.0)
             || boosts.iter().any(|boost| boost.remaining > 0.0)
-            || weight_boost.remaining > 0.0;
+            || weight_boost.remaining > 0.0
+            || radiation_protection.remaining > 0.0
+            || acid_protection.remaining > 0.0
+            || psy_protection.remaining > 0.0;
         Ok(effect.then_some(Self {
             influence,
             duration,
             boosts,
             weight_boost,
+            radiation_protection,
+            acid_protection,
+            psy_protection,
         }))
     }
 }
@@ -349,11 +471,21 @@ impl State {
     pub fn health_points(&self) -> u16 {
         (self.health.clamp(0.0, 1.0) * 100.0).ceil() as u16
     }
-    pub fn wire_view(&self, life: u32, tuning: &Tuning, loadout: Loadout) -> [u32; 11] {
+    pub fn wire_view(&self, life: u32, tuning: &Tuning, loadout: Loadout) -> [u32; 14] {
         let quantize = |value: f32| (value.clamp(0.0, 1.0) * 1000.0).round() as u32;
         let grams = |kg: f64| (kg * 1000.0).round() as u32;
         let motion = self.motion(tuning, loadout);
         let (carry, walk) = self.limits(tuning, loadout);
+        // Stock HUD order (EBoostParams). Low byte is active, high byte is expiring.
+        let boosters = [
+            self.boosts[0], self.boosts[1], self.boosts[3], self.boosts[2],
+            self.weight_boost, self.radiation_protection, self.psy_protection, self.acid_protection,
+        ];
+        let booster_icons = boosters.iter().enumerate().fold(0, |icons, (index, booster)| {
+            let active = booster.remaining > 0.0;
+            let expiring = active && booster.remaining <= 3.0;
+            icons | (u32::from(active) << index) | (u32::from(expiring) << (index + 8))
+        });
         [
             life,
             quantize(self.power),
@@ -368,6 +500,9 @@ impl State {
             grams(carry),
             grams(walk),
             quantize(motion.limp_scale),
+            u32::from(loadout.active_weapon_slot),
+            quantize(self.psy_health),
+            booster_icons,
         ]
     }
     fn limits(&self, tuning: &Tuning, loadout: Loadout) -> (f64, f64) {
@@ -388,7 +523,8 @@ impl State {
         let walk = !over_limit && !self.walk_blocked;
         Motion {
             walk,
-            sprint: walk && !self.sprint_blocked && !self.limping && loadout.outfit_allows_sprint,
+            sprint: walk && !self.sprint_blocked && !self.limping && loadout.outfit_allows_sprint
+                && !loadout.active_item_blocks_sprint,
             limp_scale: if self.limping { tuning.limp_scale } else { 1.0 },
             over_limit,
         }
@@ -401,6 +537,16 @@ impl State {
         if fire_wound && self.health > 0.0 {
             self.bleeding = (self.bleeding + power).min(1.0);
         }
+    }
+    pub(crate) fn field_boost(&self, kind: crate::environment::Kind) -> f32 {
+        use crate::environment::Kind;
+        let booster = match kind {
+            Kind::Radiation => self.radiation_protection,
+            Kind::Acid => self.acid_protection,
+            Kind::Psy => self.psy_protection,
+            Kind::Heat | Kind::Shock => return 0.0,
+        };
+        if booster.remaining > 0.0 { booster.rate } else { 0.0 }
     }
     pub(crate) fn dose(&mut self, dose: Dose) -> bool {
         if self.medicine.is_some() {
@@ -423,6 +569,13 @@ impl State {
         if dose.weight_boost.remaining > 0.0 {
             self.weight_boost = dose.weight_boost;
         }
+        for (active, added) in [
+            (&mut self.radiation_protection, dose.radiation_protection),
+            (&mut self.acid_protection, dose.acid_protection),
+            (&mut self.psy_protection, dose.psy_protection),
+        ] {
+            if added.remaining > 0.0 { *active = added; }
+        }
         true
     }
     fn influence(&mut self, effect: Influence, fraction: f32) {
@@ -441,6 +594,7 @@ impl State {
             &mut self.power,
             &mut self.satiety,
             &mut self.radiation,
+            &mut self.psy_health,
             &mut self.alcohol,
             &mut self.thirst,
             &mut self.bleeding,
@@ -471,7 +625,8 @@ impl State {
             boost.remaining -= elapsed;
             boost.rate * elapsed
         });
-        self.satiety -= tuning.satiety_decay * dt;
+        let restoration = loadout.restoration;
+        self.satiety += (restoration.satiety - tuning.satiety_decay) * dt;
         self.thirst -= tuning.thirst_decay * dt;
         let satiety_effect = (self.satiety.clamp(0.0, 1.0) - tuning.satiety_critical)
             / if self.satiety >= tuning.satiety_critical {
@@ -479,7 +634,8 @@ impl State {
             } else {
                 tuning.satiety_critical
             };
-        self.health += tuning.health_restore * dt + boosts[0];
+        let equipment_health = if protected { restoration.health.max(0.0) } else { restoration.health };
+        self.health += (tuning.health_restore + equipment_health) * dt + boosts[0];
         let satiety_health = tuning.satiety_health * satiety_effect * dt;
         self.health += if protected {
             satiety_health.max(0.0)
@@ -523,13 +679,20 @@ impl State {
                 };
             self.power -= (tuning.jump_power + tuning.jump_weight_power * weight) * power_loss;
         }
-        self.power += (tuning.satiety_power * self.satiety.max(0.0) - power_rate) * dt + boosts[1];
+        self.power += (tuning.satiety_power * self.satiety.clamp(0.0, 1.0) - power_rate
+            + restoration.power) * dt + boosts[1];
         self.weight_boost.remaining = (self.weight_boost.remaining - dt).max(0.0);
-        self.bleeding -= tuning.wound_recovery * dt + boosts[2];
+        for booster in [&mut self.radiation_protection, &mut self.acid_protection, &mut self.psy_protection] {
+            booster.remaining = (booster.remaining - dt).max(0.0);
+        }
+        self.psy_health += tuning.psy_recovery * dt;
+        if self.bleeding > 0.0 {
+            self.bleeding -= (tuning.wound_recovery + restoration.bleeding) * dt + boosts[2];
+        }
         if self.bleeding < tuning.minimum_wound {
             self.bleeding = 0.0;
         }
-        self.radiation -= tuning.radiation_decay * dt + boosts[3];
+        self.radiation += (restoration.radiation - tuning.radiation_decay) * dt - boosts[3];
         self.alcohol += tuning.alcohol_decay * dt;
         self.bound();
         let blocked =
@@ -555,12 +718,20 @@ impl State {
         self.thirst += live.thirst - before.thirst;
         self.bleeding += live.bleeding - before.bleeding;
         self.radiation += live.radiation - before.radiation;
+        self.psy_health += live.psy_health - before.psy_health;
         self.alcohol += live.alcohol - before.alcohol;
         self.sprint_blocked = live.sprint_blocked;
         self.walk_blocked = live.walk_blocked;
         self.limping = live.limping;
         if self.weight_boost == before.weight_boost {
             self.weight_boost = live.weight_boost;
+        }
+        for (active, old, current) in [
+            (&mut self.radiation_protection, before.radiation_protection, live.radiation_protection),
+            (&mut self.acid_protection, before.acid_protection, live.acid_protection),
+            (&mut self.psy_protection, before.psy_protection, live.psy_protection),
+        ] {
+            if *active == old { *active = current; }
         }
         for index in 0..self.boosts.len() {
             if self.boosts[index] == before.boosts[index] {
@@ -597,7 +768,7 @@ pub(crate) fn load_logouts(
     catalog: &Catalog,
 ) -> Result<Vec<SavedLogout>> {
     let mut query = tx.prepare(
-        "SELECT c.principal,c.life,c.condition_revision,c.condition,c.location
+        "SELECT c.principal,c.life,c.condition_revision,c.condition,c.location,c.campaign_visit
          FROM inventory_characters c JOIN principals p ON p.id=c.principal
          WHERE c.alive=1 AND p.revoked=0 AND json_extract(c.location,'$.logout_until_ms')>?1
            AND json_extract(c.location,'$.world')=?2 AND json_extract(c.location,'$.content_revision')=?3
@@ -611,10 +782,13 @@ pub(crate) fn load_logouts(
     let mut saved = Vec::new();
     while let Some(row) = rows.next()? {
         let principal: String = row.get(0)?;
+        let (loadout, appearance) = crate::inventory::carried_equipment(tx, &principal, catalog)?;
         saved.push(SavedLogout {
-            loadout: crate::inventory::loadout(tx, &principal, catalog)?,
+            loadout,
+            appearance,
             principal,
             life: row.get(1)?,
+            visit: row.get(5)?,
             condition: Record {
                 revision: row.get(2)?,
                 state: serde_json::from_str(&row.get::<_, String>(3)?)?,
@@ -646,45 +820,67 @@ pub(crate) fn checkpoint(
     )? == 1)
 }
 
-pub(crate) fn resolve_blast(
+pub(crate) fn resolve_impact(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     rules: Option<&SurvivalRules>,
     context: &Context,
-    blast: Blast,
-) -> Result<BlastOutcome> {
-    let Blast { power, before: mut record, mut location, combat_lock_ms } = blast;
+    impact: Impact,
+) -> Result<ImpactOutcome> {
+    let Impact { power, mut before, location, combat_lock_ms, kind } = impact;
+    if !impact_current(tx, context, &before)? {
+        return Ok(ImpactOutcome::Stale);
+    }
+    let character = crate::world::CharacterKey { principal: context.principal.clone(), life: context.life };
+    let (impact, power_loss) = crate::armour::impact(tx, catalog, &character, kind, f64::from(power), before.state.health)?;
+    let ArmourImpact::Hit { power, wound, .. } = impact else { return Ok(ImpactOutcome::Stale); };
+    before.state.power = (before.state.power - power_loss).max(0.0);
+    let deadline = impact_deadline(power, combat_lock_ms)?;
+    let ImpactCommit { revision, alive } = commit_impact(tx, context, rules, before, location, (power, wound), deadline)?;
+    Ok(ImpactOutcome::Applied { revision, alive, impact, power_loss })
+}
+
+pub(crate) fn impact_current(tx: &Transaction<'_>, context: &Context, before: &Record) -> Result<bool> {
+    Ok(before.state.health > 0.0 && tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM inventory_characters c JOIN principals p ON p.id=c.principal
+         WHERE c.principal=?1 AND c.life=?2 AND c.alive=1 AND c.condition_revision=?3 AND p.revoked=0)",
+        params![context.principal, context.life, before.revision], |row| row.get::<_, bool>(0),
+    )?)
+}
+
+pub(crate) fn impact_deadline(power: f32, combat_lock_ms: u32) -> Result<i64> {
+    if power == 0.0 || combat_lock_ms == 0 { return Ok(0); }
+    Ok(crate::survival_rules::unix_millis()? + i64::from(combat_lock_ms))
+}
+
+pub(crate) fn commit_impact(
+    tx: &Transaction<'_>, context: &Context, rules: Option<&SurvivalRules>, mut record: Record,
+    mut location: Location, (power, wound): (f32, bool), deadline: i64,
+) -> Result<ImpactCommit> {
+    record.state.apply_hit(power, wound);
+    location.combat_until_ms = location.combat_until_ms.max(deadline);
+    commit_condition_change(tx, context, rules, record, location)
+}
+
+pub(crate) fn commit_condition_change(
+    tx: &Transaction<'_>, context: &Context, rules: Option<&SurvivalRules>,
+    mut record: Record, location: Location,
+) -> Result<ImpactCommit> {
     let principal = &context.principal;
     let previous = record.revision;
-    let current: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM inventory_characters
-         WHERE principal=?1 AND life=?2 AND alive=1 AND condition_revision=?3)",
-        params![principal, context.life, previous], |row| row.get(0),
-    )?;
-    if !current || record.state.health <= 0.0 {
-        return Ok(BlastOutcome::Stale);
-    }
     record.revision = previous.checked_add(1).context("condition revision exhausted")?;
-    let character = crate::world::CharacterKey { principal: principal.clone(), life: context.life };
-    let impact = crate::armour::blast(tx, catalog, &character, f64::from(power))?;
-    let ArmourImpact::Hit { power, wound, .. } = impact else { return Ok(BlastOutcome::Stale); };
-    record.state.apply_hit(power, wound);
-    if power > 0.0 && combat_lock_ms != 0 {
-        let deadline = crate::survival_rules::unix_millis()? + i64::from(combat_lock_ms);
-        location.combat_until_ms = location.combat_until_ms.max(deadline);
-    }
     ensure!(tx.execute(
         "UPDATE inventory_characters SET condition=?1,condition_revision=?2,location=?3
          WHERE principal=?4 AND life=?5 AND alive=1 AND condition_revision=?6",
         params![serde_json::to_string(&record.state)?, record.revision, serde_json::to_string(&location)?,
             principal, context.life, previous],
-    )? == 1, "condition changed during blast");
+    )? == 1, "condition changed during impact");
     let alive = record.state.health > 0.0;
     if !alive {
         let death = crate::inventory::die(tx, principal, context, rules)?;
-        ensure!(death["status"] == "committed", "blast death did not commit");
+        ensure!(death["status"] == "committed", "impact death did not commit");
     }
-    Ok(BlastOutcome::Applied { revision: record.revision, alive, impact })
+    Ok(ImpactCommit { revision: record.revision, alive })
 }
 
 #[cfg(test)]
@@ -703,6 +899,7 @@ mod tests {
             health_restore: 0.0001,
             radiation_damage: 0.002,
             radiation_decay: 0.0,
+            psy_recovery: 0.001,
             alcohol_decay: -0.0003,
             sprint_min: 0.1,
             sprint_recover: 0.3,
@@ -735,6 +932,9 @@ mod tests {
             influence: Influence::default(),
             duration: 0.0,
             weight_boost: Booster::default(),
+            radiation_protection: Booster::default(),
+            acid_protection: Booster::default(),
+            psy_protection: Booster::default(),
             boosts: [
                 Booster::default(),
                 Booster::default(),
@@ -749,6 +949,7 @@ mod tests {
         let mut state = State::default();
         state.damage(30, true);
         assert!(state.dose(dose()));
+        assert_eq!(state.wire_view(0, &tuning, Loadout::default())[13], 0x0008);
         state.step(
             &tuning,
             Loadout::default(),
@@ -758,8 +959,10 @@ mod tests {
             false,
         );
         assert!(state.health < 0.7);
+        assert_eq!(state.wire_view(0, &tuning, Loadout::default())[13], 0x0808);
         let before = state.bleeding;
         assert!(state.dose(dose()));
+        assert_eq!(state.wire_view(0, &tuning, Loadout::default())[13], 0x0008);
         state.step(
             &tuning,
             Loadout::default(),
@@ -770,6 +973,7 @@ mod tests {
         );
         assert!((state.bleeding - (before - 0.1015)).abs() < 1e-6);
         assert_eq!(state.boosts[2].remaining, 0.0);
+        assert_eq!(state.wire_view(0, &tuning, Loadout::default())[13], 0);
         let before = state.health;
         state.step(
             &tuning,
@@ -806,6 +1010,9 @@ mod tests {
             duration: 2.0,
             boosts: [Booster::default(); 4],
             weight_boost: Booster::default(),
+            radiation_protection: Booster::default(),
+            acid_protection: Booster::default(),
+            psy_protection: Booster::default(),
         };
         assert!(state.dose(medicine()));
         assert!(!state.dose(medicine()));
@@ -850,6 +1057,9 @@ mod tests {
             influence: Influence::default(),
             duration: 0.0,
             boosts: [Booster::default(); 4],
+            radiation_protection: Booster::default(),
+            acid_protection: Booster::default(),
+            psy_protection: Booster::default(),
             weight_boost: Booster {
                 rate: 20.0,
                 remaining: 1.0
@@ -859,5 +1069,46 @@ mod tests {
         assert!(state.motion(&tuning, overloaded).walk);
         state.step(&tuning, overloaded, 1.0, Activity::Standing, false, true);
         assert!(!state.motion(&tuning, overloaded).walk);
+    }
+
+    #[test]
+    fn worn_equipment_changes_authoritative_condition_rates() {
+        let tuning = tuning();
+        let mut naked = State {
+            health: 0.5, power: 0.5, satiety: 0.5, bleeding: 0.5, radiation: 0.5,
+            ..State::default()
+        };
+        let mut equipped = naked.clone();
+        let loadout = Loadout {
+            restoration: Restoration {
+                health: 0.02, power: 0.03, satiety: 0.04, bleeding: 0.05, radiation: -0.06,
+            },
+            ..Loadout::default()
+        };
+        naked.step(&tuning, Loadout::default(), 1.0, Activity::Standing, false, true);
+        equipped.step(&tuning, loadout, 1.0, Activity::Standing, false, true);
+        assert!((equipped.health - naked.health - 0.0200057).abs() < 1e-6);
+        assert!((equipped.power - naked.power - 0.0302).abs() < 1e-6);
+        assert!((equipped.satiety - naked.satiety - 0.04).abs() < 1e-6);
+        assert!((naked.bleeding - equipped.bleeding - 0.05).abs() < 1e-6);
+        assert!((naked.radiation - equipped.radiation - 0.06).abs() < 1e-6);
+    }
+
+    #[test]
+    fn protection_doses_resume_and_expire_with_the_saved_condition() {
+        use crate::environment::Kind;
+        let definition = Section { source: "fixture".into(), values: [
+            ("boost_radiation_protection", "0.015"), ("boost_chemburn_protection", "0.1"),
+            ("boost_telepat_protection", "0.05"), ("boost_time", "1"),
+        ].into_iter().map(|(key, value)| (key.into(), value.into())).collect() };
+        let dose = Dose::from_catalog("protection", &definition, &SurvivalRules::default()).unwrap().unwrap();
+        let mut state = State::default();
+        assert!(state.dose(dose));
+        let mut state: State = serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
+        assert_eq!(state.field_boost(Kind::Radiation), 0.015);
+        assert_eq!(state.field_boost(Kind::Acid), 0.1);
+        assert_eq!(state.field_boost(Kind::Psy), 0.05);
+        state.step(&tuning(), Loadout::default(), 1.0, Activity::Standing, false, false);
+        for kind in [Kind::Radiation, Kind::Acid, Kind::Psy] { assert_eq!(state.field_boost(kind), 0.0); }
     }
 }

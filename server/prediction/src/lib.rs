@@ -2,6 +2,8 @@
 //! This small owned-memory ABI keeps JS/engine heaps separate from Rust state.
 #[path = "../../src/collision.rs"]
 pub mod collision;
+#[path = "../../src/ladder.rs"]
+pub mod ladder;
 #[path = "../../src/materials.rs"]
 pub mod materials;
 #[path = "../../src/movement.rs"]
@@ -11,7 +13,7 @@ use std::cell::RefCell;
 thread_local! { static STATE:RefCell<Option<(collision::CollisionMap,movement::Character)>>=const{RefCell::new(None)}; }
 #[unsafe(no_mangle)]
 pub extern "C" fn zone_version() -> u32 {
-    4
+    6
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn zone_alloc(size: usize) -> *mut u8 {
@@ -45,7 +47,7 @@ pub unsafe extern "C" fn zone_load(
     if m.is_null()
         || g.is_null()
         || a.is_null()
-        || ml > 16384
+        || ml > 32 * 1024
         || gl > 256 * 1024 * 1024
         || al > 4 * 1024 * 1024
     {
@@ -69,7 +71,7 @@ pub unsafe extern "C" fn zone_load(
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn zone_reset(x: f32, y: f32, z: f32, vertical_speed: f32, flags: u32) -> u32 {
-    if ![x, y, z, vertical_speed].iter().all(|v| v.is_finite()) || flags & !14 != 0 {
+    if ![x, y, z, vertical_speed].iter().all(|v| v.is_finite()) || flags & !30 != 0 {
         return 0;
     }
     STATE.with(|s| {
@@ -83,25 +85,26 @@ pub extern "C" fn zone_reset(x: f32, y: f32, z: f32, vertical_speed: f32, flags:
             grounded: flags & 2 != 0,
             crouched: flags & 4 != 0,
             jump_held: flags & 8 != 0,
+            climbing: flags & 16 != 0,
         };
         1
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn zone_step(x: f32, z: f32, sprint: u32, jump: u32, crouch: u32) -> u32 {
+pub extern "C" fn zone_step(x: f32, z: f32, sprint: u32, jump: u32, crouch: u32, walk: u32) -> u32 {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         let Some((map, c)) = s.as_mut() else {
             return 0;
         };
         u32::from(
-            c.step_command(map, x, z, sprint != 0, jump != 0, crouch != 0)
+            c.step_command(map, x, z, sprint != 0, jump != 0, crouch != 0, walk != 0)
                 .is_ok(),
         )
     })
 }
 /// # Safety
-/// out must point to at least 28 writable bytes from zone_alloc.
+/// out must point to at least 32 writable bytes from zone_alloc.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zone_state(out: *mut f32) -> u32 {
     if out.is_null() {
@@ -120,8 +123,9 @@ pub unsafe extern "C" fn zone_state(out: *mut f32) -> u32 {
             u32::from(c.grounded) as f32,
             u32::from(c.crouched) as f32,
             u32::from(c.jump_held) as f32,
+            u32::from(c.climbing) as f32,
         ];
-        unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), out, 7) };
+        unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len()) };
         1
     })
 }

@@ -1,0 +1,80 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized Rust and unified WebAssembly in local Chrome WebGPU on stock Zaton. The fixture seeded stock Makarov, Svarog and SVD equipment and surveyed starting poses. The browser used the original mouse, reload, detector and inventory bindings.",
+  "engineWasmSha256": "ca2236ff23e18837156d89ed503b76f3f78accdd00571b3395b0cdba24fb32a3",
+  "serverSha256": "e83d9dda23d65902ca637760cebcbab2f332e14c946c66557027602a6c323b89",
+  "pm": {
+    "hide": "* Zone detector motion: anm_hide_fast",
+    "redraw": "* Zone detector motion: anm_show_fast",
+    "revealExpiredWhileAiming": true,
+    "reloadMilliseconds": 2368,
+    "aimedRoundsBefore": 8,
+    "aimedRoundsAfter": 7,
+    "primaryReleaseKeptAim": true,
+    "inventoryOpenedClearedAim": true
+  },
+  "svd": {
+    "heldAim": true,
+    "scopeHiddenCrosshair": true,
+    "releaseRestoredCrosshair": true,
+    "aimRestoredAfterRevision": "* Zone weapon HUD aim restored: wpn_svd 1.000",
+    "roundsBefore": 3,
+    "roundsAfter": 2
+  },
+  "authoritativeTest": {
+    "case": "raised_sight_dispersion_requires_a_continuous_aim_with_the_same_weapon",
+    "raiseTicksForStockQuarterSecond": 8,
+    "serverTickHz": 30,
+    "checked": [
+      "unauthorized weapon",
+      "before and after the raise boundary",
+      "aimed walk speed",
+      "rewound aim after release",
+      "weapon identity mismatch",
+      "reload cancellation",
+      "stale input"
+    ]
+  },
+  "singlePlayer": {
+    "singlePlayer": true,
+    "multiplayerRequests": 0,
+    "saveAndReload": true,
+    "saveInput": "quicksave",
+    "keyEvents": [
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F5",
+        "focused": "canvas",
+        "locked": "canvas"
+      },
+      {
+        "code": "F9",
+        "focused": "canvas",
+        "locked": "canvas"
+      }
+    ],
+    "saveBytes": [
+      627993
+    ],
+    "archiveChunkRequests": 0,
+    "rendering": "WebGPU",
+    "validationErrors": 0
+  },
+  "testSuites": {
+    "rust": 147,
+    "browser": 132
+  },
+  "screenshots": {
+    "ironsight": "native-firearm-ironsight.jpg",
+    "scopeAfterShot": "native-firearm-scope.jpg"
+  },
+  "runNotes": [
+    "The first probe stopped when a concurrent scan returned an inventory-busy reply. The retry handled that reply and observed reveal expiry.",
+    "Headless Chrome logged two pointer-lock warnings on focus changes. Both rendered scenarios completed with zero WebGPU validation errors.",
+    "Fixed optics were exercised. Fitted and adjustable optics and moving-target flight time remain open."
+  ]
+}
