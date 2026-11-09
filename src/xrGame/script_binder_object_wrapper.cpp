@@ -11,6 +11,11 @@
 #include "script_game_object.h"
 #include "xrServer_Objects_ALife.h"
 
+namespace
+{
+char relcaseDefaultRegistryKey;
+}
+
 CScriptBinderObjectWrapper::CScriptBinderObjectWrapper(CScriptGameObject* object) : CScriptBinderObject(object) {}
 CScriptBinderObjectWrapper::~CScriptBinderObjectWrapper() {}
 void CScriptBinderObjectWrapper::reinit() { luabind::call_member<void>(this, "reinit"); }
@@ -91,7 +96,44 @@ bool CScriptBinderObjectWrapper::net_SaveRelevant_static(CScriptBinderObject* sc
 
 void CScriptBinderObjectWrapper::net_Relcase(CScriptGameObject* object)
 {
-    luabind::call_member<void>(this, "net_Relcase", object);
+    const auto& self = luabind::detail::wrap_access::ref(*this);
+    lua_State* L = self.state();
+    self.get(L);
+    assert(!lua_isnil(L, -1));
+    luabind::detail::do_call_member_selection(L, "net_Relcase");
+
+    if (lua_isnil(L, -1))
+    {
+        lua_pop(L, 1);
+        throw luabind::unresolved_name("Attempt to call nonexistent function", "net_Relcase");
+    }
+
+    if (lua_iscfunction(L, -1) && !lua_gethook(L))
+    {
+        // Resolve every time so Lua overrides installed at runtime still run.
+        lua_pushlightuserdata(L, &relcaseDefaultRegistryKey);
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        const bool isDefault = lua_rawequal(L, -1, -2);
+        lua_pop(L, 1);
+        if (isDefault)
+        {
+            lua_pop(L, 1);
+            return;
+        }
+    }
+
+    self.get(L);
+    luabind::detail::call_member_impl<void>(L, std::true_type{}, luabind::meta::index_list<1>{}, object);
+}
+
+void CScriptBinderObjectWrapper::remember_relcase_default(lua_State* L)
+{
+    // Keep the original no-op closure per VM, independently of the mutable Lua class.
+    lua_getglobal(L, "object_binder");
+    lua_pushlightuserdata(L, &relcaseDefaultRegistryKey);
+    lua_getfield(L, -2, "net_Relcase");
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pop(L, 1);
 }
 
 void CScriptBinderObjectWrapper::net_Relcase_static(

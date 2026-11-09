@@ -33,4 +33,6 @@ void CScriptBinderObject::script_register(lua_State* luaState)
             .def("net_save_relevant", &CScriptBinderObject::net_SaveRelevant, &CScriptBinderObjectWrapper::net_SaveRelevant_static)
             .def("net_Relcase", &CScriptBinderObject::net_Relcase, &CScriptBinderObjectWrapper::net_Relcase_static)
     ];
+
+    CScriptBinderObjectWrapper::remember_relcase_default(luaState);
 }

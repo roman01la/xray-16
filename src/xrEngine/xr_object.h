@@ -32,6 +32,7 @@ class IPhysicsShell;
 class IObjectPhysicsCollision;
 
 class CAttachmentOwner;
+class CGameObject;
 class CInventoryOwner;
 class CInventoryItem;
 class CEntity;
@@ -263,6 +264,7 @@ public:
     virtual CHolderCustom* cast_holder_custom() = 0;
     virtual CBaseMonster* cast_base_monster() = 0;
     virtual CShellLauncher* cast_shell_launcher() = 0; //--#SM+#--
+    virtual CGameObject* cast_game_object() { return nullptr; }
     virtual bool feel_touch_on_contact(IGameObject* obj) = 0;
     // Utilities
     // XXX: move out

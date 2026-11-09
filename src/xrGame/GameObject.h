@@ -200,7 +200,7 @@ public:
     virtual CEntity* cast_entity() override { return NULL; }
     virtual CEntityAlive* cast_entity_alive() override { return NULL; }
     virtual CActor* cast_actor() override { return NULL; }
-    CGameObject* cast_game_object() { return this; }
+    CGameObject* cast_game_object() override { return this; }
     virtual CCustomZone* cast_custom_zone() override { return NULL; }
     virtual CPhysicsShellHolder* cast_physics_shell_holder() override { return NULL; }
     virtual IInputReceiver* cast_input_receiver() override { return NULL; }

@@ -1413,17 +1413,17 @@ void CCustomZone::CreateHit(u16 id_to, u16 id_from, const Fvector& hit_dir, floa
 
 void CCustomZone::net_Relcase(IGameObject* O)
 {
-    CGameObject* GO = smart_cast<CGameObject*>(O);
-    auto it = std::find(m_ObjectInfoMap.begin(), m_ObjectInfoMap.end(), GO);
+    const auto it = std::find_if(m_ObjectInfoMap.begin(), m_ObjectInfoMap.end(),
+        [O](const SZoneObjectInfo& info) { return info.object == O; });
     if (it != m_ObjectInfoMap.end())
     {
         exit_Zone(*it);
         m_ObjectInfoMap.erase(it);
     }
-    if (GO->ID() == m_owner_id)
+    if (O->ID() == m_owner_id)
         m_owner_id = u32(-1);
 
-    if (m_actor_effector && m_actor_effector->m_pActor && m_actor_effector->m_pActor->ID() == GO->ID())
+    if (m_actor_effector && m_actor_effector->m_pActor && m_actor_effector->m_pActor->ID() == O->ID())
         m_actor_effector->Stop();
 
     inherited::net_Relcase(O);
