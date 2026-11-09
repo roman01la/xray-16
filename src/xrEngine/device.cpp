@@ -18,6 +18,8 @@
 #ifdef XR_PLATFORM_WEB
 #include <emscripten.h>
 #include "WebFramePacer.h"
+
+void UpdateBrowserViewport(CRenderDevice& device);
 #endif
 
 ENGINE_API CRenderDevice Device;
@@ -380,6 +382,7 @@ void CRenderDevice::ProcessFrame()
     const u64 frameStartTime = TimerGlobal.GetElapsed_ms();
 
 #ifdef XR_PLATFORM_WEB
+    UpdateBrowserViewport(*this);
     const double cpuFrameStart = emscripten_get_now();
 #endif
     FrameMove();

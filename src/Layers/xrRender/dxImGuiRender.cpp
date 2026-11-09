@@ -99,6 +99,10 @@ void dxImGuiRender::Frame()
 void dxImGuiRender::Render(ImDrawData* data)
 {
 #ifdef XR_PLATFORM_WEB
+    // Applying video settings can resize the targets after ImGui::NewFrame().
+    // Draw the overlay again once its clip rectangles use the new dimensions.
+    if (data->DisplaySize.x != float(Device.dwWidth) || data->DisplaySize.y != float(Device.dwHeight))
+        return;
     if (data->Textures)
         for (auto* tex : *data->Textures)
             if (tex->Status != ImTextureStatus_OK) UpdateNativeImGuiTexture(tex);

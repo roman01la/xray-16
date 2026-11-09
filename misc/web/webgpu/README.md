@@ -8,8 +8,8 @@ The production package contains only the native renderer. The desktop renderer i
 ## Run
 
 The hosted game uses the same native WebGPU engine for single player and
-multiplayer. The game centers in the browser viewport and preserves the aspect
-ratio of the render resolution selected in video settings. Add `diagnostics=1`
+multiplayer. The render target follows the browser viewport's aspect ratio
+within the resolution selected in video settings. Add `diagnostics=1`
 to the query for the GPU adapter, FPS, resolution, and CPU/GPU timing.
 [Build and run from the repository](../README.md)
 

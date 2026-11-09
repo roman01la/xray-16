@@ -11,6 +11,70 @@
 xr_vector<xr_token> vid_monitor_token;
 xr_map<u32, xr_vector<xr_token>> vid_mode_token;
 
+#ifdef XR_PLATFORM_WEB
+namespace
+{
+// One atomic stores both dimensions so the renderer sees a consistent pair.
+std::atomic<u64> browserViewportSize{};
+
+SDL_Point BrowserRenderSize(u64 viewport)
+{
+    const int width = psDeviceMode.Width;
+    const int height = psDeviceMode.Height;
+    const auto viewportWidth = u32(viewport >> 32);
+    const auto viewportHeight = u32(viewport);
+    if (!viewportWidth || !viewportHeight)
+        return {width, height};
+
+    const double scale = std::min(double(width) / viewportWidth, double(height) / viewportHeight);
+    // Keep a usable render target even while dragging the window nearly closed.
+    return {std::max(256, int(std::lround(viewportWidth * scale))),
+            std::max(192, int(std::lround(viewportHeight * scale)))};
+}
+
+void TrackBrowserViewport()
+{
+    static bool initialized = false;
+    if (initialized)
+        return;
+    initialized = true;
+
+    MAIN_THREAD_EM_ASM({
+        const root = document.documentElement;
+        if (!root.classList.contains('game-only'))
+            return;
+        const index = $0 / 8;
+        const measure = () => {
+            const width = root.clientWidth;
+            const height = root.clientHeight;
+            if (width && height) {
+                growMemViews();
+                Atomics.store(HEAPU64, index, BigInt(width) << 32n | BigInt(height));
+            }
+        };
+        let timer;
+        new ResizeObserver(() => {
+            clearTimeout(timer);
+            timer = setTimeout(measure, 150);
+        }).observe(root);
+        measure();
+    }, double(uintptr_t(&browserViewportSize)));
+}
+} // namespace
+
+void UpdateBrowserViewport(CRenderDevice& device)
+{
+    static u64 lastViewportSize = 0;
+    const u64 viewport = browserViewportSize.load(std::memory_order_relaxed);
+    if (viewport == lastViewportSize)
+        return;
+    lastViewportSize = viewport;
+    const auto size = BrowserRenderSize(viewport);
+    if (size.x != int(device.dwWidth) || size.y != int(device.dwHeight))
+        device.Reset(false);
+}
+#endif
+
 #ifndef XR_PLATFORM_WEB
 void FillResolutionsForMonitor(const int monitorID)
 {
@@ -180,7 +244,11 @@ void CRenderDevice::UpdateWindowProps()
 
     ImGuiIO& io = ImGui::GetIO();
 
+#ifdef XR_PLATFORM_WEB
+    io.DisplaySize = { static_cast<float>(dwWidth), static_cast<float>(dwHeight) };
+#else
     io.DisplaySize = { static_cast<float>(psDeviceMode.Width), static_cast<float>(psDeviceMode.Height) };
+#endif
     io.DisplayFramebufferScale = ImVec2{ float(dwWidth) / m_rcWindowClient.w, float(dwHeight) / m_rcWindowClient.h };
 }
 
@@ -212,8 +280,10 @@ void CRenderDevice::SelectResolution(const bool windowed)
         psDeviceMode.Width = 1280;
         psDeviceMode.Height = 720;
     }
-    dwWidth = psDeviceMode.Width;
-    dwHeight = psDeviceMode.Height;
+    TrackBrowserViewport();
+    const auto size = BrowserRenderSize(browserViewportSize.load(std::memory_order_relaxed));
+    dwWidth = size.x;
+    dwHeight = size.y;
     return;
 #endif
 

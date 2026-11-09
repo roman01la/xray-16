@@ -326,11 +326,15 @@ DeviceState CHW::GetDeviceState() const
 
 std::pair<u32, u32> CHW::GetSurfaceSize()
 {
+#ifdef XR_PLATFORM_WEB
+    return {Device.dwWidth, Device.dwHeight};
+#else
     return
     {
         psDeviceMode.Width,
         psDeviceMode.Height
     };
+#endif
 }
 
 bool CHW::ThisInstanceIsGlobal() const

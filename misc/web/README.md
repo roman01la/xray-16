@@ -16,11 +16,10 @@ Serve over HTTPS or localhost with COOP `same-origin`, COEP
 
 ## Display, controls, and saves
 
-The game fits and centers in the browser viewport at the aspect ratio of the
-selected render resolution. Black bars fill the space when the window and game
-have different proportions. Set the internal render resolution in the video
-settings. The browser scales the displayed frame independently as the window
-or display scaling changes.
+The game renders at the browser viewport's aspect ratio. The resolution in
+video settings limits the size of the render target. For example, a 1920×1080
+preset renders at 1440×1080 in a 4:3 browser window. The browser scales that
+frame to fit the viewport as the window or display scaling changes.
 
 Escape opens the game menu and F1–F4 use the quick slots. If the browser uses
 Escape to release the mouse, press it again. Add `diagnostics=1` to the page query

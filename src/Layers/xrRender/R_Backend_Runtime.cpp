@@ -495,7 +495,11 @@ void CBackend::set_Textures(STextureList* textures_list) {}
 void CBackend::SetupStates()
 {
     set_CullMode(CULL_CCW);
-#if defined(USE_DX11)
+#ifdef XR_PLATFORM_WEB
+    // The WebGPU state survives replacement of the render targets on vid_restart.
+    SetViewport({0, 0, Device.dwWidth, Device.dwHeight, 0.f, 1.f});
+    set_Scissor();
+#elif defined(USE_DX11)
     SSManager.SetMaxAnisotropy(ps_r__tf_Anisotropic);
     SSManager.SetMipLODBias(ps_r__tf_Mipbias);
 #elif defined(USE_OGL)
