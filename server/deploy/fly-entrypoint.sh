@@ -7,4 +7,7 @@ set -eu
 chown 10001:10001 /data
 install -d -m 0700 -o 10001 -g 10001 /data/zone
 install -d -m 0700 -o 10001 -g 10001 /data/web
+if [ -n "${ZONE_NATIVE_ALIFE_ROOT:-}" ]; then
+    install -d -m 0700 -o 10001 -g 10001 /run/zone-alife
+fi
 exec setpriv --reuid=10001 --regid=10001 --init-groups node /app/web/gateway.mjs

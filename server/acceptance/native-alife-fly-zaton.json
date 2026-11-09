@@ -1,0 +1,42 @@
+{
+  "date": "2026-11-09",
+  "environment": "Public Fly Frankfurt Zaton, Ubuntu 24.04 x86-64 release native X-Ray, Rust release and Chrome WebRTC",
+  "url": "https://stalker-online.xyz/",
+  "machineMemoryMiB": 4096,
+  "nativeCheckpoint": {
+    "world": [
+      "zaton-static-v1"
+    ],
+    "nativeFence": 2,
+    "rustAdmission": 2,
+    "checkpointBytes": 633454,
+    "databaseIntegrity": "ok",
+    "missingPriorPlayers": 0
+  },
+  "browser": {
+    "world": "zaton-static-v1",
+    "snapshots": 116,
+    "npcsObserved": 18,
+    "npcsMoved": 3,
+    "maxObservedMovementMeters": 0.6992138442565343,
+    "models": [
+      "actors\\stalker_bandit\\stalker_bandit_2",
+      "actors\\stalker_bandit\\stalker_bandit_3_face_1",
+      "actors\\stalker_bandit\\stalker_bandit_3_face_3",
+      "actors\\stalker_neutral\\stalker_neutral_1",
+      "actors\\stalker_neutral\\stalker_neutral_1_face_3",
+      "actors\\stalker_neutral\\stalker_neutral_2",
+      "actors\\stalker_neutral\\stalker_neutral_2_face_1",
+      "actors\\stalker_neutral\\stalker_neutral_2_face_2",
+      "actors\\stalker_neutral\\stalker_neutral_2_face_5",
+      "actors\\stalker_neutral\\stalker_neutral_2_face_6",
+      "actors\\stalker_neutral\\stalker_neutral_2_mask",
+      "actors\\stalker_neutral\\stalker_neutral_3_face_1"
+    ]
+  },
+  "rolloutNotes": [
+    "Added the missing EGL loader and replaced the POSIX debugger probe on Linux and macOS with a read-only check.",
+    "Public health stalled during native loading on 2 GiB. The verified deployment uses 4 GiB.",
+    "The first corrected cold start exited with SIGSEGV after initial script loading. The independent supervisor restarted X-Ray, which reached admission, wrote successive checkpoints and served moving NPCs."
+  ]
+}

@@ -1541,7 +1541,23 @@ Both `-zone-alife-host` and `-zone-alife-headless` replace the stock
 single-actor switch distance check with a bounded set of Rust player positions.
 Set `ZONE_ALIFE_INTEREST_SOCKET` in both processes to the same absolute socket
 path inside an owner-only directory. The native host binds the socket. Enable
-the Rust feed on one persistent campaign map with at most 512 player bodies.
+the Rust feed on a persistent campaign with at most 512 player bodies.
+In a multi-map campaign, set a distinct `alifeSocket` on each region using a
+native host. Each fixed-map process has its own save, outbox and checkpoint
+fence. Rust sends the source host an updated player set after travel commits
+and sends the destination host the player once they reconnect there.
+On a fresh world, the host starts its script actor at the game-graph vertex
+nearest the configured anchor. It validates the map on checkpoint restore
+and limits offline NPC updates and pathfinding to the assigned level.
+NPCs have independent populations on each map. Moving NPCs between maps
+would require an explicit ownership transfer.
+
+An optimized local run admitted all five stock maps and persisted each
+checkpoint. An approved Zaton-to-Jupiter crossing retained the traveller's
+six exact inventory items, life and health. The Zaton observer stayed with
+the source host while Jupiter received the traveller. Restarting Jupiter
+alone restored its saved checkpoint and left the other hosts running.
+[Multi-map A-Life evidence](acceptance/native-alife-campaign.json)
 The first admission pins the native world identity in SQLite. Start it with
 the native save and outbox that belong to that Rust world.
 

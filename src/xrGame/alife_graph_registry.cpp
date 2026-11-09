@@ -8,6 +8,7 @@
 
 #include "StdAfx.h"
 #include "alife_graph_registry.h"
+#include "alife_switch_manager.h"
 #include "xrServerEntities/xrMessages.h"
 
 using namespace ALife;
@@ -42,6 +43,39 @@ void CALifeGraphRegistry::on_load()
     }
 }
 
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+void CALifeGraphRegistry::configure_host_spawn()
+{
+    const auto* name = std::getenv("ZONE_ALIFE_LEVEL");
+    if (!name)
+        return;
+    const auto* configuredAnchor = std::getenv("ZONE_ALIFE_ANCHOR");
+    Fvector anchor{};
+    char extra;
+    R_ASSERT2(configuredAnchor &&
+            std::sscanf(configuredAnchor, "%f %f %f %c", &anchor.x, &anchor.y, &anchor.z, &extra) == 3 &&
+            _valid(anchor), "A-Life map requires a finite ZONE_ALIFE_ANCHOR (x y z)");
+    const auto& gameGraph = ai().game_graph();
+    const auto* level = gameGraph.header().level(name, true);
+    R_ASSERT3(level, "A-Life map is absent from the stock game graph", name);
+
+    float closest = flt_max;
+    for (GameGraph::_GRAPH_ID id = 0; id < gameGraph.header().vertex_count(); ++id)
+    {
+        const auto* vertex = gameGraph.vertex(id);
+        if (vertex->level_id() != level->id())
+            continue;
+        const float distance = anchor.distance_to_sqr(vertex->level_point());
+        if (distance < closest)
+        {
+            closest = distance;
+            m_host_start_vertex = id;
+        }
+    }
+    R_ASSERT3(gameGraph.valid_vertex_id(m_host_start_vertex), "A-Life map has no game vertex", name);
+}
+#endif
+
 void CALifeGraphRegistry::update(CSE_ALifeDynamicObject* object)
 {
     if (!object->m_bDirectControl)
@@ -52,6 +86,17 @@ void CALifeGraphRegistry::update(CSE_ALifeDynamicObject* object)
         m_actor = smart_cast<CSE_ALifeCreatureActor*>(object);
         R_ASSERT2(m_actor, "Invalid flag M_SPAWN_OBJECT_ASPLAYER for non-actor object!");
 
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+        if (ai().game_graph().valid_vertex_id(m_host_start_vertex))
+        {
+            const auto* vertex = ai().game_graph().vertex(m_host_start_vertex);
+            m_actor->m_tGraphID = m_host_start_vertex;
+            m_actor->m_tNodeID = vertex->level_vertex_id();
+            m_actor->o_Position = vertex->level_point();
+            m_host_start_vertex = GameGraph::_GRAPH_ID(-1);
+        }
+        else
+#endif
         if (g_start_game_vertex_id)
         {
             m_actor->m_tGraphID = g_start_game_vertex_id;
@@ -96,6 +141,19 @@ void CALifeGraphRegistry::setup_current_level()
     VERIFY3(id >= 0, "Level is corrupted or doesn't exist", I->second.name().c_str());
     ai().load(I->second.name().c_str());
 
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    if (CALifeSwitchManager::host_interests_requested())
+    {
+        if (const auto* name = std::getenv("ZONE_ALIFE_LEVEL"))
+        {
+            R_ASSERT3(I->second.name() == name, "Native A-Life checkpoint belongs to a different map", name);
+            const auto& gameGraph = ai().game_graph();
+            for (GameGraph::_GRAPH_ID vertex = 0; vertex < gameGraph.header().vertex_count(); ++vertex)
+                if (gameGraph.vertex(vertex)->level_id() != level().level_id())
+                    gameGraph.accessible(vertex, false);
+        }
+    }
+#endif
     g_start_game_vertex_id = 0;
 }
 

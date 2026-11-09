@@ -541,6 +541,7 @@ struct RegionSpec {
     session: SessionConfig,
     loose_loot: Option<PathBuf>,
     environment_fields: Option<PathBuf>,
+    alife_socket: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -566,12 +567,14 @@ struct RegionConfig {
     loose_loot: Option<PathBuf>,
     #[serde(alias = "radiationFields")]
     environment_fields: Option<PathBuf>,
+    alife_socket: Option<PathBuf>,
 }
 
 fn configured_regions() -> Result<(Vec<RegionSpec>, Option<TravelConfig>)> {
     if let Some(path) = std::env::var_os("ZONE_CAMPAIGN_CONFIG") {
         for name in ["ZONE_COLLISION_MANIFEST", "ZONE_SPAWN_X", "ZONE_SPAWN_Y", "ZONE_SPAWN_Z",
-            "ZONE_LOOSE_LOOT", "ZONE_RADIATION_FIELDS", "ZONE_ENVIRONMENT_FIELDS", "ZONE_LADDERS"] {
+            "ZONE_LOOSE_LOOT", "ZONE_RADIATION_FIELDS", "ZONE_ENVIRONMENT_FIELDS", "ZONE_LADDERS",
+            "ZONE_ALIFE_INTEREST_SOCKET"] {
             ensure!(std::env::var_os(name).is_none(), "{name} conflicts with ZONE_CAMPAIGN_CONFIG");
         }
         let path = PathBuf::from(path);
@@ -593,6 +596,7 @@ fn configured_regions() -> Result<(Vec<RegionSpec>, Option<TravelConfig>)> {
                 session,
                 loose_loot: region.loose_loot.map(|path| base.join(path)),
                 environment_fields: region.environment_fields.map(|path| base.join(path)),
+                alife_socket: region.alife_socket,
             });
         }
         let travel = config.travel.map(|travel| TravelConfig {
@@ -628,6 +632,7 @@ fn configured_regions() -> Result<(Vec<RegionSpec>, Option<TravelConfig>)> {
         session,
         loose_loot: std::env::var_os("ZONE_LOOSE_LOOT").map(PathBuf::from),
         environment_fields: fields.or(radiation).map(PathBuf::from),
+        alife_socket: std::env::var_os("ZONE_ALIFE_INTEREST_SOCKET").map(PathBuf::from),
     }], None))
 }
 
@@ -679,9 +684,8 @@ async fn main() -> Result<()> {
         rules.validate(catalog)?;Some(Arc::new(rules))
     }else{None};
     let database = std::env::var("ZONE_DATABASE").ok();
-    let alife_socket = std::env::var_os("ZONE_ALIFE_INTEREST_SOCKET").map(PathBuf::from);
-    if alife_socket.is_some() {
-        ensure!(specs.len() == 1 && catalog.is_some() && database.is_some(), "A-Life host integration requires one persistent survival map");
+    if specs.iter().any(|spec| spec.alife_socket.is_some()) {
+        ensure!(catalog.is_some() && database.is_some(), "A-Life host integration requires persistent survival");
         ensure!(max_players <= zone_server::alife_interests::MAX_PLAYERS, "A-Life interest player limit exceeded");
     }
     ensure!(
@@ -712,7 +716,7 @@ async fn main() -> Result<()> {
         } else {
             ensure!(spec.loose_loot.is_none(), "loose loot requires ZONE_AUTHORED_LOOT");
         }
-        let mut world = session.make_world(alife_socket.is_some())?;
+        let mut world = session.make_world(spec.alife_socket.is_some())?;
         world.survival_tuning = tuning.clone();
         if let Some(path) = spec.environment_fields {
             ensure!(database.is_some(), "continuous fields require a persistence database");
@@ -723,7 +727,7 @@ async fn main() -> Result<()> {
         if let Some(rules) = &rules {
             world.combat_lock_ticks = rules.safe_zone_combat_lock_seconds * TICK_HZ;
         }
-        let alife_interests = alife_socket.as_deref().map(|path| {
+        let alife_interests = spec.alife_socket.as_deref().map(|path| {
             zone_server::alife_interests::AlifeInterests::new(path, &session.contract.world)
         }).transpose()?;
         regions.push(Region { session, world, combat: Default::default(), scenes: Default::default(), alife_interests });

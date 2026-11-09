@@ -21,11 +21,13 @@ private:
     {
         u32 m_count;
         mutable u32 m_current;
+        GameGraph::_LEVEL_ID m_host_level;
 
-        IC CUpdatePredicate(const u32& count)
+        IC CUpdatePredicate(u32 count, GameGraph::_LEVEL_ID host_level)
         {
             m_count = count;
             m_current = 0;
+            m_host_level = host_level;
         }
 
         IC bool operator()(_iterator& i, u64 cycle_count, bool) const
@@ -35,6 +37,9 @@ private:
 
             if (m_current >= m_count)
                 return (false);
+
+            if (m_host_level != GameGraph::_LEVEL_ID(-1) && !on_host_level(*(*i).second, m_host_level))
+                return false;
 
             ++m_current;
             (*i).second->m_schedule_counter = cycle_count;
@@ -49,6 +54,7 @@ private:
             STOP_PROFILE
         }
     };
+    static bool on_host_level(CSE_ALifeSchedulable& object, GameGraph::_LEVEL_ID level);
 
 protected:
     typedef CSafeMapIterator<ALife::_OBJECT_ID, CSE_ALifeSchedulable, std::less<ALife::_OBJECT_ID>, false> inherited;
@@ -61,7 +67,7 @@ public:
     virtual ~CALifeScheduleRegistry();
     void add(CSE_ALifeDynamicObject* object);
     void remove(CSE_ALifeDynamicObject* object, bool no_assert = false);
-    IC void update();
+    IC void update(GameGraph::_LEVEL_ID host_level = GameGraph::_LEVEL_ID(-1));
     IC CSE_ALifeSchedulable* object(const ALife::_OBJECT_ID& id, bool no_assert = false) const;
     IC const u32& objects_per_update() const;
     IC void objects_per_update(const u32& objects_per_update);

@@ -90,7 +90,12 @@ void CALifeUpdateManager::update_scheduled(bool init_ef)
         init_ef_storage();
 
     START_PROFILE("ALife/scheduled");
-    scheduled().update();
+    auto level = GameGraph::_LEVEL_ID(-1);
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    if (host_interests_requested() && std::getenv("ZONE_ALIFE_LEVEL"))
+        level = graph().level().level_id();
+#endif
+    scheduled().update(level);
     STOP_PROFILE
 }
 
@@ -239,6 +244,10 @@ void CALifeUpdateManager::new_game(LPCSTR save_name)
     reload(m_section);
     spawns().load(save_name);
     graph().on_load();
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    if (host_interests_requested())
+        graph().configure_host_spawn();
+#endif
     server().PerformIDgen(0x0000);
     time_manager().init(m_section);
     VERIFY(can_register_objects());

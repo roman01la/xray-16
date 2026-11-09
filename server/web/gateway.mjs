@@ -1,6 +1,7 @@
 import {createServer, request} from 'node:http';
 import {createReadStream, createWriteStream} from 'node:fs';
-import {mkdir,readFile,writeFile,stat,rename,rm} from 'node:fs/promises';
+import {access,mkdir,readFile,writeFile,stat,rename,rm} from 'node:fs/promises';
+import {dirname,isAbsolute,join,resolve} from 'node:path';
 import {createHash,randomUUID,timingSafeEqual} from 'node:crypto';
 import {Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
@@ -109,11 +110,75 @@ export async function createGateway({root,token,origin,backendPort=8082,assetOri
  server.requestTimeout=1800000;server.headersTimeout=15000;server.maxRequestsPerSocket=1000;
  return server;
 }
+async function nativeAlifeHosts(root){
+ const campaignPath=process.env.ZONE_CAMPAIGN_CONFIG;
+ if(!campaignPath){
+  const socket=process.env.ZONE_ALIFE_INTEREST_SOCKET;
+  if(!socket)throw Error('Native A-Life requires a private socket');
+  return [{root,socket}];
+ }
+ const campaign=JSON.parse(await readFile(campaignPath,'utf8'));
+ const hosts=[];
+ for(const region of campaign.regions){
+  if(!region.alifeSocket)continue;
+  const {level}=JSON.parse(await readFile(resolve(dirname(campaignPath),region.collision),'utf8'));
+  if(typeof level!=='string'||!/^[a-z0-9_]+$/.test(level)||hosts.some(host=>host.level===level)){
+   throw Error('Native A-Life requires a separate game directory for each map');
+  }
+  hosts.push({root:join(root,level),socket:region.alifeSocket,level,anchor:region.spawn.join(' ')});
+ }
+ return hosts;
+}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const server=await createGateway({root:process.env.ZONE_WEB_ROOT||'/data/web',token:process.env.ZONE_DEV_TOKEN,origin:process.env.ZONE_ORIGIN});
- const child=spawn('/usr/local/bin/zone-server',[],{stdio:'inherit'});let stopping=false;
- const shutdown=()=>{if(stopping)return;stopping=true;server.close();child.kill('SIGTERM');setTimeout(()=>{child.kill('SIGKILL');process.exit(1);},23000).unref();};
- child.on('exit',code=>{server.close();process.exit(stopping?0:code||1);});child.on('error',()=>process.exit(1));
- process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);
+ const nativeRoot=process.env.ZONE_NATIVE_ALIFE_ROOT;
+ const nativeBin=process.env.ZONE_NATIVE_ALIFE_BIN;
+ let nativeHosts=[];
+ if(nativeRoot){
+  if(!isAbsolute(nativeRoot)||!nativeBin||!isAbsolute(nativeBin))throw Error('Native A-Life requires absolute game and binary paths');
+  nativeHosts=await nativeAlifeHosts(nativeRoot);
+  await Promise.all(nativeHosts.map(host=>access(join(host.root,'archives-ready'))));
+ }
+ const children=new Set();
+ let exitCode;
+ const shutdown=(code=0)=>{
+  if(exitCode!==undefined)return;
+  exitCode=code;
+  server.close();
+  for(const child of children)child.kill('SIGTERM');
+  if(!children.size)process.exit(exitCode);
+  setTimeout(()=>{for(const child of children)child.kill('SIGKILL');process.exit(1);},23000).unref();
+ };
+ function supervise(command,args,options,restart=false){
+  const child=spawn(command,args,{...options,stdio:'inherit'});
+  children.add(child);
+  child.once('close',(code,signal)=>{
+   children.delete(child);
+   if(exitCode===undefined){
+    console.error(`Service ${command} exited (${signal||code})`);
+    if(restart){
+     setTimeout(()=>{if(exitCode===undefined)supervise(command,args,options,true);},5000).unref();
+     return;
+    }
+    shutdown(1);
+   }
+   if(!children.size)process.exit(exitCode);
+  });
+  child.on('error',error=>console.error(error.message));
+ }
+ supervise('/usr/local/bin/zone-server',[]);
+ for(const host of nativeHosts){
+  const env={PATH:process.env.PATH,LD_LIBRARY_PATH:dirname(nativeBin),ZONE_ALIFE_INTEREST_SOCKET:host.socket,
+   SDL_VIDEODRIVER:'offscreen',SDL_AUDIODRIVER:'dummy',ALSOFT_DRIVERS:'null',LIBGL_ALWAYS_SOFTWARE:'1',LP_NUM_THREADS:'2'};
+  if(host.level){
+   env.ZONE_ALIFE_LEVEL=host.level;
+   env.ZONE_ALIFE_ANCHOR=host.anchor;
+  }
+  supervise(nativeBin,['-cop','-r3','-nointro','-nogameintro','-noprefetch','-zone-alife-headless','-silent_error_mode',
+   '-start','server(all/single/alife/new)','client(localhost)'],{
+   cwd:host.root,env,
+  },true);
+ }
+ process.on('SIGTERM',()=>shutdown());process.on('SIGINT',()=>shutdown());
  server.listen(8080,'0.0.0.0',()=>console.log('Public game gateway listening on 8080'));
 }

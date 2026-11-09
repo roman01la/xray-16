@@ -29,15 +29,13 @@
 #   include <emscripten.h>
 #endif
 
-#if defined(XR_PLATFORM_LINUX) || defined(XR_PLATFORM_APPLE) || defined(XR_PLATFORM_BSD)
+#if defined(XR_PLATFORM_APPLE)
+#   include <sys/sysctl.h>
+#   include <unistd.h>
+#elif defined(XR_PLATFORM_BSD)
 #   if __has_include(<sys/ptrace.h>)
 #       include <sys/ptrace.h>
 #       define PTRACE_AVAILABLE
-
-#       if defined(XR_PLATFORM_APPLE) || defined(XR_PLATFORM_BSD)
-#           define PTRACE_TRACEME PT_TRACE_ME
-#           define PTRACE_DETACH PT_DETACH
-#       endif
 #   endif
 #endif
 
@@ -485,10 +483,27 @@ bool xrDebug::DebuggerIsPresent()
 {
 #ifdef XR_PLATFORM_WINDOWS
     return IsDebuggerPresent();
+#elif defined(XR_PLATFORM_LINUX)
+    auto* status = std::fopen("/proc/self/status", "r");
+    if (!status)
+        return false;
+    char line[256];
+    unsigned tracer = 0;
+    while (std::fgets(line, sizeof(line), status))
+        if (std::sscanf(line, "TracerPid: %u", &tracer) == 1)
+            break;
+    std::fclose(status);
+    return tracer != 0;
+#elif defined(XR_PLATFORM_APPLE)
+    int query[] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
+    struct kinfo_proc process{};
+    size_t bytes = sizeof(process);
+    return sysctl(query, 4, &process, &bytes, nullptr, 0) == 0 &&
+        bytes == sizeof(process) && (process.kp_proc.p_flag & P_TRACED) != 0;
 #elif defined(PTRACE_AVAILABLE)
-    if (ptrace(PTRACE_TRACEME, 0, 0, 0) == -1)
+    if (ptrace(PT_TRACE_ME, 0, 0, 0) == -1)
         return true;
-    ptrace(PTRACE_DETACH, 0, 0, 0);
+    ptrace(PT_DETACH, 0, 0, 0);
     return false;
 #else
     return false;

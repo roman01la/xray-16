@@ -25,16 +25,19 @@ public access and confirmed permission to distribute the game assets.
   to the active release, with no-store caching.
 - This build uses browser-held portable save keys. Copy save key and Open save
   allow another browser to resume the same identity. Keep a copy before clearing
-  browser storage. The public Zaton alpha uses the development NPC simulation.
+  browser storage. The public Zaton alpha runs stock native A-Life for NPCs.
 
 ## Persistent data
 
 Volume `vol_40o7jmp7odd7pmm4` (`zone_data`) is 10 GB and encrypted. The entrypoint
 initializes owned directories then drops to uid/gid 10001. The gateway supervises
-Rust and forwards SIGTERM; Fly allows 25 seconds for shutdown.
+Rust and X-Ray and forwards SIGTERM. Fly allows 25 seconds for shutdown.
 
 - `/data/zone/zone.sqlite`: durable player records and ownership (plus SQLite WAL).
 - `/data/collision`: private Zaton manifest and hash-named cform/gamemtl files.
+- `/data/alife/bin`: optimized native X-Ray runtime and its shared libraries.
+- `/data/alife/zaton`: private stock archives, engine overrides and persistent
+  native app data. Keep the native save, world fence and outbox together.
 - `/data/web/blobs`: immutable decoded file bytes keyed by SHA-256.
 - `/data/web/manifests`: release history; `/data/web/active.json` is atomically
   replaced only after every referenced blob has been verified as present.
@@ -54,8 +57,8 @@ Engine overrides retain their existing per-file checks.
 Old release URL mappings remain available to running clients. Blob garbage
 collection is deliberately not automatic; check capacity before many updates.
 
-The Machine currently has two shared CPUs / 1 GiB and stays running. This is not
-a 200-player capacity guarantee. Dedicated IPv4 is $2/month plus Machine, volume
+The native Zaton configuration uses two shared CPUs and 4 GiB of memory.
+Capacity testing at 200 players remains open. Dedicated IPv4 is $2/month plus Machine, volume
 and applicable bandwidth charges. Daily volume snapshots retain five days;
 application backup scheduling and target-host restore drills remain plan items.
 
@@ -87,6 +90,26 @@ Upload the matching browser files before switching the server image. After the
 new gateway and Rust process pass health checks, activate the prepared frontend
 manifest. Use the manual test plan for the hosted Zaton alpha and the separate
 local campaign and native A-Life checks. [Manual test plan](../MECHANICS_TEST_PLAN.md)
+
+## Native A-Life
+
+For single-map Zaton, set `ZONE_NATIVE_ALIFE_ROOT=/data/alife/zaton`,
+`ZONE_NATIVE_ALIFE_BIN=/data/alife/bin/xr_3da`, and
+`ZONE_ALIFE_INTEREST_SOCKET=/run/zone-alife/zaton`. Stage the Linux x86-64 release
+runtime on the private volume. Populate the game directory with `fsgame.ltx`,
+engine overrides and stock archives restored from the published pack. Verify
+archive chunks by hash and create `archives-ready` in the game directory after
+verification. The gateway runs the native process under the same unprivileged
+user as Rust and retries it independently if it exits.
+
+For a campaign deployment, point `ZONE_NATIVE_ALIFE_ROOT` at the parent
+directory containing one game directory per level. The regions with
+`alifeSocket` in `ZONE_CAMPAIGN_CONFIG` each launch a host. Use separate
+`_appdata_` and private sockets for every host. The game directories can
+share the immutable archives through symlinks. Preserve the existing
+Zaton app data when adding campaign maps so its native checkpoint lineage
+matches the Rust database. Verify admission and checkpoint advancement for
+each map before opening the campaign.
 
 ## Publish frontend/assets
 

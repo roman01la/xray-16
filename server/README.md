@@ -274,6 +274,7 @@ are implemented separately below; this build is not a public survival server.
 | `ZONE_DEV_TOKEN` | unset | Dev Bearer gate; required off loopback |
 | `ZONE_MAX_PLAYERS` | `200` | Includes pending connections, max 4096 |
 | `ZONE_CAMPAIGN_CONFIG` | unset | JSON defining two to five maps and optional approved travel routes |
+| `ZONE_ALIFE_INTEREST_SOCKET` | unset | Absolute private socket for a single-map native A-Life host |
 | `ZONE_COLLISION_MANIFEST` | unset | Selects the server's campaign map and its pinned collision files |
 | `ZONE_RELOAD_TIMINGS` | unset | Catalog-matched stock reload timings for authoritative phases and sound cues |
 | `ZONE_SPAWN_X`, `ZONE_SPAWN_Z` | `87.599976`, `115` on Zaton | Validated map spawn. Set both on other maps. |
@@ -312,7 +313,7 @@ immediate reload behavior.
 
 With `ZONE_CAMPAIGN_CONFIG`, one process uses one database and UDP endpoint for
 all configured maps. Set `ZONE_DATABASE` and `ZONE_ITEM_CATALOG`. Omit the
-single-map collision, spawn, loose-loot, environment-field and ladder variables.
+single-map collision, spawn, loose-loot, environment-field, ladder and A-Life socket variables.
 The config file has a `regions` array in entry-map order. Each entry supplies
 `collision` and a walkable `spawn` as `[x,y,z]`. Optional `looseLoot` and
 `environmentFields` paths apply to that map. Generate fields with
@@ -325,6 +326,13 @@ from the stock export produced by `server/tools/export-ladders.mjs`.
 `ZONE_AUTHORED_LOOT` may supply one
 stash export for all maps. The optional `travel` object supplies the `export`
 and `approvals` paths. Paths in the config resolve relative to the config file.
+An optional `alifeSocket` assigns a region its own absolute Unix socket for the
+native host. Use a private owner-only directory and a distinct socket for each
+region. Start a dedicated X-Ray process per enabled map with the same socket,
+`ZONE_ALIFE_LEVEL` set to its stock level name and `ZONE_ALIFE_ANCHOR` set to the
+region's three spawn coordinates separated by spaces. Each process needs its
+own app data and outbox. See the [Fly runbook](deploy/FLY.md) for the supervised
+launch layout.
 Route approvals have `schema: 1`, the export's `spawnSha256`, and a `routes`
 array of reviewed spawn IDs. Leave travel unconfigured until the intended
 crossings and their campaign dependencies have been reviewed.
