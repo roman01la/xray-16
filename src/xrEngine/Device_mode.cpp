@@ -44,20 +44,25 @@ void TrackBrowserViewport()
         if (!root.classList.contains('game-only'))
             return;
         const index = $0 / 8;
-        const measure = () => {
-            const width = root.clientWidth;
-            const height = root.clientHeight;
-            if (width && height) {
+        let lastSize = 0n;
+        let publishedSize = 0n;
+        const measure = (initial = false) => {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            if (!width || !height)
+                return;
+            const size = BigInt(width) << 32n | BigInt(height);
+            if (size !== publishedSize && (initial || size === lastSize)) {
                 growMemViews();
-                Atomics.store(HEAPU64, index, BigInt(width) << 32n | BigInt(height));
+                Atomics.store(HEAPU64, index, size);
+                publishedSize = size;
             }
+            lastSize = size;
         };
-        let timer;
-        new ResizeObserver(() => {
-            clearTimeout(timer);
-            timer = setTimeout(measure, 150);
-        }).observe(root);
-        measure();
+        // Some viewport changes while the game has focus deliver no resize
+        // event. Wait for two equal samples before resetting GPU targets.
+        measure(true);
+        setInterval(measure, 150);
     }, double(uintptr_t(&browserViewportSize)));
 }
 } // namespace
