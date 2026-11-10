@@ -1,3 +1,4 @@
+import {requireGameCompatibility, showCompatibilityFailure} from './compatibility.mjs';
 import {ARCHIVE_CHUNKS, ARCHIVE_DESCRIPTORS, INSTALL_DIRECTORY, LEGACY_CHUNKS, LEGACY_DESCRIPTORS} from './opfs-store.mjs';
 import {startCampaignAnalytics} from './analytics-client.mjs';
 
@@ -237,6 +238,8 @@ if(importingSaves){
   if(!deleteButton.disabled)await clearInstalledGame();
  }
 } else try {
+ document.querySelector('#boot-status').textContent='Checking browser compatibility…';
+ await requireGameCompatibility();
  await holdInstalledGame();
  if (/^\/releases\/[a-f0-9]{64}\/index\.html$/.test(location.pathname)) {
   const {preparePublishedRelease}=await import('./release-cache.mjs');
@@ -253,6 +256,9 @@ if(importingSaves){
  }
  await import('./singleplayer-ui.mjs');
 } catch(error) {
- document.querySelector('#boot-status').textContent=error.message;
- const retry=document.querySelector('#retry');retry.hidden=false;retry.onclick=()=>location.reload();
+ if(error.compatibilityFailure)showCompatibilityFailure(error);
+ else {
+  document.querySelector('#boot-status').textContent=error.message;
+  const retry=document.querySelector('#retry');retry.hidden=false;retry.onclick=()=>location.reload();
+ }
 }

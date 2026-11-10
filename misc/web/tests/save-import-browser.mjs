@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const repo=resolve(import.meta.dirname,'../../..');
 const output=process.argv[2]?resolve(process.argv[2]):await mkdtemp(join(tmpdir(),'xray-save-import-'));
 await mkdir(output,{recursive:true});const profile=join(output,'chrome');await mkdir(profile,{recursive:true});
-const files={ '/index.html':'server/web/game.html','/game-ui.mjs':'server/web/game-ui.mjs',
+const files={ '/compatibility.mjs':'server/web/compatibility.mjs', '/index.html':'server/web/game.html','/game-ui.mjs':'server/web/game-ui.mjs',
  '/analytics-client.mjs':'server/web/analytics-client.mjs','/opfs-store.mjs':'server/web/opfs-store.mjs',
  '/save-format.js':'misc/web/page/save-format.js','/startup-wallpaper.webp':'server/web/startup-wallpaper.webp',
  '/favicon.ico':'src/xr_3da/stalker_cop.ico'};

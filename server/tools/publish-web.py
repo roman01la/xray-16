@@ -20,8 +20,8 @@ frontend=collect(P(args.frontend).resolve(),args.mode=='multiplayer' or args.uni
 frontend['License.txt']=record(repo/'License.txt')
 if args.unified:
  frontend['index.html']=record(repo/'server/web/game.html')
- for name in ['game-ui.mjs','singleplayer-ui.mjs','public-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','startup-wallpaper.webp']:frontend[name]=record(repo/'server/web'/name)
- bootstrap={'index.html','game-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
+ for name in ['compatibility.mjs','game-ui.mjs','singleplayer-ui.mjs','public-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','startup-wallpaper.webp']:frontend[name]=record(repo/'server/web'/name)
+ bootstrap={'compatibility.mjs','index.html','game-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
  release_index=output/'release-files.json'
  release_index.write_text(json.dumps({name:item for name,item in frontend.items() if name not in bootstrap},sort_keys=True,separators=(',',':')))
  frontend['release-files.json']=record(release_index)
@@ -29,6 +29,7 @@ elif args.mode=='multiplayer':
  frontend['identity.mjs']=record(repo/'misc/web/multiplayer/identity.mjs')
  frontend['index.html']=record(repo/'server/web/index.html');frontend['public-ui.mjs']=record(repo/'server/web/public-ui.mjs')
 else:
+ frontend['compatibility.mjs']=record(repo/'server/web/compatibility.mjs')
  frontend['index.html']=record(repo/'server/web/singleplayer.html');frontend['singleplayer-ui.mjs']=record(repo/'server/web/singleplayer-ui.mjs')
 pack=collect(P(args.pack).resolve())
 version=lambda value:hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()

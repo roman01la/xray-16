@@ -14,6 +14,6 @@ if((await lstat(join(output,'engine'))).isSymbolicLink())await rm(join(output,'e
 await stageBrowserMenu(web,packArg);
 if(packArg)await stageBrowserSounds(web,resolve(packArg));
 await copyFile(join(repo,'src/xr_3da/stalker_cop.ico'),join(web,'favicon.ico'));
-for(const [source,target] of [['game.html','index.html'],['game-ui.mjs','game-ui.mjs'],['singleplayer-ui.mjs','singleplayer-ui.mjs'],['public-ui.mjs','public-ui.mjs'],['analytics-client.mjs','analytics-client.mjs'],['startup-wallpaper.webp','startup-wallpaper.webp']])await copyFile(join(repo,'server/web',source),join(web,target));
+for(const [source,target] of [['compatibility.mjs','compatibility.mjs'],['game.html','index.html'],['game-ui.mjs','game-ui.mjs'],['singleplayer-ui.mjs','singleplayer-ui.mjs'],['public-ui.mjs','public-ui.mjs'],['analytics-client.mjs','analytics-client.mjs'],['startup-wallpaper.webp','startup-wallpaper.webp']])await copyFile(join(repo,'server/web',source),join(web,target));
 if(packArg){try{await symlink(resolve(packArg),join(output,'pack'),'dir');}catch(e){if(e.code!=='EEXIST')throw e;}}
 console.log('Unified browser game:',web);
