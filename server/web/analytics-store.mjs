@@ -2,12 +2,16 @@ import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {isMainThread,parentPort,Worker,workerData} from 'node:worker_threads';
 
-export const analyticsEvents = new Set(['visit','install','start_game','new_campaign','load_save']);
+export const analyticsEvents = new Set(['visit','install','start_game','new_campaign','load_save','device','performance']);
 const visitGap = 30 * 60 * 1000;
 
 export function openAnalytics(database) {
   const db = new DatabaseSync(database);
   db.exec(`
+    CREATE TABLE IF NOT EXISTS analytics_devices (browser_id TEXT NOT NULL, session_id TEXT NOT NULL, received_at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(browser_id,session_id)) STRICT;
+    CREATE TABLE IF NOT EXISTS analytics_performance (id TEXT PRIMARY KEY, browser_id TEXT NOT NULL, session_id TEXT NOT NULL, received_at INTEGER NOT NULL, data TEXT NOT NULL) STRICT;
+    CREATE INDEX IF NOT EXISTS analytics_device_time ON analytics_devices(received_at);
+    CREATE INDEX IF NOT EXISTS analytics_performance_time ON analytics_performance(received_at);
     PRAGMA journal_mode=WAL;
     PRAGMA synchronous=NORMAL;
     PRAGMA busy_timeout=5000;
@@ -37,7 +41,15 @@ export function openAnalytics(database) {
     FROM analytics_events GROUP BY event
   `);
   return {
-    record({browserId,eventId,event}, now = Date.now()) {
+    record({browserId,eventId,event,data}, now = Date.now()) {
+      if(event==='device'||event==='performance'){
+        if(event==='device')db.prepare('INSERT INTO analytics_devices VALUES (?,?,?,?) ON CONFLICT(browser_id,session_id) DO UPDATE SET received_at=excluded.received_at,data=excluded.data').run(browserId,data.sessionId,now,JSON.stringify(data));
+        else db.prepare('INSERT OR IGNORE INTO analytics_performance VALUES (?,?,?,?,?)').run(eventId,browserId,data.sessionId,now,JSON.stringify(data));
+        // Keep performance samples bounded; milestone counts remain all-time.
+        db.prepare('DELETE FROM analytics_performance WHERE received_at < ?').run(now-30*86400000);
+        db.prepare('DELETE FROM analytics_devices WHERE received_at < ?').run(now-30*86400000);
+        return;
+      }
       db.exec('BEGIN IMMEDIATE');
       try {
         if (!findEvent.get(eventId)) {
@@ -57,7 +69,18 @@ export function openAnalytics(database) {
       }
     },
     summary() {
-      return {browsers:browserCount.get().total,events:eventCounts.all()};
+      return {browsers:browserCount.get().total,events:eventCounts.all(), devices:db.prepare("SELECT data,received_at FROM analytics_devices ORDER BY received_at DESC LIMIT 200").all(),
+        performance:db.prepare(`SELECT coalesce(json_extract(d.data,'$.os'),'Unknown') AS os,coalesce(json_extract(d.data,'$.browser'),'Unknown') AS browser,
+        coalesce(nullif(json_extract(d.data,'$.gpuDescription'),''),nullif(json_extract(d.data,'$.gpuDevice'),''),nullif(json_extract(d.data,'$.gpuVendor'),''),'Unknown') AS gpu,
+        json_extract(d.data,'$.cores') AS cores,json_extract(p.data,'$.vsync') AS vsync,json_extract(p.data,'$.fpsCap') AS cap,
+        json_extract(p.data,'$.width') AS width,json_extract(p.data,'$.height') AS height,
+        count(DISTINCT p.browser_id) AS users,count(*) AS samples,
+        sum(json_extract(p.data,'$.frames'))*1000.0/sum(json_extract(p.data,'$.elapsedMs')) AS fps,
+        sum(json_extract(p.data,'$.elapsedMs'))/60000.0 AS minutes,
+        avg(json_extract(p.data,'$.p95Ms')) AS p95, max(json_extract(p.data,'$.maxMs')) AS worst,
+        sum(json_extract(p.data,'$.stalls100')) AS stalls
+        FROM analytics_performance p LEFT JOIN analytics_devices d ON d.browser_id=p.browser_id AND d.session_id=p.session_id
+        WHERE p.received_at >= ? GROUP BY os,browser,gpu,cores,vsync,cap,width,height ORDER BY minutes DESC LIMIT 200`).all(Date.now()-30*86400000)};
     },
     close() {db.close();},
   };

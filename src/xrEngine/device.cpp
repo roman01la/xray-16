@@ -459,9 +459,10 @@ void CRenderDevice::ProcessFrame()
     g_webFramePacer.SetVsyncPaced(vsync);
     g_webFramePacer.SetFrameLimit(frameLimit);
     EM_ASM({
-        globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4);
+        globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4, $5);
     }, cpuSimulationEnd - cpuFrameStart, cpuRenderEnd - cpuSimulationEnd,
-        cpuWaitEnd - cpuRenderEnd, static_cast<int>(vsync), frameBudgetMs);
+        cpuWaitEnd - cpuRenderEnd, static_cast<int>(vsync), frameBudgetMs,
+        static_cast<int>(g_pGameLevel && !Paused() && !dwPrecacheFrame && g_loading_events.empty()));
 #else
     const u32 updateDelta = 1000 / frameLimit;
     if (frameTime < updateDelta)

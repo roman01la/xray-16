@@ -119,6 +119,8 @@ if(fpsCounter||showDiagnostics){
  const name='xray-gpu-telemetry-'+crypto.randomUUID();
  globalThis.__xrayGPUDiagnosticsChannel={name,detailed:showDiagnostics};
  const channel=new BroadcastChannel(name);
+ const visibility=()=>channel.postMessage({type:'visibility',visible:!document.hidden});
+ document.addEventListener('visibilitychange',visibility);visibility();
  const record=showDiagnostics?createDiagnosticsHistory(diagnostics):null;
  if(showDiagnostics){
   diagnostics.hidden=false;
@@ -129,6 +131,7 @@ if(fpsCounter||showDiagnostics){
    fpsCounter.hidden=false;
   }
   record?.(d);
+  window.dispatchEvent(new CustomEvent('xray-performance',{detail:d}));
  };
  window.addEventListener('pagehide',event=>{if(!event.persisted)channel.close();});
 }

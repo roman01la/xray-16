@@ -28,7 +28,7 @@ let phaseProfileEnabled = false;
 let profileEnabled = false,
   benchmark = null;
 const profile = { calls: 0, cpu: 0, mirror: 0, submits: 0 };
-let telemetryChannel, telemetryAdapter;
+let telemetryChannel, telemetryAdapter, analyticsAdapter;
 let lastTelemetryPresent, maxFrameMs = 0;
 const diagnostics = { streamSnapshots: 0, streamBufferAllocations: 0, renderPasses: 0, drawBatches: 0, nativeOnly: false, frames: 0, draws: 0, directDraws: 0, nativeTextureAllocations: 0, nativeTextureUploads: 0, nativeBufferUploads: 0, nativeQueries: 0, nativeTextureCopies: 0, nativeProgramSelections: 0, nativeVertexSelections: 0, nativePassRecords: 0, nativeClears: 0, nativePresents: 0, bindingBatches: 0, bindingRecords: 0, stateBatches: 0, stateRecords: 0, uniformBatches: 0, uniformRecords: 0, uniformBytesCopied: 0, uniformReuses: 0, preparedHits: 0, preparedMisses: 0, materialHits: 0, validationErrors: 0, lastError: "" };
 const channel =
@@ -114,15 +114,20 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
     if (globalThis.__xrayWebGPU) return globalThis.__xrayWebGPU;
     if (gpuDiagnosticsChannel) {
       telemetryChannel = new BroadcastChannel(gpuDiagnosticsChannel.name);
-      if (gpuDiagnosticsChannel.detailed) {
+      {
         const info = adapter.info;
-        telemetryAdapter = {
-          vendor: info?.vendor, architecture: info?.architecture, device: info?.device,
+        analyticsAdapter = {
+          vendor: info?.vendor, architecture: info?.architecture, device: info?.device, description: info?.description,
+          features: [...adapter.features].join(","), maxTextureDimension2D: adapter.limits.maxTextureDimension2D, maxBufferSize: adapter.limits.maxBufferSize,
           fallback: info?.isFallbackAdapter ?? adapter.isFallbackAdapter,
         };
       }
     }
+    if(gpuDiagnosticsChannel?.detailed)telemetryAdapter=analyticsAdapter;
     const renderer = new GPUFrontend(canvas, device, canvas.getContext("webgpu"));
+    telemetryChannel?.addEventListener('message',({data})=>{
+      if(data.type==='visibility'){renderer.analyticsVisible=!!data.visible;renderer.analyticsLast=null;renderer.analyticsFrames=null;}
+    });
     renderer.nativeOnly = diagnostics.nativeOnly = true;
     renderer.handles = globalThis.__xrayWebGPUHandles = createNativeHandles();
     globalThis.__xrayWebGPU = renderer;
@@ -232,7 +237,19 @@ export class GPUFrontend {
       detailChangedBatches:changedBatches,detailMembershipChanges:membershipChanges,detailContentChanges:contentChanges}))
       profile[key] = (profile[key] || 0) + value;
   }
-  recordEngineTimings(simulation, render, wait, vsync, limitMs) {
+  recordEngineTimings(simulation, render, wait, vsync, limitMs, gameplay = false) {
+    const now = performance.now(), previous = this.analyticsLast;
+    this.analyticsLast = gameplay && this.analyticsVisible !== false ? now : null;
+    if (this.analyticsLast !== null && previous != null) {
+      const ms=now-previous;
+      if(ms>0 && ms<60000){
+        const a=this.analyticsFrames??={frames:0,elapsedMs:0,maxMs:0,stalls50:0,stalls100:0,hist:{}};
+        a.frames++;a.elapsedMs+=ms;a.maxMs=Math.max(a.maxMs,ms);
+        a.stalls50+=ms>50?1:0;a.stalls100+=ms>100?1:0;
+        const bin=Math.min(1000,Math.ceil(ms));a.hist[bin]=(a.hist[bin]||0)+1;
+      }
+    }
+    this.framePacing = {vsync: !!vsync, limitMs};
     if (!phaseProfileEnabled && !telemetryAdapter) return;
     const e = (this.engineProfile ??= { count: 0, simulation: 0, render: 0, wait: 0 });
     e.count++; e.simulation += simulation; e.render += render; e.wait += wait;
@@ -2025,12 +2042,15 @@ export class GPUFrontend {
       channel?.postMessage(diagnostics);
       telemetryChannel?.postMessage(telemetryAdapter ? {
         adapter: telemetryAdapter, fps: diagnostics.fps, frames: diagnostics.frames,
+        gameplayPerformance: this.analyticsFrames,
         timeMs: performance.timeOrigin + now, maxFrameMs,
         width: this.canvas.width, height: this.canvas.height, pacing: this.framePacing,
         simulationMs: diagnostics.profile.engineSimulationMs, renderMs: diagnostics.profile.engineRenderMs,
         waitMs: diagnostics.profile.engineWaitMs, gpuMs: this.timer?.ms || null,
         validationErrors: diagnostics.validationErrors,
-      } : {fps: diagnostics.fps});
+      } : {fps: diagnostics.fps,adapter:analyticsAdapter,gameplayPerformance:this.analyticsFrames,
+        width:this.canvas.width,height:this.canvas.height,pacing:this.framePacing,validationErrors:diagnostics.validationErrors});
+      this.analyticsFrames = null;
       maxFrameMs = 0;
       lastReport = now;
       lastReportFrames = diagnostics.frames;

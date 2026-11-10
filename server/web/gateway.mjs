@@ -49,7 +49,10 @@ export async function createGateway({root,token,origin,backendPort=8082,assetOri
      if(req.headers.origin!==origin||req.headers['sec-fetch-site']==='cross-site')return reply(403);
      if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||''))return reply(415);
      if(limited(ip,'analytics-event',600,60000)||limited('*','analytics-event',1800,60000))return reply(429);
-     const event=validateAnalyticsEvent(JSON.parse(await body(req,1024)));
+     const raw=await body(req,8192);
+     const parsed=JSON.parse(raw);
+     if(!['device','performance'].includes(parsed?.event)&&raw.length>1024)return reply(413);
+     const event=validateAnalyticsEvent(parsed);
      if(!event)return reply(400);
      await analytics.request('record',event);
      return reply(204);
