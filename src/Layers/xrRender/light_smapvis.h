@@ -16,9 +16,13 @@ public:
     u32 frame_sleep;
     u32 test_count;
     u32 test_current;
-    dxRender_Visual* testQ_V;
-    u32 testQ_id;
-    u32 testQ_frame;
+    dxRender_Visual* testQ_V{};
+    u32 testQ_id{};
+    u32 testQ_frame{};
+#ifdef XR_PLATFORM_WEB
+    bool query_pending{};
+    u32 query_generation{};
+#endif
     int id{-1};
 
 public:

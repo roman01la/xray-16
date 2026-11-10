@@ -33,6 +33,7 @@ private:
     static constexpr u32 iInvalidHandle = 0xFFFFFFFF;
 
     bool enabled{ true };
+    u32 generation{ 1 }; // Changes when pending GPU queries are destroyed.
     xr_vector<Query> pool; // sorted (max ... min), insertions are usually at the end
     xr_vector<Query> used; // id's are generated from this and it is cleared from back only
     xr_vector<u32> fids; // free id's
@@ -48,11 +49,12 @@ public:
 #endif
 public:
     ~R_occlusion();
+    u32 occq_generation() const { return generation; }
 
     void occq_create(u32 limit);
     void occq_destroy();
     u32 occq_begin(u32& ID); // returns 'order'
     void occq_end(u32& ID);
-    occq_result occq_get(u32& ID);
+    occq_result occq_get(u32& ID, bool* ready = nullptr);
 };
 } // namespace xray::render::RENDER_NAMESPACE

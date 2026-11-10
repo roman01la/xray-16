@@ -417,9 +417,11 @@ test("native clears and presentation flush pending pass state and retain compati
   n.enc=()=>({beginRenderPass(d){clears.push(d);return {end(){}};}});
   n.flushNativeStates=()=>{if(pending){n.consumeStateBatch(new Uint32Array([15,EngineFormat.FRAMEBUFFER,1,0,0,0]),0,6,undefined,[null,fb],[null,color,depth]);pending=false;}};
   n.clearNativeTarget(color,EngineFormat.COLOR_BUFFER_BIT,0.25,0.5,0.75,1,1,0);
+  assert.equal(clears.length,0); n.flushPendingClears();
   assert.deepEqual(clears[0],{colorAttachments:[{view:color,loadOp:'clear',storeOp:'store',clearValue:[0.25,0.5,0.75,1]}]});
   const mask=EngineFormat.DEPTH_BUFFER_BIT|EngineFormat.STENCIL_BUFFER_BIT;
   n.clearNativeTarget(depth,mask,0,0,0,0,0.5,7);
+  n.flushPendingClears();
   assert.deepEqual(clears[1].colorAttachments,[]);
   assert.equal(clears[1].depthStencilAttachment.view,depth);
   assert.equal(clears[1].depthStencilAttachment.stencilClearValue,7);

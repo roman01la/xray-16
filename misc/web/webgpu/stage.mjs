@@ -32,6 +32,7 @@ for (const file of [
   await copyFile(join(dist, file), join(output, file));
 for (const file of [
   "backend.js",
+  "queue-audit.js",
   "detail-instancing.js",
   "detail-storage.js",
   "tessellation-cache.js",

@@ -16,6 +16,13 @@ smapvis::~smapvis()
 }
 void smapvis::invalidate()
 {
+#ifdef XR_PLATFORM_WEB
+    if (query_pending)
+    {
+        if (query_generation == RImplementation.occq_generation()) RImplementation.occq_get(testQ_id);
+        query_pending = false;
+    }
+#endif
     state = state_counting;
     testQ_V = 0;
     frame_sleep = Device.dwFrame + ps_r__LightSleepFrames;
@@ -23,6 +30,9 @@ void smapvis::invalidate()
 }
 void smapvis::begin()
 {
+#ifdef XR_PLATFORM_WEB
+    if (query_pending && query_generation != RImplementation.occq_generation()) invalidate();
+#endif
     auto& dsgraph = RImplementation.get_context(id);
     dsgraph.clear_Counters();
     switch (state)
@@ -31,6 +41,9 @@ void smapvis::begin()
         // do nothing -> we just prepare for testing process
         break;
     case state_working:
+#ifdef XR_PLATFORM_WEB
+        if (query_pending) { mark(); break; }
+#endif
         // mark already known to be invisible visuals, set breakpoint
         testQ_V = 0;
         testQ_id = 0;
@@ -67,6 +80,9 @@ void smapvis::end()
     case state_working:
         // feedback should be called at this time -> clear feedback
         // issue query
+#ifdef XR_PLATFORM_WEB
+        if (query_pending) break;
+#endif
         if (testQ_V)
         {
             RImplementation.occq_begin(testQ_id);
@@ -74,6 +90,10 @@ void smapvis::end()
             dsgraph.insert_static(testQ_V);
             dsgraph.render_graph(0);
             RImplementation.occq_end(testQ_id);
+#ifdef XR_PLATFORM_WEB
+            query_pending = true;
+            query_generation = RImplementation.occq_generation();
+#endif
             testQ_frame = Device.dwFrame + 1; // get result on next frame
         }
         break;
@@ -86,11 +106,23 @@ void smapvis::end()
 void smapvis::flushoccq()
 {
     // the tough part
-    if (testQ_frame != Device.dwFrame)
-        return;
+#ifdef XR_PLATFORM_WEB
+    if (query_pending && query_generation != RImplementation.occq_generation()) { invalidate(); return; }
+    if (!query_pending || Device.dwFrame < testQ_frame) return;
+    if (Device.dwFrame - testQ_frame > 120) { invalidate(); return; }
+#else
+    if (testQ_frame != Device.dwFrame) return;
+#endif
     if ((state != state_working) || (!testQ_V))
         return;
+#ifdef XR_PLATFORM_WEB
+    bool ready = false;
+    const auto fragments = RImplementation.occq_get(testQ_id, &ready);
+    if (!ready) return;
+    query_pending = false;
+#else
     const auto fragments = RImplementation.occq_get(testQ_id);
+#endif
     if (0 == fragments)
     {
         // this is invisible shadow-caster, register it

@@ -372,9 +372,10 @@ public:
     IRenderVisual* model_CreatePE(LPCSTR name);
 
     // HW-occlusion culling
+    u32 occq_generation() const { return HWOCC.occq_generation(); }
     u32 occq_begin(u32& ID) { return HWOCC.occq_begin(ID); }
     void occq_end(u32& ID) { HWOCC.occq_end(ID); }
-    auto occq_get(u32& ID) { return HWOCC.occq_get(ID); }
+    auto occq_get(u32& ID, bool* ready = nullptr) { return HWOCC.occq_get(ID, ready); }
 
     ICF void apply_object(CBackend& cmd_list, IRenderable* O)
     {

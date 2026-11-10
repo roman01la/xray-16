@@ -125,8 +125,18 @@ GLuint CRender::texture_load(pcstr fRName, u32& ret_msize, GLenum& ret_desc, u32
 
 
 #ifdef XR_PLATFORM_WEB
-    const auto extent = texture.extent();
-    CreateWebGPUTexture(&pTexture, target, texture.levels(), format.Internal, extent.x, extent.y, extent.z);
+    xr_strlwr(fn);
+    // Honor the native texture-quality policy for ordinary 2D textures. Cubes
+    // and volume/array resources keep their existing complete mip chains.
+    size_t firstMip = texture.target() == gli::TARGET_2D
+        ? std::min<size_t>(get_texture_load_lod(fn), texture.levels() - 1) : 0;
+    // WebGPU BC base dimensions must be block-aligned. Keep a larger mip for
+    // tiny or non-power-of-two chains rather than changing UV coverage.
+    while (firstMip && gli::is_compressed(texture.format()) &&
+        ((texture.extent(firstMip).x % 4) || (texture.extent(firstMip).y % 4))) --firstMip;
+    const auto extent = texture.extent(firstMip);
+    size_t uploadedBytes = 0;
+    CreateWebGPUTexture(&pTexture, target, texture.levels() - firstMip, format.Internal, extent.x, extent.y, extent.z);
     {
         const bool compressed = gli::is_compressed(texture.format());
         const bool swapRedBlue = !compressed && gli::block_size(texture.format()) == 4
@@ -134,11 +144,12 @@ GLuint CRender::texture_load(pcstr fRName, u32& ret_msize, GLenum& ret_desc, u32
         xr_vector<u8> reordered;
         for (size_t layer = 0; layer < texture.layers(); ++layer)
             for (size_t face = 0; face < texture.faces(); ++face)
-                for (size_t level = 0; level < texture.levels(); ++level)
+                for (size_t level = firstMip; level < texture.levels(); ++level)
                 {
                     const auto e = texture.extent(level);
                     const void* data = texture.data(layer, face, level);
                     const size_t bytes = texture.size(level);
+                    uploadedBytes += bytes;
                     if (swapRedBlue)
                     {
                         reordered.assign(static_cast<const u8*>(data), static_cast<const u8*>(data) + bytes);
@@ -146,7 +157,7 @@ GLuint CRender::texture_load(pcstr fRName, u32& ret_msize, GLenum& ret_desc, u32
                         data = reordered.data();
                     }
                     const GLenum subTarget = gli::is_target_cube(texture.target()) ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + face : target;
-                    UploadWebGPUTexture(pTexture, subTarget, level, e.x, e.y, e.z,
+                    UploadWebGPUTexture(pTexture, subTarget, level - firstMip, e.x, e.y, e.z,
                         compressed ? format.Internal : format.External, format.Type, compressed, data, bytes);
                 }
         FS.r_close(S);
@@ -154,8 +165,7 @@ GLuint CRender::texture_load(pcstr fRName, u32& ret_msize, GLenum& ret_desc, u32
         ret_desc = target;
         ret_width = extent.x;
         ret_height = extent.y;
-        const int loadedLod = is_target_cube(texture.target()) ? 0 : get_texture_load_lod(fn);
-        ret_msize = calc_texture_size(loadedLod, mip_cnt, img_size);
+        ret_msize = static_cast<u32>(uploadedBytes);
         return pTexture;
     }
 #endif

@@ -31,7 +31,12 @@ void CRender::render_lights(light_Package& LP)
     // 2. refactor - infact we could go from the backside and sort in ascending order
     {
         xr_vector<light*>& source = LP.v_shadowed;
+#ifdef XR_PLATFORM_WEB
+        static thread_local xr_vector<light*> refactored;
+        refactored.clear();
+#else
         xr_vector<light*> refactored;
+#endif
         refactored.reserve(source.size());
         const size_t total = source.size();
 
@@ -63,7 +68,14 @@ void CRender::render_lights(light_Package& LP)
 
         // save (lights are popped from back)
         std::reverse(refactored.begin(), refactored.end());
+#ifdef XR_PLATFORM_WEB
+        // Both vectors retain capacity across frames; move assignment discarded
+        // the old source allocation and left the temporary empty each time.
+        LP.v_shadowed.swap(refactored);
+        refactored.clear();
+#else
         LP.v_shadowed = std::move(refactored);
+#endif
     }
 
     auto& cmd_list = get_imm_context().cmd_list;

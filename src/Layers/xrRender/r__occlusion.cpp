@@ -25,6 +25,7 @@ void R_occlusion::occq_create(u32 limit)
 }
 void R_occlusion::occq_destroy()
 {
+    ++generation;
     for (const auto& q : used)
         ReleaseQuery(q.Q);
     for (const auto& q : pool)
@@ -87,8 +88,13 @@ void R_occlusion::occq_end(u32& ID)
 
     CHK_DX(EndQuery(used[ID].Q));
 }
-R_occlusion::occq_result R_occlusion::occq_get(u32& ID)
+R_occlusion::occq_result R_occlusion::occq_get(u32& ID, bool* ready)
 {
+#ifdef XR_PLATFORM_WEB
+    static const bool audit = strstr(Core.Params, "-web_work_audit") != nullptr;
+    static size_t pendingCount = 0, completedCount = 0;
+#endif
+    if (ready) *ready = true;
     if (!enabled || ID == iInvalidHandle)
         return 0xffffffff;
 
@@ -101,7 +107,16 @@ R_occlusion::occq_result R_occlusion::occq_get(u32& ID)
     RImplementation.BasicStats.Wait.Begin();
 #ifdef XR_PLATFORM_WEB
     if ((hr = GetData(used[ID].Q, &fragments, sizeof(fragments))) == S_FALSE)
+    {
+        if (ready)
+        {
+            *ready = false;
+            if (audit && ++pendingCount % 32 == 0) Msg("WEB_QUERY_WORK pending=%zu completed=%zu", pendingCount, completedCount);
+            RImplementation.BasicStats.Wait.End();
+            return (occq_result)-1; // Caller retains the query until ready or explicitly cancelled.
+        }
         fragments = (occq_result)-1;
+    }
 #else
     while ((hr = GetData(used[ID].Q, &fragments, sizeof(fragments))) == S_FALSE)
     {
@@ -117,6 +132,9 @@ R_occlusion::occq_result R_occlusion::occq_get(u32& ID)
 #endif
     RImplementation.BasicStats.Wait.End();
 
+#ifdef XR_PLATFORM_WEB
+    if (audit && ready && ++completedCount % 32 == 0) Msg("WEB_QUERY_WORK pending=%zu completed=%zu", pendingCount, completedCount);
+#endif
     if (0 == fragments)
         RImplementation.BasicStats.OcclusionCulled++;
 

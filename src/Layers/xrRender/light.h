@@ -69,6 +69,11 @@ public:
     {
         u32 frame2test; // frame the test is sheduled to
         u32 query_id; // ID of occlusion query
+#ifdef XR_PLATFORM_WEB
+        u32 query_frame{};
+        u32 query_generation{};
+        Fmatrix query_view{};
+#endif
         u32 query_order; // order of occlusion query
         bool visible; // visible/invisible
         bool pending; // test is still pending

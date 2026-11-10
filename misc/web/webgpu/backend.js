@@ -1,3 +1,4 @@
+import { QueueAudit } from "./queue-audit.js";
 import { FluidRenderer } from "./fluid-renderer.js";
 import { DetailStorage } from "./detail-storage.js";
 import { TessellationCache } from "./tessellation-cache.js";
@@ -40,6 +41,11 @@ channel?.addEventListener("message", ({ data }) => {
   if (data.command === "native-selftest" && globalThis.__xrayWebGPU) validateNativeGPU(globalThis.__xrayWebGPU)
     .then(nativeSelfTest => channel.postMessage({nativeSelfTest}))
     .catch(error => channel.postMessage({nativeSelfTest:{passed:false,error:String(error.stack||error)}}));
+  if (data.command === "queue-audit" && globalThis.__xrayWebGPU) {
+    const audit = data.enabled ? new QueueAudit() : null;
+    globalThis.__xrayWebGPU.queueAudit = audit;
+    diagnostics.queueAudit = audit?.stats || null;
+  }
   if (data.command === "profile") {
     phaseProfileEnabled = !!data.enabled;
     profileEnabled = !!data.enabled && !data.phasesOnly;
@@ -57,6 +63,7 @@ channel?.addEventListener("message", ({ data }) => {
     };
   }
 });
+diagnostics.foldedClears = 0;
 export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsChannel) {
   if (
     installed ||
@@ -283,6 +290,7 @@ export class GPUFrontend {
     }
   }
   flush() {
+    this.flushPendingClears();
     this.endPass();
     if (this.encoder) {
       if (this.uniformOffset > this.uniformUploaded) {
@@ -298,6 +306,7 @@ export class GPUFrontend {
       }
       profile.submits++;
       this.device.queue.submit([this.encoder.finish()]);
+      this.queueAudit?.submit(this.device.queue);
       for (const buffer of this.retired) buffer.destroy();
       this.retired.length = 0;
       for (const slot of this.streamRetired) {
@@ -418,6 +427,7 @@ export class GPUFrontend {
     return v;
   }
   allocateTexture(a, is3, i) {
+    this.flushPendingClears();
     this.textureStorageGeneration = (this.textureStorageGeneration || 0) + 1;
     const g = EngineFormat;
     if (!i) return;
@@ -801,6 +811,7 @@ export class GPUFrontend {
     );
   }
   view(texture, level = 0, layer = 0, dimension = "2d", sampled = false) {
+    this.flushPendingClears(texture);
     const i = this.info(texture);
     if (!i?.gpu) throw Error("WebGPU texture not allocated");
     if (sampled && level === 0 && layer === 0 && i.sampledViews?.[dimension])
@@ -886,13 +897,23 @@ export class GPUFrontend {
       s = this.state;
     if (this.pass && this.passKey === key && !clear) return this.pass;
     this.endPass();
-    const colorAttachments = colors.map((a) =>
+    const takeClear = a => {
+      if (!a || (a.level || 0) || (a.layer || 0)) return null;
+      const pending = this.pendingClears?.get(a.texture);
+      if (pending) {
+        this.pendingClears.delete(a.texture);
+        diagnostics.foldedClears = (diagnostics.foldedClears || 0) + 1;
+      }
+      return pending;
+    };
+    const colorClears = colors.map(takeClear), depthClear = takeClear(depth);
+    const colorAttachments = colors.map((a, index) =>
       a
         ? {
             view: this.view(a.texture, a.level, a.layer),
-            loadOp: clear & g.COLOR_BUFFER_BIT ? "clear" : "load",
+            loadOp: (clear & g.COLOR_BUFFER_BIT) || colorClears[index] ? "clear" : "load",
             storeOp: "store",
-            clearValue: s.clearColor,
+            clearValue: clear & g.COLOR_BUFFER_BIT ? s.clearColor : (colorClears[index]?.colorAttachments[0].clearValue || s.clearColor),
           }
         : null,
     );
@@ -901,15 +922,15 @@ export class GPUFrontend {
       const t = this.info(depth.texture);
       desc.depthStencilAttachment = {
         view: this.view(depth.texture, depth.level, depth.layer),
-        depthLoadOp: clear & g.DEPTH_BUFFER_BIT ? "clear" : "load",
+        depthLoadOp: clear & g.DEPTH_BUFFER_BIT ? "clear" : (depthClear?.depthStencilAttachment.depthLoadOp || "load"),
         depthStoreOp: "store",
-        depthClearValue: s.clearDepth,
+        depthClearValue: clear & g.DEPTH_BUFFER_BIT ? s.clearDepth : (depthClear?.depthStencilAttachment.depthClearValue ?? s.clearDepth),
       };
       if (t.format.includes("stencil"))
         Object.assign(desc.depthStencilAttachment, {
-          stencilLoadOp: clear & g.STENCIL_BUFFER_BIT ? "clear" : "load",
+          stencilLoadOp: clear & g.STENCIL_BUFFER_BIT ? "clear" : (depthClear?.depthStencilAttachment.stencilLoadOp || "load"),
           stencilStoreOp: "store",
-          stencilClearValue: s.clearStencil,
+          stencilClearValue: clear & g.STENCIL_BUFFER_BIT ? s.clearStencil : (depthClear?.depthStencilAttachment.stencilClearValue ?? s.clearStencil),
         });
     }
     const sampleGPU = telemetryAdapter && diagnostics.frames % 16 === 0;
@@ -927,7 +948,7 @@ export class GPUFrontend {
   beginNativeUIList(...args) { beginNativeUIList(this, ...args); }
   drawNativeUI(...args) { drawNativeUI(this, ...args); }
   endNativeUIList() { endNativeUIList(this); }
-  clearNativeRects(...args) { clearNativeRects(this, ...args); }
+  clearNativeRects(...args) { this.flushPendingClears(); clearNativeRects(this, ...args); }
   createNativeObject(kind) {
     return allocateHandle(this.handles, ["vaos","framebuffers","samplers","shaders","programs"][kind]);
   }
@@ -1018,6 +1039,7 @@ export class GPUFrontend {
     return token.available ? (token.result ? 1 : 0) : -1;
   }
   copyNativeTexture(source, destination, width, height) {
+    this.flushPendingClears();
     this.flushNativeStates?.();
     this.flushNativeBindings?.();
     const src = this.info(source), dst = this.info(destination);
@@ -1075,10 +1097,21 @@ export class GPUFrontend {
       }
       descriptor.depthStencilAttachment=attachment;
     }
-    // Clear the named resource independently of currently bound attachments.
-    // They can have different sizes/sample counts, and engine state is unchanged.
-    this.enc().beginRenderPass(descriptor).end();
-    diagnostics.nativeClears++; diagnostics.renderPasses++;
+    // Keep named-resource semantics. Sampling/copy/upload/deletion/submit drains
+    // pending clears; only a matching first attachment use may fold one in.
+    (this.pendingClears ??= new Map()).set(texture, descriptor);
+    diagnostics.nativeClears++;
+  }
+  flushPendingClears(texture) {
+    if (!this.pendingClears?.size) return;
+    const records = texture ? [[texture, this.pendingClears.get(texture)]] : [...this.pendingClears];
+    for (const [token, descriptor] of records) {
+      if (!descriptor) continue;
+      this.pendingClears.delete(token);
+      this.endPass();
+      this.enc().beginRenderPass(descriptor).end();
+      diagnostics.renderPasses++;
+    }
   }
   presentNative(framebuffer, width, height) {
     this.flushNativeBindings?.();
@@ -1173,6 +1206,9 @@ export class GPUFrontend {
     this.unitBindingGenerations[unit]++;
   }
   cachedMaterial(p) {
+    if (this.pendingClears?.size)
+      for (const dependency of p.materialDependencies || [])
+        for (const token of this.textures[dependency.unit]?.values() || []) this.flushPendingClears(token);
     if (p.lastResourceGeneration !== this.resourceGeneration || !p.lastMaterial) return null;
     if (p.lastBindingGeneration !== this.bindingGeneration) {
       for (const dependency of p.materialDependencies || [])
@@ -1849,6 +1885,7 @@ export class GPUFrontend {
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       });
       this.endPass();
+      this.flushPendingClears();
       this.enc().copyTextureToBuffer(
         {
           texture: info.gpu,
@@ -1918,6 +1955,7 @@ export class GPUFrontend {
     }
   }
   blit(a) {
+    this.flushPendingClears();
     const g = EngineFormat;
     if (!(a[8] & g.COLOR_BUFFER_BIT))
       throw Error("Depth/stencil blit not implemented");
@@ -2021,7 +2059,7 @@ export class GPUFrontend {
       if (!benchmark.start) {
         benchmark.start = benchmark.last = now;
         benchmark.directStart = diagnostics.directDraws;
-        benchmark.work = Object.fromEntries(["streamUploadedBytes", "streamNewBytes", "materialRebuilds", "streamSnapshots", "streamBufferAllocations", "renderPasses", "drawBatches", "nativeTextureAllocations", "nativeTextureUploads", "nativeBufferUploads", "nativeQueries", "nativeTextureCopies", "nativeProgramSelections", "nativeVertexSelections", "nativePassRecords", "nativeClears", "nativePresents", "bindingBatches", "bindingRecords", "stateBatches", "stateRecords", "uniformBatches", "uniformRecords", "uniformBytesCopied", "uniformReuses", "preparedHits", "preparedMisses", "materialHits"].map(k => [k, diagnostics[k]]));
+        benchmark.work = Object.fromEntries(["streamUploadedBytes", "streamNewBytes", "materialRebuilds", "streamSnapshots", "streamBufferAllocations", "renderPasses", "drawBatches", "nativeTextureAllocations", "nativeTextureUploads", "nativeBufferUploads", "nativeQueries", "nativeTextureCopies", "nativeProgramSelections", "nativeVertexSelections", "nativePassRecords", "nativeClears", "foldedClears", "nativePresents", "bindingBatches", "bindingRecords", "stateBatches", "stateRecords", "uniformBatches", "uniformRecords", "uniformBytesCopied", "uniformReuses", "preparedHits", "preparedMisses", "materialHits"].map(k => [k, diagnostics[k]]));
       } else {
         benchmark.times.push(now - benchmark.last);
         benchmark.last = now;

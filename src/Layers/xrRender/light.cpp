@@ -45,6 +45,13 @@ light::light() : SpatialBase(g_pGamePersistent->SpatialSpace)
 
 light::~light()
 {
+#ifdef XR_PLATFORM_WEB
+    if (vis.pending)
+    {
+        if (vis.query_generation == RImplementation.occq_generation()) RImplementation.occq_get(vis.query_id);
+        vis.pending = false;
+    }
+#endif
 #if (RENDER == R_R2) || (RENDER == R_R3) || (RENDER == R_R4) || (RENDER == R_GL)
     for (auto& f : omnipart)
         xr_delete(f);
@@ -208,6 +215,15 @@ void light::spatial_move()
     break;
     }
 
+#ifdef XR_PLATFORM_WEB
+    if (vis.pending)
+    {
+        if (vis.query_generation == RImplementation.occq_generation()) RImplementation.occq_get(vis.query_id);
+        vis.pending = false;
+    }
+    vis.visible = true;
+    vis.frame2test = Device.dwFrame;
+#endif
     // update spatial DB
     SpatialBase::spatial_move();
 

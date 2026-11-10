@@ -21,6 +21,21 @@ void light::vis_prepare(CBackend& cmd_list)
     //		. perform testing				= ???,		pending
 
     u32 frame = Device.dwFrame;
+#ifdef XR_PLATFORM_WEB
+    if (vis.pending)
+    {
+        if (vis.query_generation != RImplementation.occq_generation() || frame - vis.query_frame > 120 ||
+            memcmp(&vis.query_view, &Device.mFullTransform, sizeof(Fmatrix)) != 0)
+        {
+            if (vis.query_generation == RImplementation.occq_generation())
+                RImplementation.occq_get(vis.query_id); // Cancel stale camera results without blocking.
+            vis.pending = false;
+            vis.visible = true;
+            vis.frame2test = frame;
+        }
+        else return; // Do not replace a query before its asynchronous result arrives.
+    }
+#endif
     if (frame < vis.frame2test)
         return;
 
@@ -52,6 +67,11 @@ void light::vis_prepare(CBackend& cmd_list)
 
     // testing
     vis.pending = true;
+#ifdef XR_PLATFORM_WEB
+    vis.query_frame = frame;
+    vis.query_generation = RImplementation.occq_generation();
+    vis.query_view = Device.mFullTransform;
+#endif
     xform_calc();
     cmd_list.set_xform_world(m_xform);
     vis.query_order = RImplementation.occq_begin(vis.query_id);
@@ -78,7 +98,26 @@ void light::vis_update()
         return;
 
     const u32 frame = Device.dwFrame;
+#ifdef XR_PLATFORM_WEB
+    if (vis.query_generation != RImplementation.occq_generation())
+    {
+        vis.pending = false;
+        vis.visible = true;
+        vis.frame2test = frame;
+        return;
+    }
+    bool ready = false;
+    const auto fragments = RImplementation.occq_get(vis.query_id, &ready);
+    if (!ready)
+    {
+        // Retain the last result briefly; toggling an occluded light visible on
+        // every new query produces flicker. Never hide it indefinitely on delay.
+        if (frame - vis.query_frame > 2) vis.visible = true;
+        return;
+    }
+#else
     const auto fragments = RImplementation.occq_get(vis.query_id);
+#endif
     // Log					("",fragments);
     vis.visible = (fragments > cullfragments);
     vis.pending = false;

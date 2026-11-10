@@ -18,6 +18,15 @@ extern float r_ssaGLOD_start, r_ssaGLOD_end;
 
 ICF float calcLOD(float ssa /*fDistSq*/, float /*R*/)
 {
+#ifdef XR_PLATFORM_WEB
+    // Saturated LODs need neither division nor square root. Keep the original
+    // expression for unusual/reversed thresholds and intermediate values.
+    if (r_ssaGLOD_start > r_ssaGLOD_end)
+    {
+        if (ssa >= r_ssaGLOD_start) return 1.f;
+        if (ssa <= r_ssaGLOD_end) return 0.f;
+    }
+#endif
     return _sqrt(clampr((ssa - r_ssaGLOD_end) / (r_ssaGLOD_start - r_ssaGLOD_end), 0.f, 1.f));
 }
 
@@ -31,9 +40,15 @@ bool cmp_ssa(const T &lhs, const T &rhs)
 template <typename T>
 bool cmp_pass(const T& left, const T& right)
 {
+#ifdef XR_PLATFORM_WEB
+    // The graph already groups items by pass. Comparing entire pass contents
+    // here adds work and >= is not a strict ordering for tied SSA values.
+    return left->second.ssa > right->second.ssa;
+#else
     if (left->first->equal(*right->first))
         return false;
     return left->second.ssa >= right->second.ssa;
+#endif
 }
 
 void R_dsgraph_structure::render_graph(u32 _priority)

@@ -42,3 +42,33 @@ See [the tessellation acceptance checklist and implementation evidence](TESSELLA
 ## Automated acceptance artifacts
 
 Final regression suite: 50/50 tests, `/tmp/zone-final-graphics-regression.log`. Final isolated engine/frontend stage: `../mechanics-test/webgpu-fluid-final-stage`; no production deployment or local 8132 replacement. Smoke details and exact limitations: [FLUID-IMPLEMENTATION.md](FLUID-IMPLEMENTATION.md). Fog/Fire screenshots were inspected after disabling detail foliage only in the disposable fixture profile. Actual native cleanup reports zero live volumes after disconnect.
+
+## Five-path rendering work reductions (2026-11-10)
+
+Pending manual visual checks (not claimed complete by automated probes):
+
+- Enter/leave Skadovsk at day and night; turn rapidly around occluded lights.
+  Lights must not remain missing after a camera move or flicker persistently.
+- Move/disable a flashlight; reload a save and change graphics settings using
+  `vid_restart`. Delayed visibility queries must not affect a new renderer.
+- Watch nearby stalkers and mutants animate, attack, die and cast shadows.
+  Their shadows and visible poses must agree, including animation transitions.
+- Exercise scope, rain, water, inventory/menu and save preview rendering; no
+  stale contents should survive a folded clear or texture resize.
+- After a level transition, repeat the above and check for validation errors.
+
+Automated coverage and measured performance are recorded in
+[the five-path experiment report](ORIGINAL-RENDERER-FIVE-PATHS.md).
+
+## Six-area renderer follow-up
+
+See [experiment details](ORIGINAL-RENDERER-SIX-AREAS.md). Pending manual checks:
+
+- Compare maximum texture quality after reload with the previous build; change
+  texture quality down and reload. Ordinary 2D textures should get less detailed;
+  sky/cubemaps, UI positioning and texture UVs must remain correct.
+- Walk through object LOD transitions and turn around overlapping opaque models;
+  transitions should match previous behavior without new holes or sorting errors.
+- Trigger fire, smoke and several simultaneous particle effects; no missing
+  sprites, broken transparency, corrupt geometry or stream-size assertions.
+- Confirm save/load and level travel remain correct after these checks.

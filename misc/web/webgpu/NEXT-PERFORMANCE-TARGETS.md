@@ -192,3 +192,21 @@ Both quality-preserving candidates are now implemented and retained. See
 from 99.6 to 120.7 FPS, stationary average stayed around 158 FPS, and warmed gather
 buffer/bind-group creation dropped to zero. Stationary p99 was worse, so this
 is not a general stall fix.
+
+## Further original-renderer audit
+
+[All five follow-up paths](ORIGINAL-RENDERER-FIVE-PATHS.md) are investigated.
+Concrete next candidates are folding standalone clears into attachment loadOps,
+retaining asynchronous light/caster queries until ready, and reusing packed bone
+palettes. Existing portal/HOM culling, pose guards and invisible-caster caching
+are present. No whole-shadow-map-cache parity claim or new FPS gain is established.
+Queue-depth/task-wait instrumentation is needed to diagnose remaining tail stalls.
+
+## Six-area follow-up experiments
+
+See [the six-area report](ORIGINAL-RENDERER-SIX-AREAS.md). Retained cheaper opaque
+pass comparisons, saturated LOD evaluation, correctly sized particle reservations
+and texture-quality mip selection. Terrain throughput remains roughly neutral.
+The existing 60 FPS cap reduced observed queue-completion delays substantially in
+a private test; those delays include worker scheduling and are not GPU timestamps.
+Unused shader output pruning remains experimental pending actual pipeline benefit.

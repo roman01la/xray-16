@@ -1,0 +1,9 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join,resolve} from 'node:path';import {spawnSync} from 'node:child_process';
+test('production palette cache handles manual pose changes, count changes, address reuse and bounded eviction',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'xray-palette-'));
+ try{
+ const header=resolve(import.meta.dirname,'../../../src/Layers/xrRender/BonePaletteCache.h');
+ writeFileSync(join(dir,'test.cpp'),`#include <cassert>\n#include "${header}"\nstruct M {float _11=1,_12=2,_13=3,_14=4,_21=5,_22=6,_23=7,_24=8,_31=9,_32=10,_33=11,_34=12,_41=13,_42=14,_43=15,_44=16;};\nstruct R {float a,b,c,d;void set(float w,float x,float y,float z){a=w;b=x;c=y;d=z;}};\nint main(){xray::BonePaletteCache<M,R> cache;M m[3];int keys[130];auto get=[&](size_t n)->const M&{return m[n];};\nconst R* rows=cache.get(&keys[0],2,get);assert(rows[0].a==1&&rows[0].b==5&&rows[0].d==13);assert(cache.packedBones==2);\nfor(int pass=0;pass<3;pass++)cache.get(&keys[0],2,get);assert(cache.packedBones==2&&cache.reusedBones==6);\nm[0]._41=77;rows=cache.get(&keys[0],2,get);assert(rows[0].d==77&&cache.packedBones==3);\ncache.get(&keys[0],1,get);cache.get(&keys[0],3,get);assert(cache.packedBones==5);\nm[1]._22=88;rows=cache.get(&keys[0],3,get);assert(rows[4].b==88);\nfor(int i=1;i<130;i++)cache.get(&keys[i],3,get);rows=cache.get(&keys[0],3,get);assert(rows[0].d==77&&rows[4].b==88);\n}`);
+ const compile=spawnSync('c++',['-std=c++17','-O2',join(dir,'test.cpp'),'-o',join(dir,'test')],{encoding:'utf8'});assert.equal(compile.status,0,compile.stderr);const run=spawnSync(join(dir,'test'),[],{encoding:'utf8'});assert.equal(run.status,0,run.stderr);
+ }finally{rmSync(dir,{recursive:true,force:true})}
+});
