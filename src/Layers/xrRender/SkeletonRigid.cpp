@@ -3,6 +3,9 @@
 #pragma hdrstop
 
 #include "SkeletonCustom.h"
+#ifdef XR_PLATFORM_WEB
+#include "ConservativeBoneBounds.h"
+#endif
 
 namespace xray::render::RENDER_NAMESPACE
 {
@@ -70,6 +73,9 @@ void CKinematics::CalculateBones(BOOL bForceExact)
             X.mul_43(Mbone, Mbox);
             Fvector& S = obb.m_halfsize;
 
+#ifdef XR_PLATFORM_WEB
+            ExpandConservativeBoneBounds(Box, X, S);
+#else
             Fvector P, A;
             A.set(-S.x, -S.y, -S.z);
             X.transform_tiny(P, A);
@@ -95,6 +101,7 @@ void CKinematics::CalculateBones(BOOL bForceExact)
             A.set(S.x, S.y, -S.z);
             X.transform_tiny(P, A);
             Box.modify(P);
+#endif
         }
         if (bones->size())
         {

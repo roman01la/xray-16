@@ -210,3 +210,12 @@ and texture-quality mip selection. Terrain throughput remains roughly neutral.
 The existing 60 FPS cap reduced observed queue-completion delays substantially in
 a private test; those delays include worker scheduling and are not GPU timestamps.
 Unused shader output pruning remains experimental pending actual pipeline benefit.
+
+## Animation, geometry, lighting, terrain and pacing follow-up
+
+[Further experiments](ORIGINAL-RENDERER-SCHEDULING.md) retain cheaper conservative
+bone bounds and exact-input spotlight setup reuse. No adjacent geometry merge
+opportunities appeared in the sampled draws. The two-frame submission gate was
+reverted for throughput regression. Conditional terrain-layer sampling is
+promising in a standalone GPU fixture but still requires real game mask/full-
+shader validation; it is not enabled in production.

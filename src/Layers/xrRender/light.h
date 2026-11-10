@@ -62,6 +62,10 @@ public:
     ref_shader s_volumetric_msaa[8];
 #endif //	(RENDER==R_R3) || (RENDER==R_R4) || (RENDER==R_GL)
 
+#ifdef XR_PLATFORM_WEB
+    bool webSpotInputsValid{};
+    float webSpotInputs[31]{};
+#endif
     u32 m_xform_frame;
     Fmatrix m_xform;
 
@@ -112,6 +116,9 @@ public:
 public:
     void set_type(LT type) override
     {
+#ifdef XR_PLATFORM_WEB
+        if (flags.type != type) webSpotInputsValid = false;
+#endif
         flags.type = type;
     }
 

@@ -72,3 +72,18 @@ See [experiment details](ORIGINAL-RENDERER-SIX-AREAS.md). Pending manual checks:
 - Trigger fire, smoke and several simultaneous particle effects; no missing
   sprites, broken transparency, corrupt geometry or stream-size assertions.
 - Confirm save/load and level travel remain correct after these checks.
+
+## Animation bounds and light setup reuse (2026-11-11)
+
+See [scheduling/work experiments](ORIGINAL-RENDERER-SCHEDULING.md).
+Pending manual visual checks:
+
+- Observe NPCs and mutants near frustum edges, including death/ragdoll and
+  attachment changes. No new disappearance or mismatched animation/shadow poses.
+- Move and rotate a flashlight; enter interiors and vary shadow quality. Lights
+  and shadows must update immediately. Revisit after save/load and level travel.
+- Check moving/flickering lights and spot/point light transitions. Cached setup
+  must not retain an earlier transform or stale shadow resolution.
+
+Animation update rates and production frame pacing have not changed. The terrain
+shader prototype is not enabled in the game.

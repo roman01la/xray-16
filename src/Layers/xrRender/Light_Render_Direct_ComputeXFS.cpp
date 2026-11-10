@@ -7,6 +7,33 @@ void CLight_Compute_XFORM_and_VIS::compute_xf_spot(light* L)
 {
     ZoneScoped;
 
+#ifdef XR_PLATFORM_WEB
+    const float inputs[] = {
+        L->direction.x,L->direction.y,L->direction.z, L->right.x,L->right.y,L->right.z,
+        L->position.x,L->position.y,L->position.z, L->range,L->cone,L->virtual_size,
+        L->color.r,L->color.g,L->color.b, L->spatial.sphere.P.x,L->spatial.sphere.P.y,L->spatial.sphere.P.z,L->spatial.sphere.R,
+        Device.vCameraPosition.x,Device.vCameraPosition.y,Device.vCameraPosition.z,
+        Device.vCameraDirection.x,Device.vCameraDirection.y,Device.vCameraDirection.z,
+        ps_r2_ls_squality,float(L->flags.type),float(SMAP_adapt_optimal),float(SMAP_adapt_min),float(SMAP_adapt_max),float(L->X.S.size)};
+    static_assert(sizeof(inputs) == sizeof(L->webSpotInputs));
+    const bool reused = L->webSpotInputsValid && !memcmp(inputs,L->webSpotInputs,sizeof(inputs));
+    static const bool audit = strstr(Core.Params,"-web_work_audit") != nullptr;
+    static thread_local size_t hits = 0, misses = 0;
+    static thread_local u32 reportedFrame = 0;
+    if (audit) {
+        if (reused) ++hits; else ++misses;
+        if (Device.dwFrame - reportedFrame >= 120) {
+            Msg("WEB_SPOT_WORK reused=%zu rebuilt=%zu",hits,misses);
+            reportedFrame = Device.dwFrame;
+        }
+    }
+    if (reused)
+    {
+        L->X.S.posX = L->X.S.posY = 0;
+        L->X.S.transluent = FALSE;
+        return;
+    }
+#endif
     // Build EYE-space xform
     Fvector L_dir, L_up, L_right, L_pos;
     L_dir.set(L->direction);
@@ -100,5 +127,10 @@ void CLight_Compute_XFORM_and_VIS::compute_xf_spot(light* L)
 
     L->X.S.project.build_projection(L->cone + tan_shift, 1.f, L->virtual_size, L->range + EPS_S);
     L->X.S.combine.mul(L->X.S.project, L->X.S.view);
+#ifdef XR_PLATFORM_WEB
+    memcpy(L->webSpotInputs,inputs,sizeof(inputs));
+    L->webSpotInputs[30] = float(L->X.S.size);
+    L->webSpotInputsValid = true;
+#endif
 }
 } // namespace xray::render::RENDER_NAMESPACE
