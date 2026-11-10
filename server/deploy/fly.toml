@@ -9,22 +9,10 @@ kill_timeout = 25
 [deploy]
   strategy = "immediate"
 [env]
-  ZONE_HTTP_ADDR = "127.0.0.1:8082"
-  ZONE_UDP_ADDR = "fly-global-services:50000"
-  ZONE_DATABASE = "/data/zone/zone.sqlite"
-  ZONE_MAX_PLAYERS = "200"
+  ZONE_SINGLEPLAYER = "1"
   ZONE_ASSET_ORIGIN = "https://roman-stalker-assets.t3.tigrisfiles.io"
-  ZONE_CAMPAIGN_CONFIG = "/data/collision/campaign/campaign.json"
-  ZONE_ITEM_CATALOG = "/data/zone/game/catalog.json"
-  ZONE_AUTHORED_LOOT = "/data/zone/game/authored-loot.json"
-  ZONE_RELOAD_TIMINGS = "/data/zone/game/reload-timings.json"
-  ZONE_ARTEFACT_SITES = "/data/zone/game/artefact-sites.json"
-  ZONE_NATIVE_ALIFE_ROOT = "/data/alife"
-  ZONE_NATIVE_ALIFE_BIN = "/opt/zone-native/bin/xr_3da"
-  RUST_LOG = "zone_server=info,str0m=warn"
-  ZONE_PUBLIC_ADDR = "77.83.143.60:50000"
   ZONE_ORIGIN = "https://stalker-online.xyz"
-  # Store ZONE_DEV_TOKEN via Fly secrets, never in this file.
+  # ZONE_DEV_TOKEN and ZONE_ANALYTICS_PASSWORD remain Fly secrets.
 
 [http_service]
   internal_port = 8080
@@ -39,18 +27,12 @@ kill_timeout = 25
     timeout = "5s"
     path = "/health"
 
-[[services]]
-  protocol = "udp"
-  internal_port = 50000
-  [[services.ports]]
-    port = 50000
-
 [[mounts]]
   source = "zone_data"
   destination = "/data"
 
-# Connectivity/recovery test sizing. Use dedicated CPUs for capacity claims.
+# Single-player assets/CDN gateway and SQLite analytics only.
 [[vm]]
   cpu_kind = "shared"
-  cpus = 8
-  memory = "12gb"
+  cpus = 1
+  memory = "512mb"
