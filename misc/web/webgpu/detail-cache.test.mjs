@@ -18,6 +18,14 @@ test('detail cache invalidates only affected object/classes, retaining unchanged
 using namespace xray::detail_cache;
 struct List {uint64_t revision=0,uploadedRevision=0;uint32_t storageIndex=0;size_t length=1;size_t size()const{return length;}};
 int main() {
+ PreparedFrame prepared;
+ assert(!prepared.matches(0,0,1));
+ prepared={7,1,42,3};
+ assert(prepared.matches(7,3,1)); assert(prepared.count==42);
+ assert(!prepared.matches(8,3,1)); // next frame must recheck eviction/revisions
+ assert(!prepared.matches(7,4,1)); // rebuilt visibility, even in the same frame
+ assert(!prepared.matches(7,3,2)); // GPU reset, even in the same frame
+
  std::array<std::array<List,3>,30> slots{};
  std::array<std::vector<List*>,90> visible;
  std::array<std::vector<uint32_t>,90> saved;

@@ -261,6 +261,9 @@ extern ECORE_API float r_ssaDISCARD;
 void CDetailManager::UpdateVisibleM()
 {
     ZoneScoped;
+#ifdef XR_PLATFORM_WEB
+    ++web_visibilityGeneration;
+#endif
 
     for (int i = 0; i != 3; ++i)
         for (auto& vis : m_visibles[i])

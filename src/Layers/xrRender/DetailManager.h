@@ -204,9 +204,11 @@ public:
         xr_vector<u32> descriptors, signature, indices;
         xr_vector<SlotItemVec*> dirtySlots;
         u32 buffer = 0;
+        xray::detail_cache::PreparedFrame prepared;
     };
     xr_vector<WebInstances> hw_instances[3];
     u32 hw_storageGeneration = 1;
+    u64 web_visibilityGeneration = 0;
 #endif
 
 

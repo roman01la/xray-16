@@ -812,8 +812,8 @@ void VertexStreamBuffer::Destroy()
 void* VertexStreamBuffer::Map(size_t offset, size_t size, bool flush /*= false*/)
 {
     VERIFY(m_DeviceBuffer);
-    VERIFY(offset == 0 && size <= m_HostBuffer.size());
-    UNUSED(flush);
+    VERIFY(offset + size <= m_HostBuffer.size());
+    if (flush) UploadWebGPUBuffer(m_DeviceBuffer, nullptr, m_HostBuffer.size());
     m_MappedOffset = offset;
     m_MappedSize = size;
     return m_HostBuffer.data() + offset;
@@ -829,7 +829,7 @@ void VertexStreamBuffer::Unmap(size_t writtenSize)
     VERIFY(m_DeviceBuffer && writtenSize <= m_MappedSize);
     if (writtenSize == 0)
         return;
-    UploadWebGPUBuffer(m_DeviceBuffer, m_HostBuffer.data() + m_MappedOffset, writtenSize); return;
+    UploadWebGPUBuffer(m_DeviceBuffer, m_HostBuffer.data() + m_MappedOffset, writtenSize, m_MappedOffset, false); return;
     glBindBuffer(GL_ARRAY_BUFFER, m_DeviceBuffer);
     CHK_GL(glBufferData(GL_ARRAY_BUFFER, writtenSize, m_HostBuffer.data() + m_MappedOffset, GL_STREAM_DRAW));
 }

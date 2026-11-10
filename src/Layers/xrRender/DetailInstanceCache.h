@@ -3,6 +3,17 @@
 
 namespace xray::detail_cache
 {
+// A completed gathered output is independent of subsequent source-page eviction.
+// Revisit source allocation/revisions on every new frame or visibility/reset epoch.
+struct PreparedFrame
+{
+    std::uint32_t frame = std::uint32_t(-1), storage = 0, count = 0;
+    std::uint64_t visibility = std::uint64_t(-1);
+    bool matches(std::uint32_t currentFrame, std::uint64_t currentVisibility, std::uint32_t currentStorage) const
+    {
+        return frame == currentFrame && visibility == currentVisibility && storage == currentStorage;
+    }
+};
 // Only lists which contained or will contain the changed instance are dirty.
 template<class Lists> void invalidate(Lists& lists, unsigned before, unsigned after)
 {

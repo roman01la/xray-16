@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {GPUFrontend} from './backend.js';
 import {DetailStorage,DETAIL_PAGE_SHIFT} from './detail-storage.js';
 function fixture() {
   globalThis.GPUBufferUsage??={STORAGE:128,COPY_DST:8,COPY_SRC:4,VERTEX:32,UNIFORM:64};
@@ -14,6 +15,7 @@ function fixture() {
       createCommandEncoder(){return {copyBufferToBuffer(){},finish(){return {}},beginComputePass(){return {setPipeline(){},setBindGroup(){},dispatchWorkgroups(...args){dispatches.push(args)},end(){}}}}},
       createBindGroupLayout(){return {}},createPipelineLayout(){return {}},createShaderModule(){return {}},createComputePipeline(){return {}},createBindGroup(descriptor){groups.push(descriptor);return {}},
       queue:{writeBuffer(buffer,offset,data){writes.push({buffer,offset,bytes:[...data]})},submit(){}}}};
+  Object.assign(r,{uniformBuffer:r.device.createBuffer({size:4096}),uniformStaging:new Uint8Array(4096),uniformOffset:0,uniformUploaded:0,uniformEpoch:0,allocateUniformBlock:GPUFrontend.prototype.allocateUniformBlock});
   const arena=new DetailStorage(r,{maxPageRecords:8,softBytes:1024});
   const heap=new Uint8Array(8192).fill(7),words=new Uint32Array(heap.buffer);
   const upload=(token,slots)=>{
@@ -86,7 +88,34 @@ test('range expansion splits large destination windows without truncating slots'
  arena.pages=[{gpu:r.device.createBuffer({size:4096*64}),capacity:4096}];
  arena.gatherRanges(token,new Uint32Array([0,2051,0,0]),2051,true);
  assert.deepEqual(groups.map(g=>g.entries[7].resource.offset),[0,65536,131072]);
- assert.deepEqual(groups.map(g=>g.entries[7].resource.size),[65536,65536,192]);
+ assert.deepEqual(groups.map(g=>g.entries[7].resource.size),[65536,65536,65536]);
  assert.deepEqual(dispatches,[[1,1],[1,1],[1,1]]);
 });
 
+
+test('range gathers reuse groups across count changes but invalidate replaced pages and storage',()=>{
+ const {r,arena,upload,words,groups}=fixture(),token={};upload(token,[[1,0,5]]);
+ const ranges=new Uint32Array([words[2],5,0,0]);arena.gatherRanges(token,ranges,5,true);
+ const first=r.info(token).detailWindows[0],group=first.group,offset=first.offset;
+ arena.gatherRanges(token,ranges,5,false);assert.equal(groups.length,1);assert.equal(first.offset,offset);
+ ranges[1]=6;arena.gatherRanges(token,ranges,6,true);
+ assert.equal(groups.length,1);assert.equal(first.group,group);assert.notEqual(first.offset,offset);
+ assert.equal(new Uint32Array(r.uniformStaging.buffer,offset,4)[1],5,'earlier dispatch retains its count');
+ const page=arena.pages[0];arena.grow(page,16);arena.gatherRanges(token,ranges,6,false);assert.equal(groups.length,2);
+ ranges[1]=9;arena.gatherRanges(token,ranges,9,true);assert.equal(groups.length,3,'output growth replaces group');
+ r.uniformOffset=r.uniformBuffer.size;const epoch=r.uniformEpoch;
+ arena.gatherRanges(token,ranges,9,false);assert.equal(r.uniformEpoch,epoch+1);assert.equal(groups.length,3);
+ assert.equal(r.info(token).detailWindows[0].offset,0,'overflow starts a new submitted arena epoch');
+ arena.release(r.info(token));assert.equal(r.info(token).detailWindows,null);
+});
+
+test('cached range bindings ignore stale capacity beyond active range count',()=>{
+ const {r,arena,upload,words,groups}=fixture(),token={};upload(token,[[1,0,5]]);
+ arena.gatherRanges(token,new Uint32Array([words[2],2,0,0,words[2]+2,3,2,0]),5,true);
+ const window=r.info(token).detailWindows[0],group=window.group,oldOffset=window.offset;
+ arena.gatherRanges(token,new Uint32Array([words[2],5,0,0]),5,true);
+ assert.equal(groups.length,1);assert.equal(window.group,group);
+ assert.equal(new Uint32Array(r.uniformStaging.buffer,oldOffset,4)[2],2);
+ assert.equal(new Uint32Array(r.uniformStaging.buffer,window.offset,4)[2],1);
+ assert.equal(r.info(token).detailRangeBuffer.size,32,'capacity still includes an unused range');
+});

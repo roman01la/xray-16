@@ -30,7 +30,7 @@ let profileEnabled = false,
 const profile = { calls: 0, cpu: 0, mirror: 0, submits: 0 };
 let telemetryChannel, telemetryAdapter, analyticsAdapter;
 let lastTelemetryPresent, maxFrameMs = 0;
-const diagnostics = { streamSnapshots: 0, streamBufferAllocations: 0, renderPasses: 0, drawBatches: 0, nativeOnly: false, frames: 0, draws: 0, directDraws: 0, nativeTextureAllocations: 0, nativeTextureUploads: 0, nativeBufferUploads: 0, nativeQueries: 0, nativeTextureCopies: 0, nativeProgramSelections: 0, nativeVertexSelections: 0, nativePassRecords: 0, nativeClears: 0, nativePresents: 0, bindingBatches: 0, bindingRecords: 0, stateBatches: 0, stateRecords: 0, uniformBatches: 0, uniformRecords: 0, uniformBytesCopied: 0, uniformReuses: 0, preparedHits: 0, preparedMisses: 0, materialHits: 0, validationErrors: 0, lastError: "" };
+const diagnostics = { streamUploadedBytes: 0, streamNewBytes: 0, materialRebuilds: 0, streamSnapshots: 0, streamBufferAllocations: 0, renderPasses: 0, drawBatches: 0, nativeOnly: false, frames: 0, draws: 0, directDraws: 0, nativeTextureAllocations: 0, nativeTextureUploads: 0, nativeBufferUploads: 0, nativeQueries: 0, nativeTextureCopies: 0, nativeProgramSelections: 0, nativeVertexSelections: 0, nativePassRecords: 0, nativeClears: 0, nativePresents: 0, bindingBatches: 0, bindingRecords: 0, stateBatches: 0, stateRecords: 0, uniformBatches: 0, uniformRecords: 0, uniformBytesCopied: 0, uniformReuses: 0, preparedHits: 0, preparedMisses: 0, materialHits: 0, validationErrors: 0, lastError: "" };
 const channel =
   typeof WorkerGlobalScope !== "undefined" &&
   typeof BroadcastChannel !== "undefined"
@@ -148,6 +148,8 @@ export class GPUFrontend {
     this.nextId = 1;
     this.bufferGeneration = 0;
     this.resourceGeneration = 0;
+    this.bindingGeneration = 0;
+    this.unitBindingGenerations = new Uint32Array(32);
     this.textures = Array.from({ length: 32 }, () => new Map());
     this.samplers = Array(32).fill(null);
     this.defaultVAO = { attrs: new Map(), element: null };
@@ -314,11 +316,11 @@ export class GPUFrontend {
   }
   // Slots are recycled only after their last consuming command buffer is submitted.
   // queue.writeBuffer snapshots CPU bytes, and later writes follow that submission.
-  streamSnapshot(i, bytes) {
+  streamSnapshot(i, bytes, capacity = bytes.length) {
     this.streamPool ??= new Map(); this.streamRetired ??= [];
     if (i.streamSlot) this.streamRetired.push(i.streamSlot);
     else if (i.gpu) this.retired.push(i.gpu);
-    const size = Math.max(256, 2 ** Math.ceil(Math.log2(Math.max(1, bytes.length))));
+    const size = Math.max(256, 2 ** Math.ceil(Math.log2(Math.max(1, capacity))));
     const free = this.streamPool.get(size);
     if (!free?.length) diagnostics.streamBufferAllocations++;
     else this.streamPoolBytes=(this.streamPoolBytes || 0)-size;
@@ -327,6 +329,8 @@ export class GPUFrontend {
     if (!free?.length) this.streamPool.delete(size);
     i.streamSlot = slot; i.gpu = slot.gpu;
     if (bytes.length) this.device.queue.writeBuffer(i.gpu, 0, bytes);
+    diagnostics.streamUploadedBytes += bytes.length;
+    i.gpuWrittenHighWater = bytes.length;
     diagnostics.streamSnapshots++;
   }
   bufferData(a, i) {
@@ -338,7 +342,7 @@ export class GPUFrontend {
       if (i.streamSlot) this.streamRetired.push(i.streamSlot);
       else if(i.gpu) this.retired.push(i.gpu);
       i.streamSlot = null;
-      i.size = align(data); i.highWater = 0; i.cpu = new Uint8Array(i.size);
+      i.size = align(data); i.highWater = 0; i.gpuWrittenHighWater = 0; i.cpu = new Uint8Array(i.size);
       i.gpu = this.device.createBuffer({size: Math.max(4,i.size),
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC});
       return;
@@ -347,6 +351,7 @@ export class GPUFrontend {
       data.byteOffset + (a[3] || 0) * (data.BYTES_PER_ELEMENT || 1),
       (a[4] ?? data.length - (a[3] || 0)) * (data.BYTES_PER_ELEMENT || 1));
     const size = align(source.length), dynamic = !!i.gpu;
+    diagnostics.streamNewBytes += size;
     if (!i.cpu || i.cpu.length < size) i.cpu = new Uint8Array(size);
     i.cpu.set(source); i.cpu.fill(0,source.length,size); i.size = size; i.highWater = size;
     if (dynamic) this.streamSnapshot(i, i.cpu.subarray(0,size));
@@ -354,6 +359,8 @@ export class GPUFrontend {
       i.gpu = this.device.createBuffer({size: Math.max(4,size),
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC});
       if (size) this.device.queue.writeBuffer(i.gpu,0,i.cpu.subarray(0,size));
+      diagnostics.streamUploadedBytes += size;
+      i.gpuWrittenHighWater = size;
     }
   }
   bufferSubData(a, i) {
@@ -361,9 +368,20 @@ export class GPUFrontend {
     i.tessellationRevision = (i.tessellationRevision || 0) + 1;
     const data = a[2], offset = a[3] || 0, count = a[4] ?? data.length-offset;
     const bytes = new Uint8Array(data.buffer ?? data,(data.byteOffset || 0)+offset*(data.BYTES_PER_ELEMENT || 1),count*(data.BYTES_PER_ELEMENT || 1));
+    diagnostics.streamNewBytes += bytes.length;
     i.cpu.set(bytes,a[1]);
     i.highWater = Math.max(i.highWater || 0,align(a[1]+bytes.length));
-    this.streamSnapshot(i,i.cpu.subarray(0,i.highWater));
+    // Only append into previously unwritten, aligned bytes. Earlier encoded draws
+    // may still reference this GPU buffer; overlapping updates require a new version.
+    const start = Math.floor(a[1] / 4) * 4;
+    const end = align(a[1] + bytes.length);
+    if (start >= (i.gpuWrittenHighWater || 0) && end <= i.gpu.size) {
+      if (end > start) this.device.queue.writeBuffer(i.gpu, start, i.cpu.subarray(start,end));
+      diagnostics.streamUploadedBytes += end - start;
+      i.gpuWrittenHighWater = end;
+    } else {
+      this.streamSnapshot(i,i.cpu.subarray(0,i.highWater),i.size);
+    }
   }
   formatFor(f) {
     const g = EngineFormat;
@@ -1149,6 +1167,20 @@ export class GPUFrontend {
     return true;
   }
 
+  bindingChanged(unit) {
+    this.bindingGeneration = (this.bindingGeneration || 0) + 1;
+    this.unitBindingGenerations ??= new Uint32Array(32);
+    this.unitBindingGenerations[unit]++;
+  }
+  cachedMaterial(p) {
+    if (p.lastResourceGeneration !== this.resourceGeneration || !p.lastMaterial) return null;
+    if (p.lastBindingGeneration !== this.bindingGeneration) {
+      for (const dependency of p.materialDependencies || [])
+        if (dependency.version !== this.unitBindingGenerations?.[dependency.unit]) return null;
+      p.lastBindingGeneration = this.bindingGeneration;
+    }
+    return p.lastMaterial;
+  }
   consumeBindingBatch(words, start, length, textures, samplers) {
     if (length % 4 || start < 0 || start + length > words.length)
       throw Error("Invalid native binding batch");
@@ -1159,21 +1191,21 @@ export class GPUFrontend {
       if (kind === 0) {
         const token = id ? textures[id] : null;
         if (id && !token) throw Error("Missing native texture " + id);
-        if (bindings.get(targetOrId) !== token) this.resourceGeneration++;
+        if (bindings.get(targetOrId) !== token) this.bindingChanged(stage);
         bindings.set(targetOrId, token);
         if (token) this.info(token).target = targetOrId;
       } else if (kind === 1) {
         const token = targetOrId ? samplers[targetOrId] : null;
         if (targetOrId && !token) throw Error("Missing native sampler " + targetOrId);
-        if (this.samplers[stage] !== token) this.resourceGeneration++;
+        if (this.samplers[stage] !== token) this.bindingChanged(stage);
         this.samplers[stage] = token;
       } else if (kind === 2) {
         for (const target of [EngineFormat.TEXTURE_2D, EngineFormat.TEXTURE_3D, EngineFormat.TEXTURE_CUBE_MAP]) {
-          if (bindings.get(target) !== null) this.resourceGeneration++;
+          if (bindings.get(target) !== null) this.bindingChanged(stage);
           bindings.set(target, null);
         }
         if (id) {
-          if (bindings.get(EngineFormat.TEXTURE_2D_MULTISAMPLE) !== null) this.resourceGeneration++;
+          if (bindings.get(EngineFormat.TEXTURE_2D_MULTISAMPLE) !== null) this.bindingChanged(stage);
           bindings.set(EngineFormat.TEXTURE_2D_MULTISAMPLE, null);
         }
       } else throw Error("Unknown native binding record: " + kind);
@@ -1570,10 +1602,12 @@ export class GPUFrontend {
       profile.drawUniformCopyMs = (profile.drawUniformCopyMs || 0) + now - drawMark;
       drawMark = now;
     }
-    let material = p.lastResourceGeneration === this.resourceGeneration ? p.lastMaterial : null;
+    let material = this.cachedMaterial(p);
     let group = material?.group;
     if (group) diagnostics.materialHits++;
     if (!group) {
+      diagnostics.materialRebuilds++;
+      p.materialDependencies = [];
       const entries = hasUniform ? [{binding: 0, resource: {
         buffer: this.uniformBuffer, offset: 0, size: bytes.length,
       }}] : [];
@@ -1581,6 +1615,7 @@ export class GPUFrontend {
         const sm = p.samplers[n];
         if (!p.activeBindings.includes(1 + n * 2)) continue;
         const unit = p.values.get(sm.name)?.[0] ?? 0;
+        p.materialDependencies.push({unit, version: this.unitBindingGenerations?.[unit]});
         const target = sm.type.includes("MS") ? g.TEXTURE_2D_MULTISAMPLE : sm.type.includes("Cube")
           ? g.TEXTURE_CUBE_MAP
           : sm.type.includes("3D")
@@ -1704,6 +1739,7 @@ export class GPUFrontend {
       }
 
       p.lastResourceGeneration = this.resourceGeneration;
+      p.lastBindingGeneration = this.bindingGeneration;
       p.lastGroup = group;
       p.lastMaterial = material;
     }
@@ -1985,7 +2021,7 @@ export class GPUFrontend {
       if (!benchmark.start) {
         benchmark.start = benchmark.last = now;
         benchmark.directStart = diagnostics.directDraws;
-        benchmark.work = Object.fromEntries(["streamSnapshots", "streamBufferAllocations", "renderPasses", "drawBatches", "nativeTextureAllocations", "nativeTextureUploads", "nativeBufferUploads", "nativeQueries", "nativeTextureCopies", "nativeProgramSelections", "nativeVertexSelections", "nativePassRecords", "nativeClears", "nativePresents", "bindingBatches", "bindingRecords", "stateBatches", "stateRecords", "uniformBatches", "uniformRecords", "uniformBytesCopied", "uniformReuses", "preparedHits", "preparedMisses", "materialHits"].map(k => [k, diagnostics[k]]));
+        benchmark.work = Object.fromEntries(["streamUploadedBytes", "streamNewBytes", "materialRebuilds", "streamSnapshots", "streamBufferAllocations", "renderPasses", "drawBatches", "nativeTextureAllocations", "nativeTextureUploads", "nativeBufferUploads", "nativeQueries", "nativeTextureCopies", "nativeProgramSelections", "nativeVertexSelections", "nativePassRecords", "nativeClears", "nativePresents", "bindingBatches", "bindingRecords", "stateBatches", "stateRecords", "uniformBatches", "uniformRecords", "uniformBytesCopied", "uniformReuses", "preparedHits", "preparedMisses", "materialHits"].map(k => [k, diagnostics[k]]));
       } else {
         benchmark.times.push(now - benchmark.last);
         benchmark.last = now;

@@ -129,74 +129,80 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
             if (batches.size() < objects.size()) batches.resize(objects.size());
             auto& batch = batches[O];
             const double preparationStart = profileDetails ? emscripten_get_now() : 0.0;
-            batch.descriptors.clear();
-            batch.dirtySlots.clear();
-            for (auto* items : vis)
+            u32 instanceCount = batch.prepared.count;
+            if (!batch.buffer || !batch.prepared.matches(Device.dwFrame, web_visibilityGeneration, hw_storageGeneration))
             {
-                items->visibleFrame = Device.dwFrame;
-                if (items->storageGeneration != hw_storageGeneration)
+                batch.descriptors.clear();
+                batch.dirtySlots.clear();
+                for (auto* items : vis)
                 {
-                    items->storageGeneration = hw_storageGeneration;
-                    items->storageIndex = u32(-1);
-                    items->uploadedRevision = u64(-1);
-                }
-                if (!xray::detail_cache::needsUpload(*items))
-                    continue;
-                if (items->packedRevision != items->revision)
-                {
-                    items->rows.resize(items->size()*4);
-                    Fvector4* row = items->rows.data();
-                    for (const auto* instance : *items)
+                    items->visibleFrame = Device.dwFrame;
+                    if (items->storageGeneration != hw_storageGeneration)
                     {
-                        const float scale = instance->scale_calculated;
-                        const Fmatrix& M = instance->mRotY;
-                        (row++)->set(M._11 * scale, M._21 * scale, M._31 * scale, M._41);
-                        (row++)->set(M._12 * scale, M._22 * scale, M._32 * scale, M._42);
-                        (row++)->set(M._13 * scale, M._23 * scale, M._33 * scale, M._43);
-                        (row++)->set(instance->c_sun, instance->c_sun, instance->c_sun, instance->c_hemi);
+                        items->storageGeneration = hw_storageGeneration;
+                        items->storageIndex = u32(-1);
+                        items->uploadedRevision = u64(-1);
                     }
-                    packedInstances += static_cast<u32>(items->size());
-                    items->packedRevision = items->revision;
+                    if (!xray::detail_cache::needsUpload(*items))
+                        continue;
+                    if (items->packedRevision != items->revision)
+                    {
+                        items->rows.resize(items->size()*4);
+                        Fvector4* row = items->rows.data();
+                        for (const auto* instance : *items)
+                        {
+                            const float scale = instance->scale_calculated;
+                            const Fmatrix& M = instance->mRotY;
+                            (row++)->set(M._11 * scale, M._21 * scale, M._31 * scale, M._41);
+                            (row++)->set(M._12 * scale, M._22 * scale, M._32 * scale, M._42);
+                            (row++)->set(M._13 * scale, M._23 * scale, M._33 * scale, M._43);
+                            (row++)->set(instance->c_sun, instance->c_sun, instance->c_sun, instance->c_hemi);
+                        }
+                        packedInstances += static_cast<u32>(items->size());
+                        items->packedRevision = items->revision;
+                    }
+                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items)));
+                    batch.descriptors.push_back(static_cast<u32>(items->revision));
+                    batch.descriptors.push_back(static_cast<u32>(items->revision >> 32));
+                    batch.descriptors.push_back(static_cast<u32>(items->size()));
+                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items->rows.data())));
+                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->storageIndex)));
+                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->visibleFrame)));
+                    batch.dirtySlots.push_back(items);
                 }
-                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items)));
-                batch.descriptors.push_back(static_cast<u32>(items->revision));
-                batch.descriptors.push_back(static_cast<u32>(items->revision >> 32));
-                batch.descriptors.push_back(static_cast<u32>(items->size()));
-                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items->rows.data())));
-                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->storageIndex)));
-                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->visibleFrame)));
-                batch.dirtySlots.push_back(items);
-            }
-            if (!batch.buffer) CreateWebGPUBuffer(&batch.buffer, nullptr, 0);
-            const bool changed = !batch.dirtySlots.empty();
-            if (changed)
-            {
-                UpdateWebGPUDetailRecords(batch.buffer, batch.descriptors.data(), static_cast<u32>(batch.dirtySlots.size()), vis.data(), static_cast<u32>(vis.size()));
-                for (auto* items : batch.dirtySlots)
-                    items->uploadedRevision = items->revision;
-            }
-            u32 instanceCount = 0;
-            const bool indicesChanged = xray::detail_cache::updateSignature(vis, batch.signature, instanceCount);
-            if (indicesChanged)
-            {
-                batch.indices.resize(vis.size()*4);
-                u32* range = batch.indices.data();
-                u32 first = 0;
-                for (const auto* items : vis)
+                if (!batch.buffer) CreateWebGPUBuffer(&batch.buffer, nullptr, 0);
+                const bool changed = !batch.dirtySlots.empty();
+                if (changed)
                 {
-                    *range++ = items->storageIndex;
-                    *range++ = static_cast<u32>(items->size());
-                    *range++ = first;
-                    *range++ = 0;
-                    first += static_cast<u32>(items->size());
+                    UpdateWebGPUDetailRecords(batch.buffer, batch.descriptors.data(), static_cast<u32>(batch.dirtySlots.size()), vis.data(), static_cast<u32>(vis.size()));
+                    for (auto* items : batch.dirtySlots)
+                        items->uploadedRevision = items->revision;
                 }
+                const bool indicesChanged = xray::detail_cache::updateSignature(vis, batch.signature, instanceCount);
+                if (indicesChanged)
+                {
+                    batch.indices.resize(vis.size()*4);
+                    u32* range = batch.indices.data();
+                    u32 first = 0;
+                    for (const auto* items : vis)
+                    {
+                        *range++ = items->storageIndex;
+                        *range++ = static_cast<u32>(items->size());
+                        *range++ = first;
+                        *range++ = 0;
+                        first += static_cast<u32>(items->size());
+                    }
+                }
+                if (changed || indicesChanged)
+                    GatherWebGPUDetailRanges(batch.buffer, batch.indices.data(), static_cast<u32>(vis.size()), instanceCount, indicesChanged);
+                changedBatches += changed || indicesChanged;
+                reusedBatches += !changed && !indicesChanged;
+                membershipChanges += indicesChanged;
+                contentChanges += changed;
+                batch.prepared = {Device.dwFrame, hw_storageGeneration, instanceCount, web_visibilityGeneration};
             }
-            if (changed || indicesChanged)
-                GatherWebGPUDetailRanges(batch.buffer, batch.indices.data(), static_cast<u32>(vis.size()), instanceCount, indicesChanged);
-            changedBatches += changed || indicesChanged;
-            reusedBatches += !changed && !indicesChanged;
-            membershipChanges += indicesChanged;
-            contentChanges += changed;
+            else
+                ++reusedBatches;
             if (profileDetails) preparationMs += emscripten_get_now() - preparationStart;
 #endif
             for (u32 iPass = 0; iPass < Object.shader->E[lod_id]->passes.size(); ++iPass)

@@ -6,8 +6,8 @@ export class DetailStorage {
   constructor(renderer,{maxPageRecords,softBytes=256*1024*1024}={}) {
     this.r=renderer;this.device=renderer.device;this.entries=new Map();this.pages=[];
     this.maxPageRecords=Math.min(2**DETAIL_PAGE_SHIFT,maxPageRecords||2**Math.floor(Math.log2(this.device.limits.maxStorageBufferBindingSize/64)));
-    this.softBytes=softBytes;this.bytes=0;this.clock=0;this.sets=0;
-    this.metrics={recordBytes:0,indexBytes:0,evictions:0,growths:0,gathers:0};
+    this.softBytes=softBytes;this.pageGeneration=0;this.bytes=0;this.clock=0;this.sets=0;
+    this.metrics={recordBytes:0,indexBytes:0,evictions:0,growths:0,gathers:0,parameterSlices:0,bindGroups:0};
     this.empty=this.device.createBuffer({size:64,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
   }
   free(page,offset,size) {
@@ -45,7 +45,7 @@ export class DetailStorage {
       usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST|GPUBufferUsage.COPY_SRC});
     if(old){const encoder=this.device.createCommandEncoder();encoder.copyBufferToBuffer(old,0,gpu,0,oldCapacity*64);this.device.queue.submit([encoder.finish()]);old.destroy();}
     page.gpu=gpu;page.capacity=capacity;this.bytes+=(capacity-oldCapacity)*64;
-    this.free(page,oldCapacity,capacity-oldCapacity);this.group=null;this.metrics.growths++;
+    this.free(page,oldCapacity,capacity-oldCapacity);this.group=null;this.pageGeneration++;this.metrics.growths++;
   }
   allocate(count,protectedIds) {
     const size=power2(count);if(size>this.maxPageRecords)throw Error('Detail slot exceeds storage page');
@@ -141,7 +141,7 @@ export class DetailStorage {
     const entries=Array.from({length:6},(_,binding)=>({binding,visibility:GPUShaderStage.COMPUTE,buffer:{type:'read-only-storage'}}));
     entries.push({binding:6,visibility:GPUShaderStage.COMPUTE,buffer:{type:'read-only-storage'}},
       {binding:7,visibility:GPUShaderStage.COMPUTE,buffer:{type:'storage'}},
-      {binding:8,visibility:GPUShaderStage.COMPUTE,buffer:{type:'uniform'}});
+      {binding:8,visibility:GPUShaderStage.COMPUTE,buffer:{type:'uniform',hasDynamicOffset:true,minBindingSize:16}});
     this.rangeLayout=this.device.createBindGroupLayout({entries});
     const pages=Array.from({length:6},(_,i)=>`@group(0) @binding(${i}) var<storage,read> page${i}:array<vec4<f32>>;`).join('\n');
     const cases=Array.from({length:6},(_,i)=>`case ${i}u: {${[0,1,2,3].map(n=>`output[outRow+${n}u]=page${i}[row+${n}u];`).join('')}}`).join('\n');
@@ -150,7 +150,7 @@ export class DetailStorage {
 @group(0) @binding(7) var<storage,read_write> output:array<vec4<f32>>;
 @group(0) @binding(8) var<uniform> window:vec4<u32>;
 @compute @workgroup_size(64) fn main(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
- let i=group.x+group.y*65535u;if(i>=arrayLength(&ranges)){return;}
+ let i=group.x+group.y*65535u;if(i>=window.z){return;}
  let range=ranges[i];
  // Each workgroup expands one contiguous slot. Window clipping retains support
  // for instance sets larger than maxStorageBufferBindingSize.
@@ -195,16 +195,44 @@ export class DetailStorage {
       if(info.gpu)this.r.retired.push(info.gpu);
       info.gpu=this.device.createBuffer({size,usage:GPUBufferUsage.VERTEX|GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC});info.size=size;
     }
-    this.r.endPass();const pass=this.r.enc().beginComputePass();pass.setPipeline(this.rangePipeline());
+    // Allocate all parameter slices before opening the compute pass: arena
+    // overflow may submit an encoder. Each changed block gets an immutable slice.
+    this.rangePipeline();
     const limit=2**Math.floor(Math.log2(this.device.limits.maxStorageBufferBindingSize/64));
-    for(let first=0;first<count;first+=limit){
-      const n=Math.min(limit,count-first);
-      const params=this.device.createBuffer({size:16,usage:GPUBufferUsage.UNIFORM,mappedAtCreation:true});
-      new Uint32Array(params.getMappedRange()).set([first,n,0,0]);params.unmap();this.r.retired.push(params);
-      const entries=Array.from({length:6},(_,binding)=>({binding,resource:{buffer:this.pages[binding]?.gpu||this.empty}}));
-      entries.push({binding:6,resource:{buffer:info.detailRangeBuffer,size:info.detailRangeBytes}},
-        {binding:7,resource:{buffer:info.gpu,offset:first*64,size:n*64}},{binding:8,resource:{buffer:params}});
-      pass.setBindGroup(0,this.device.createBindGroup({layout:this.rangeLayout,entries}));
+    const windows=info.detailWindows??=[];
+    const windowCount=Math.ceil(count/limit);
+    const parameterBytes=windowCount*256;
+    if(parameterBytes>this.r.uniformBuffer.size)throw Error('Detail parameters exceed uniform arena');
+    if(this.r.uniformOffset+parameterBytes>this.r.uniformBuffer.size){
+      this.r.flush();this.r.uniformOffset=this.r.uniformUploaded=0;this.r.uniformEpoch=(this.r.uniformEpoch||0)+1;
+    }
+    for(let index=0,first=0;first<count;first+=limit,index++){
+      const n=Math.min(limit,count-first),rangeCount=info.detailRangeBytes/16;
+      const window=windows[index]??={uniformData:new Uint8Array(16),uniformVersion:0};
+      const params=window.words??=new Uint32Array(window.uniformData.buffer);
+      if(params[0]!==first||params[1]!==n||params[2]!==rangeCount){
+        params.set([first,n,rangeCount,0]);window.uniformVersion++;
+      }
+      window.offset=this.r.allocateUniformBlock(window);this.metrics.parameterSlices++;
+      // Bind capacity rather than active counts; the immutable parameter slice
+      // limits valid ranges and output records. Stable storage keeps its group.
+      const outputSize=Math.min(limit*64,info.gpu.size-first*64);
+      if(!window.group||window.input!==info.detailRangeBuffer||window.output!==info.gpu||
+         window.outputSize!==outputSize||window.outputFirst!==first||window.uniform!==this.r.uniformBuffer||
+         window.pageGeneration!==this.pageGeneration){
+        const pages=this.pages.map(page=>page.gpu);
+        const entries=Array.from({length:6},(_,binding)=>({binding,resource:{buffer:pages[binding]||this.empty}}));
+        entries.push({binding:6,resource:{buffer:info.detailRangeBuffer}},
+          {binding:7,resource:{buffer:info.gpu,offset:first*64,size:outputSize}},
+          {binding:8,resource:{buffer:this.r.uniformBuffer,size:16}});
+        window.group=this.device.createBindGroup({layout:this.rangeLayout,entries});this.metrics.bindGroups++;
+        Object.assign(window,{input:info.detailRangeBuffer,output:info.gpu,outputSize,outputFirst:first,uniform:this.r.uniformBuffer,pageGeneration:this.pageGeneration});
+      }
+    }
+    windows.length=windowCount;
+    this.r.endPass();const pass=this.r.enc().beginComputePass();pass.setPipeline(this.rangePipeline());
+    for(const window of windows){
+      pass.setBindGroup(0,window.group,[window.offset]);
       const groups=info.detailRangeBytes/16;pass.dispatchWorkgroups(Math.min(65535,groups),Math.ceil(groups/65535));
     }
     pass.end();info.detailComputeEncoder=this.r.encoder;this.encoder=this.r.encoder;this.metrics.gathers++;
@@ -214,6 +242,7 @@ export class DetailStorage {
     this.r.flush();
     if(info.detailIndexBuffer)info.detailIndexBuffer.destroy();
     if(info.detailRangeBuffer)info.detailRangeBuffer.destroy();
+    info.detailWindows=null;
     if(--this.sets)return false;
     this.r.flush();for(const p of this.pages)p.gpu.destroy();this.empty.destroy();this.entries.clear();return true;
   }

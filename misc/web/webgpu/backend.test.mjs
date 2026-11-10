@@ -305,7 +305,7 @@ test("native texture and sampler records match compatibility bindings and invali
   const n=make(),l=make(),textures=[null,texA,texB],samplers=[null,sampler];
   const compare = () => {
     assert.deepEqual(n.textures,l.textures); assert.deepEqual(n.samplers,l.samplers);
-    assert.equal(n.activeUnit,l.activeUnit); assert.equal(n.resourceGeneration,l.resourceGeneration);
+    assert.equal(n.activeUnit,l.activeUnit); assert.equal(n.resourceGeneration + (n.bindingGeneration || 0),l.resourceGeneration);
     for (const query of [EngineFormat.ACTIVE_TEXTURE,EngineFormat.TEXTURE_BINDING_2D,EngineFormat.TEXTURE_BINDING_CUBE_MAP,EngineFormat.SAMPLER_BINDING])
       assert.equal(n.call('getParameter',[query]),l.call('getParameter',[query]));
   };
@@ -313,9 +313,9 @@ test("native texture and sampler records match compatibility bindings and invali
     n.consumeBindingBatch(new Uint32Array([0,stage,target,id,1,stage,1,0]),0,8,textures,samplers);
     l.call('activeTexture',[EngineFormat.TEXTURE0+stage]); l.call('bindTexture',[target,textures[id]]); l.call('bindSampler',[stage,sampler]); compare();
   }
-  const generation=n.resourceGeneration;
+  const generation=n.bindingGeneration;
   n.consumeBindingBatch(new Uint32Array([0,2,EngineFormat.TEXTURE_2D,2,1,2,1,0]),0,8,textures,samplers);
-  assert.equal(n.resourceGeneration,generation);
+  assert.equal(n.bindingGeneration,generation);
   n.consumeBindingBatch(new Uint32Array([2,2,0,0]),0,4,textures,samplers);
   l.call('activeTexture',[EngineFormat.TEXTURE0+2]);
   for(const target of [EngineFormat.TEXTURE_2D,EngineFormat.TEXTURE_3D,EngineFormat.TEXTURE_CUBE_MAP]) l.call('bindTexture',[target,null]); compare();

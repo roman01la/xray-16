@@ -131,3 +131,64 @@ Further cascade work must avoid rebuilding separate compacted instance buffers
 on camera changes. Merely adding more accurate culling is not enough. Consider
 stable spatial batches with reusable instance storage only after measuring the
 added draw-command cost; previous generic GPU compaction also regressed.
+
+
+## Original-renderer-inspired buffer/material changes — retained (2026-11-10)
+
+Compared the original DX11 append/discard stream policy with our WebGPU path.
+Implemented appendable vertex/index GPU buffers, uploading only unwritten aligned
+ranges; overlapping writes and wrap retain old GPU-buffer versions for queued
+draws. Separately implemented texture-unit-dependent material invalidation while
+retaining global invalidation for resource mutations/deletion and sampler changes.
+
+Optimized Release, 1920×1080, same perfbench save, grass density 0.1, height 2,
+radius 300, grass shadows enabled, VSync off and FPS limit 501. Separate headless
+Chrome profile, one benchmark game at a time. Twenty seconds stationary then
+twenty seconds holding camera-turn-right per variant; simulation/weather remain
+live, so small differences are not statistically established improvements.
+Detailed CPU instrumentation disabled during throughput measurements. All runs
+reported zero WebGPU validation errors. The first attempted baseline failed
+before gameplay because staged JS and engine ABI differed; rebuilding matching
+Release artifacts fixed it, and that failed attempt is excluded.
+
+| Variant | Stationary FPS | Turning FPS | Stationary median / p95 ms | Turning median / p95 ms |
+| --- | ---: | ---: | --- | --- |
+| Baseline | 158.40 | 100.54 | 5.055 / 11.030 | 9.455 / 14.960 |
+| Material invalidation only | 157.47 | 100.35 | 5.065 / 11.275 | 9.555 / 14.785 |
+| Material + dynamic stream reuse | 158.22 | 98.72 | 4.965 / 10.655 | 9.665 / 15.100 |
+
+Stationary buffer snapshots fell from 62 to 2/frame. Uploaded dynamic bytes fell
+from 34,732 to 33,748/frame (only 2.8%); material binding rebuilds fell from about
+112 to 99/frame. Baseline already reused pooled buffers (zero new stream buffer
+allocations during stationary measurement). The synthetic 32×64-byte append
+probe improved from 33,792 to 2,048 uploaded bytes and 33 to 1 allocation, but
+this amplification was not representative of the measured game workload.
+
+The candidates passed 36 focused renderer tests, including overlap/wrap,
+alignment, and binding invalidation. These tests and the gameplay captures are
+not full all-scenes visual validation. Both candidates were initially reverted for lack of a demonstrated FPS gain,
+then restored at the user’s request to retain the measured reduction in redundant
+work. The byte/rebuild counters remain. This is a work-reduction improvement,
+not a demonstrated frame-rate improvement. Local port 8132 and production
+were not updated. Source patch, test fixture, screenshots, harness, and JSON
+results are retained in mechanics-test/stream-material-results outside the repo.
+
+Conclusion: these two inefficiencies are measurable but not high-gain targets in
+this terrain scene. Do not extrapolate synthetic upload amplification into an FPS
+prediction. Revisit only if another workload shows material dynamic upload cost.
+
+
+## Original-renderer follow-up investigations
+
+See [the four-path investigation](ORIGINAL-RENDERER-FOLLOWUP.md). The original
+cascade route also draws grass per cascade. Its fixed 47.5-unit fade and 0.2
+minimum spacing are much less demanding than our extreme 299.5 / 0.1 / scale-2
+workload. A private browser comparison measured 423.8/315.7 FPS with original-like
+grass versus 157.0/99.6 at extreme settings; this is a quality/workload difference,
+not an implementation speedup. No settings were changed outside the test profile.
+
+Both quality-preserving candidates are now implemented and retained. See
+[the grass reuse experiment](GRASS-PREPARATION-REUSE.md): turning throughput rose
+from 99.6 to 120.7 FPS, stationary average stayed around 158 FPS, and warmed gather
+buffer/bind-group creation dropped to zero. Stationary p99 was worse, so this
+is not a general stall fix.
