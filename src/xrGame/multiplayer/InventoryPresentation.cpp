@@ -148,7 +148,10 @@ void InventoryPresentation::start(const Fvector& position) {
     // The Rust motor and snapshots own position/health. Do not register a local
     // AI/condition/physics tick or use CLevel::OnFrame for these objects.
     Engine.Sheduler.Unregister(actor);actor->setVisible(FALSE);actor->setEnabled(FALSE);
-    level.SetEntity(actor);HUD().Load();HUD().OnConnected();
+    level.SetEntity(actor);
+    HUD().Load();
+    HUD().OnConnected();
+    CurrentGameUI()->OnConnected();
     Msg("* Zone inventory: native presentation actor ready, local simulation disabled");
 }
 void InventoryPresentation::remove(CInventoryItem* item) {

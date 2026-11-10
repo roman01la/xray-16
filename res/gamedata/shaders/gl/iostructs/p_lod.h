@@ -45,7 +45,7 @@ void main()
 	I.af		= v2p_lod_af;
 
 #ifdef	ATOC
-	SV_Target	= _main (I);
+	SV_Target0	= _main (I);
 #else	// ATOC
 #ifdef	MSAA_ALPHATEST_DX10_1_ATOC
 	f_deffer O	= _main (I, gl_FragCoord);
@@ -53,7 +53,6 @@ void main()
 	f_deffer O	= _main (I);
 #endif	// MSAA_ALPHATEST_DX10_1_ATOC
 
-#endif	// ATOC
 
 	SV_Target0 = O.position;
 #ifdef GBUFFER_OPTIMIZATION
@@ -63,6 +62,7 @@ void main()
 	SV_Target2 = O.C;
 #endif	// GBUFFER_OPTIMIZATION
 #ifdef EXTEND_F_DEFFER
-	gl_SampleMask[0] = O.mask;
+	gl_SampleMask[0] = int(O.mask);
 #endif
+#endif // ATOC
 }

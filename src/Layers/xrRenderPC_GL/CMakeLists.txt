@@ -437,3 +437,7 @@ if (BUILD_SHARED_LIBS)
         DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     )
 endif()
+
+if (EMSCRIPTEN)
+    target_sources(xrRender_GL PRIVATE ../xrRenderGL/WebGPUFluidVolume.cpp ../xrRenderGL/WebGPUFluidVolume.h)
+endif()

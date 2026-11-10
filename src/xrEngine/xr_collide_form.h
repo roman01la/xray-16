@@ -162,6 +162,9 @@ public:
     virtual bool _RayQuery(const collide::ray_defs& Q, collide::rq_results& R);
     bool _ElementCenter(u16 elem_id, Fvector& e_center);
     const ElementVec& _GetElements() { return elements; }
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    const ElementVec& RefreshElements();
+#endif
 #ifdef DEBUG
     void _dbg_refresh()
     {

@@ -22,6 +22,7 @@ typedef struct
 typedef struct
 {
     BOOL BlendEnable;
+    BOOL AlphaToCoverageEnable;
     D3DBLEND SrcBlend;
     D3DBLEND DestBlend;
     D3DBLENDOP BlendOp;

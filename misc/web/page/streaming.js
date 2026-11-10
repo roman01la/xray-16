@@ -33,6 +33,16 @@ export async function installStreaming(manifestURL, root, onProgress) {
     else await install();
 
     const opfs=await navigator.storage.getDirectory(),game=await opfs.getDirectoryHandle(root,{create:true});
+    let firstInstall=false;
+    try {
+      firstInstall=true;
+      for await(const [name,handle] of game.entries()) {
+        if(handle.kind==='file'&&/^stream-[a-f0-9]{32}\.mount$/.test(name)&&(await handle.getFile()).size){
+          firstInstall=false;
+          break;
+        }
+      }
+    } catch {firstInstall=false;}
     async function write(name,text){
       try {
         const file=await game.getFileHandle(name,{create:true}),writer=await file.createWritable();
@@ -45,7 +55,7 @@ export async function installStreaming(manifestURL, root, onProgress) {
     const mount=`stream-${suffix}.mount`;
     await write('fsgame.streaming.ltx',streamingConfig(await config.text()));
     await write(mount,base.href.slice(0,-1)+'\n'+pack.files.map(f=>f.path).join('\n')+'\n');
-    report({ready:true});
+    report({ready:true,firstInstall});
     return {root,config:`/opfs/${root}/fsgame.streaming.ltx`,mount:`/opfs/${root}/${mount}`,archives:pack.files.length};
   } catch(error) {report({error:error.message});throw error;}
 }

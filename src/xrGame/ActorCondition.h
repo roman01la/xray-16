@@ -10,6 +10,7 @@ template <typename _return_type>
 class CScriptCallbackEx;
 class CActor;
 class CActorDeathEffector;
+namespace xray::zone_condition { struct State; struct Import; struct Hit; struct Wear; }
 
 class CActorCondition : public CEntityCondition
 {
@@ -45,6 +46,15 @@ public:
 
     virtual CWound* ConditionHit(SHit* pHDS);
     virtual void UpdateCondition();
+    // Explicit host step; the ordinary actor scheduler stays disabled for proxies.
+    bool HitZoneBatch(const xray::zone_condition::Hit* hits, u32 count, xray::zone_condition::Wear& wear);
+    bool HitZoneCondition(const xray::zone_condition::Hit& hit, xray::zone_condition::Wear& wear);
+    bool ConsumeZoneCondition(const shared_str& section);
+    void AdvanceZoneCondition(float gameSeconds, float inventoryWeight);
+    float& EquipmentUpdateTime() { return m_equipmentUpdateTime; }
+    xray::zone_condition::State CaptureZoneCondition();
+    bool ImportZoneCondition(const xray::zone_condition::Import& state);
+    bool RestoreZoneCondition(const xray::zone_condition::State& state);
     void UpdateBoosters();
 
     virtual void ChangeAlcohol(const float value);
@@ -122,6 +132,8 @@ public:
     float GetMaxFireWoundProtection() const { return m_max_fire_wound_protection; };
 protected:
     SMedicineInfluenceValues m_curr_medicine_influence;
+    float m_zoneInventoryWeight = -1.f;
+    float m_equipmentUpdateTime = 0.f;
     float m_fAlcohol;
     float m_fV_Alcohol;
     //--

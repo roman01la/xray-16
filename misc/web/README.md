@@ -31,8 +31,18 @@ Escape to release the mouse, press it again. Add `diagnostics=1` to the page que
 for the selected GPU adapter, FPS, render size, CPU and GPU timings, and WebGPU
 validation errors.
 
-Single-player saves stay in the current browser origin. Multiplayer saves are
-stored on the server. Use **Controls & save** in multiplayer to copy the save key
+Single-player saves stay in the current browser origin. The startup overlay's
+**Download Saves** exports a JSON backup. **Import Saves** opens an engine-free
+restore screen: choose that backup, then **Return to Game** and use **Load game**.
+Import validates the whole backup before writing, preserves existing saves and
+thumbnails with matching names (case-insensitive), and rolls back new files if a
+write fails. Close other game tabs before importing. Interrupted imports recover
+before the next game session. New backups include file checksums; older
+`openxray-saves-v1` backups remain supported with structural validation. Import
+does not prove compatibility with another engine/mod version. Original file
+modification dates are not carried by this backup format.
+
+Multiplayer saves are stored on the server. Use **Controls & save** in multiplayer to copy the save key
 or restore it in another browser. Anyone with that key can access the character.
 
 The hosted game installs the full archive pack before the first launch. It

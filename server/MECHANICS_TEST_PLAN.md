@@ -62,6 +62,65 @@ evidence scope and do not close a rendered playtest.
 | MP-18 | Use approved campaign crossings, the underpass ladder and the Lab X8 lift in both directions. Test range, generator power and access card. Interrupt loading after departure, reconnect and restart. Verify one body on the correct map and unchanged life, items, condition and combat lock. | **Partial.** The public server runs all five maps and the approved routes. Local and isolated Fly drills exercised selected crossings. Verify normal rendered approaches, underground exits and interrupted browser loading on the hosted build. [Travel](MECHANICS.md#campaign-maps-and-travel) |
 | MP-19 | Start the native A-Life host in Zaton. Verify live and offline squads. Put two players in separated areas and confirm nearby squads activate independently, then converge on one encounter and see the same pursuit, attacks, health and death. Verify a protected player takes no damage. For an armed NPC, contest its stock corpse contents and restart. Leave and return to verify native offline progression. | **Partial.** Stock dogs damaged players and safe-zone protection held. Controlled native hits verified player death and carried-item transfer. Two Chrome clients received the same moving NPC and native rifle, knife and grenade kills. A rendered stock Gauss shot at 150 penetration killed a native stalker, with a matching death snapshot and one durable round debit. One rendered TOZ-34 shell then verified accumulated native pellet damage, with both browsers observing 6 health after the first hit acknowledged 91. Rendered input verified the original knife stab and RGD-5 prime and release bindings. Two Chrome clients also contested a stock stalker's rifle and verified the winner's item and corpse contents after a Rust restart. Two stock sites 661 m apart activated independently. The same snork squad moved offline and reactivated when the player returned. The original F and X controls opened and emptied a stock NPC corpse in a separate two-engine run. A rendered reconnect after Rust restarted preserved all 11 items. Two original Take All menus also contested all 11 items within the same measured millisecond. The six-item and five-item inventories survived a rendered reconnect after Rust restarted. Convergence through normal movement, rendered pursuit and attack effects, and the single-item UI race remain open. ARM64 Linux and disposable Fly x86-64 both restored a checkpoint in place and replayed the same corpse. Rust rejected a matching older save and fence after restarting, then admitted the current pair and deduplicated the loot replay. Stock pursuit and damage passed in hidden macOS and displayless Ubuntu ARM64. [Native bootstrap](acceptance/native-alife-bootstrap.json) · [Activation](acceptance/native-alife-interests.json) · [Split sites and offline progression](acceptance/native-alife-split-squads.json) · [Target encounter](acceptance/native-alife-targets.json) · [Native damage](acceptance/native-alife-damage.json) · [Native replicas](acceptance/native-alife-replicas.json) · [Player attacks](acceptance/native-alife-player-attacks.json) · [Knife and grenade](acceptance/native-alife-close-combat.json) · [Armed NPC loot](acceptance/native-alife-corpse.json) · [Headless host](acceptance/native-alife-headless.json) · [Native checkpoints](acceptance/native-alife-checkpoint.json) · [World admission](acceptance/native-alife-world-admission.json) · [200 native proxies](acceptance/native-alife-proxy-cadence.json) · [200 local WebRTC peers](acceptance/native-alife-webrtc-population.json) |
 
+### Multiplayer movement and NPC presentation regressions
+
+- Walk, run and sprint past a second player in Zaton. The local camera should
+  move smoothly, and the observer should see distinct stock walk, run and
+  sprint clips. Repeat with delay and packet loss, including a brief gap in
+  native movement acknowledgements. Check that local movement continues and
+  settles back onto the host position when updates resume.
+- Watch a walking stalker near the edge of visibility, then damage it without
+  killing it. Check the hit reaction, subsequent native AI behavior and smooth
+  movement between host updates on both clients.
+- With native movement enabled, fire a rifle round and a buckshot shell at
+  an exposed NPC and then at the edge of its silhouette or through closed
+  cover. Confirm one ammo debit and one reply per trigger pull. Only stock
+  skeleton contacts with the authorized NPC should damage it.
+- Watch an armed stalker draw, aim, fire, reload and holster. Compare the held
+  weapon, firing motion, muzzle effects and sounds with single player. Check a
+  moving shooter and a shooter with a suppressor or launcher attachment.
+- Kill an armed stalker and wait for its lootable body. Check that it never
+  stands in its bind pose and that only one body is visible after discovery.
+  Repeat with two NPCs close together and verify both loot containers.
+- Repeat the downhill report, stairs, crouch transitions and a ladder in
+  single player and the X-Ray multiplayer preview. Both multiplayer sides
+  use the stock controller in this preview. Movement parity is open for manual
+  verification, along with collisions between players and moving objects.
+- Drop from a height and collide with a moving prop outside a safe zone. Check
+  that native collision damage is applied once and persists across reconnect.
+  Compare a small drop and a larger drop. Repeat within protection and after a
+  respawn to check that an impact cannot cross lives.
+- Equip a worn or upgraded outfit, a helmet and two belt artefacts on the
+  native-host preview. Move an artefact to a different cell, then swap the
+  outfit for one with fewer cells. Check that displaced artefacts return to
+  the rucksack with their original condition. Reconnect and travel to verify
+  placement, condition and upgrades. After death, check that the gear
+  appears once in the player's durable loot. Take a native NPC melee hit
+  with the outfit equipped and verify mitigation and saved wear. Repeat
+  after an equipment change and within a protected area.
+- Open the same map from two browsers at different times. Compare the PDA
+  clock, lighting, and weather. Travel to another active map and compare its
+  clock. Join during a weather effect and check the remaining duration.
+- Approach a running positional sound source, move past it, and leave its
+  audible range. Check that it keeps playing as the source moves and stops
+  after leaving range or when its source stops.
+- Join with a fresh save key and check slots 2 and 3 for a PM and an AK-74.
+  Draw and holster each firearm, fire or reload, and change the fire mode.
+  For an AK-74 with a launcher, switch between magazines and check that
+  selection, ammunition and jam state survive a reconnect.
+  Check the rucksack for 50 rounds of 9×18 and 60 rounds of 5.45×39. Reload
+  both weapons. Verify a reconnect preserves the current inventory and a new
+  life after death grants the kit once.
+- With the native map host enabled, compare the magazine limit shown in
+  multiplayer with the same weapon and upgrades in single player. Try an
+  AK-74 top-up, a SPAS-12 reload interrupted after one shell and a Groza
+  grenade reload. Check the rendered reload cues, reserve counts and the
+  rifle magazine after switching back from the launcher.
+- In a native-host match, fire buckshot and slugs from the same SPAS-12
+  magazine. Compare damage and wear with the same weapon in single player
+  under controlled conditions. On an LR300, compare shots with and without
+  the suppressor fitted, including the nearby observer's sound.
+
 ## Omissions and remaining work
 
 Keep open entries until they are implemented and verified, explicitly removed
@@ -76,15 +135,26 @@ test case above.
 | G-01 | Limited | Native A-Life boot, activation, target selection, NPC damage, safe-zone protection, shared rifle, knife and grenade kills, armed-NPC loot contention with Rust restart and native outbox recovery are verified locally. Hidden macOS and displayless Ubuntu ARM64 also passed stock Zaton startup and damage. Temporary Fly x86-64 cold startup, fenced in-place restart and corpse replay passed with the asynchronous host. Verify rendered pursuit and attack effects, single-item UI contention, and end-to-end AI budgets at target population. A local five-map run verified player-interest handoff and isolated host recovery. All five public hosts saved checkpoints on the 12 GiB Machine. Campaign capacity at the target population and NPC migration between maps remain open. Local tests passed with 200 synthetic native proxies and with 200 real WebRTC peers at one crowded site. Four local split-site checkpoints stayed under 100 ms with new JIT compilation paused during object-save callbacks. The same split on a disposable Fly x86-64 Machine reached 131.48 ms. The x86-64 capture budget remains open. MP-19. |
 | G-02 | Limited / Decision | Finish moving artefacts and emission-driven layer changes. Define Zaton detector acquisition and normal progression for all tiers. Verify detector discovery at the target population. Svarog's layer 1 markers loaded for all five maps. Rendered Zaton verified the markers and fast stow and redraw during firearm aim, timed reload and climbing. Aim lets the previous reveal expire. MP-16. [Svarog evidence](acceptance/native-svarog-anomalies.json) · [Interlocks](acceptance/native-detector-interlocks.json) · [Aim](acceptance/native-firearm-aim.json) |
 | G-03 | Limited / Decision | Shared loot imports reviewed placements. Classify three script-gated stashes, seven with mismatched counts, remaining story and quest loot, 113 Jupiter Underground candidates and four excluded explosive props. Decide the Lab X8 access-card source and exit policy. MP-05, MP-18. |
-| G-04 | Limited | The server-selected first-person HUD plays stock draw, idle and confirmed firearm motions, shot sounds, muzzle flashes and smoke. Nearby observers get stock positional sounds, torso firing motions and world-model muzzle effects. The optional timing export enables authoritative reload phases and first-person sounds. Native upgrade presentation is verified for capacity and calibre changes. Rust traces stock drag, gravity, hip and fully raised sight dispersion, buckshot and static material penetration and ricochet. The original Aim binding rendered the Makarov ironsight, fixed SVD reticle and fitted SUSAT 1.6 reticle. Turn dispersion passed a rendered Makarov and Abakan trial. Finish crosshair interpolation, adjustable magnification, special scope effects, moving-target flight time, dynamic-body continuation, ricochet self-hits, animated hit volumes, material impact cues, lighting, casing and jam effects, and remaining upgrade variants. Verify rendered engagements beyond the current 100 m replication radius. MP-04, MP-06 through MP-08. [Aim evidence](acceptance/native-firearm-aim.json) · [Turn evidence](acceptance/native-firearm-turn.json) |
+| G-04 | Limited | The server-selected first-person HUD plays stock draw, idle and confirmed firearm motions, shot sounds, muzzle flashes and smoke. Nearby observers get stock positional sounds, torso firing motions and world-model muzzle effects. The optional timing export enables authoritative reload phases and first-person sounds. Native upgrade presentation is verified for capacity and calibre changes. Rust steps the rewound flight using shared X-Ray flight and penetration rules. With native movement enabled, rifle shots resolve against rewound animated player bones. Check silhouettes in rendered moving engagements. Finish native weapon state and projectile execution, crosshair interpolation, adjustable magnification, special scope effects, dynamic-body continuation, ricochet self-hits, material impact cues, lighting, casing and jam effects, and remaining upgrade variants. Verify rendered engagements beyond the current 100 m replication radius. MP-04, MP-06 through MP-08. [Cutover plan](PLAN.md#player-combat-cutover) · [Aim evidence](acceptance/native-firearm-aim.json) · [Turn evidence](acceptance/native-firearm-turn.json) |
 | G-05 | Limited | Grenade and bolt flight use simplified bounce. Stock grenade spin, fragments, blast impulse, explosion lighting and decals remain open. In-flight grenades are discarded on server process exit. Knife hit impulses on players remain open. MP-09, MP-10, MP-15. [Rendered grenade](acceptance/native-grenade-presentation.json) · [Rendered knife](acceptance/native-knife-presentation.json) |
 | G-06 | Limited | Remaining campaign route approval and rendered hosted travel tests. The public campaign runs all five maps. The isolated Linux Fly test verified the Zaton-to-Jupiter crossing. Normal acquisition of the Lab X8 access card and stock quest and guide travel gates still need review. Dynamic doors, props, platforms, player collision and water remain outside the static motor. Two nearly co-located players can intersect the first-person view, including a retained logout body. MP-18. [Overlap evidence](acceptance/native-detectors.json) |
 | G-07 | Limited | Complete reactive anomaly families beyond Electra, idle anomaly cues, blowout lighting for other anomaly families, emission-driven layer changes and native psy field post-processing. Four Pripyat Electras exclusive to the alternate layer remain dormant in the current export. MP-14, MP-15. |
-| G-08 | Limited | Bleeding is aggregated, script-only consumables are pending, and remote appearance covers the drawn firearm and its fitted addon bones. Slung weapons remain open. Recent live condition can roll back to the last checkpoint after an abrupt crash. MP-13, MP-17. |
+| G-08 | Limited | Bullet, knife and native NPC hits record wound location when known. Healing and bleeding use the X-Ray wound rules. Check multiple wound sites, bandages and reconnect. Native wound randomization, script-only consumables and slung weapons remain open. Recent live condition can roll back to the last checkpoint after an abrupt crash. MP-13, MP-17. |
 | G-09 | Deferred / Out of scope | Trading, vendors and currency follow the core loot loop. The agreed CoP inventory model excludes pocket capacity, backpack progression and detachable magazines. |
 | G-10 | Decision | Tune starter gear, spawn locations, loot quantities and timers, corpse and drop expiry, locker capacity, survival rates, safe-zone boundaries and logout/combat-lock windows after playtesting. [Development defaults](MECHANICS.md#configurable-development-defaults) |
 
 ## Run log and upkeep
+
+The optimized native and Rust Zaton fixture used two headless WebRTC clients.
+All five AK-74 rounds hit exported bones, including two while the target
+moved. SQLite recorded one debit per shot and committed the victim's death.
+Rendered moving engagements, projectile timing and capacity remain open.
+An isolated headless Chrome session started the optimized single-player build
+in Zaton and passed F5 save and F9 load with zero WebGPU validation errors.
+The wound follow-up used the same two-client Zaton fixture. SQLite retained
+separate bullet wounds on the clavicle and spine after five confirmed hits
+and five ammunition debits. The Rust suite covered treatment applied during
+live healing and loading an older save with only a bleeding total.
 
 Update this file in the same change as a new or modified mechanic. Add or
 revise its case and scope entry, and link any new evidence. For a run, add a
@@ -176,3 +246,498 @@ evidence, or link the decision that removed it from scope.
 | 2026-11-09 | Public Fly Zaton, optimized Linux X-Ray, release Rust and Chrome WebRTC. | MP-19 public transport smoke passed. Chrome received 18 stock NPCs and observed three moving. The native save and SQLite admission advanced to checkpoint 2. All prior player identities were present. | [Hosted native A-Life evidence](acceptance/native-alife-fly-zaton.json) |
 | 2026-11-09 | Optimized Linux x86-64 on an isolated Frankfurt Fly Machine with eight shared CPUs and 12 GiB of RAM. | All five native hosts saved checkpoints. The campaign kept the existing test Zaton lineage and save identity. Two WebRTC clients verified the Zaton-to-Jupiter crossing and exact inventory. Killing Jupiter forced an independent restart and a new durable checkpoint. | [Five-map Linux Fly evidence](acceptance/native-alife-fly-campaign.json) |
 | 2026-11-09 | Public five-map Fly campaign, optimized Linux x86-64 and unified browser release `ad2fef3a`. | All five hosts persisted and registered checkpoints. Zaton retained its lineage and all 39 existing player records survived. Chrome reconnected with the same six items and observed 16 stock NPCs, including two moving. The published fresh-profile preset is Default at 1920×1080. | Rendered travel and 200-player capacity still need checks. [Public campaign evidence](acceptance/native-alife-fly-campaign-public.json) |
+| 2026-11-09 | Optimized native X-Ray and Rust, Zaton with a WebRTC fixture and disposable saves | MP-06 verified stock AK-74 and SPAS-12 capacity despite different Rust catalog values, one commit per shell, and an isolated Groza launcher reload. | Rendered checks, upgraded weapons and broader ammo coverage remain open for the native host. [Native reload rules](acceptance/native-reload-rules.json) |
+| 2026-11-09 | Optimized native X-Ray and Rust, isolated Zaton WebRTC fixture | MP-06 through MP-08 verified native impact and wear for mixed SPAS-12 rounds, a suppressed LR300, and four AK-74 PvP hits. The Groza launcher reload regression passed. | The Rust fixture catalog had zero damage. Rendered comparisons and native projectile flight remain open. [Native cartridge impact](acceptance/native-cartridge-impact.json) |
+| 2026-11-09 | Optimized native X-Ray and Rust, isolated Zaton WebRTC fixture | MP-07 and MP-08 verified stock shotgun pellet counts, LR300 suppressor velocity, Abakan opening velocity and four AK-74 hits beyond the altered Rust catalog range. | Rust committed one debit per shot. Rendered checks and moving projectile flight into X-Ray remain open. [Projectile cutover](PLAN.md#player-combat-cutover) |
+| 2026-11-09 | Optimized native X-Ray and Rust, isolated Zaton WebRTC fixture | MP-07 and MP-08 verified Abakan opening spread, SPAS-12 buckshot and slug spread, suppressed LR300 spread, and stock gravity and ricochet energy. | A moving-target rerun committed four hits against native bones across five accepted AK-74 shots. One earlier run used fallback hit geometry for a moving contact. [Projectile cutover](PLAN.md#player-combat-cutover) |
+
+### Shared native projectile trajectory (2026-11-09)
+
+Engine and Rust now call the same X-Ray trajectory position and impact-velocity
+functions. This removes Rust's assumption that impact velocity remains equal
+to the position derivative after the stock drag transition. The engine's
+separate 1/drag and 2/drag transition times are retained.
+
+Manual checks pending: compare close and distant rifle hits, steep uphill and
+downhill shots, vertical shots, buckshot, and penetration/ricochet on thin cover.
+Confirm one ammo debit per accepted shot, no duplicate wounds, and working
+single-player weapon effects. These checks have not been performed in a rendered
+game for this change.
+
+Still omitted from this cutover: native ownership of collision traversal, dynamic
+cover, delayed projectile arrival and native weapon action state machines. Rust
+still selects bounded chords and traces rewind snapshots before durable commit.
+
+Validation: all 160 Rust tests passed, including drag-transition impact velocity,
+zero drag, vertical launch, range-limited contact speed and fast Gauss flight.
+Optimized native X-Ray, WASM/browser and Rust server builds passed.
+
+### Native skeleton collision queries (2026-11-09)
+
+Rust rewind now calls X-Ray's RAYvsOBB, RAYvsSPHERE and RAYvsCYLINDER
+routines. Skeleton queries share a header with the engine. Cylinder and vector
+math compile from engine sources. Historical pose selection and native geometry
+freshness checks remain in Rust. Missing/stale geometry still uses a capsule.
+
+Targeted tests cover rotated boxes, cylinder walls and caps, tangent spheres,
+inside-origin culling, strict range limits, named bones and rewind translation.
+Manual tests pending: moving-player head/limb shots, crouched targets, targets
+near cover, and single-player combat after the source extraction. No rendered
+combat verification was performed for this change. Native world collision
+traversal, dynamic cover and NPC broad-phase selection remain migration work.
+
+A separate WebGPU fix restores engine framebuffer bindings after presentation.
+Its regression reproduces the reported attachment exception while deletion
+flushes queued state. Manually check the action which previously triggered that
+crash, including transitions that release render targets.
+
+Validation: 161 Rust tests and 55 WebGPU tests passed. Optimized native,
+WASM and Rust builds passed. The staged Fly source context compiles the new
+collision adapter and engine vector math locally. Local 8137 multiplayer
+server/native host refreshed with its saved world. Local 8132 release
+`37dfd12ff5732e33ba1dc199b4fa4f8b39e45f93ef3a40debcd22736c5545169`
+contains the framebuffer fix and rebuilt engine. Headless Chrome verified its
+engine installation and cached WASM hash. Production was not deployed.
+
+### NPC animated collision-form cutover (2026-11-09)
+
+Nearby living native NPCs now export their stock skeleton collision forms using
+the same serializer as player actors. Rust binds each sample to the active host,
+server epoch, native NPC ID and spawn generation, rejects samples older than
+five ticks and duplicate/out-of-order samples, and retains the shapes in rewind.
+NPC candidate selection uses these shapes when fresh. Native terminal hit
+confirmation and native damage application are unchanged.
+
+Sampling is bounded to 64 NPCs per roster frame, within 100 metres of player
+interests. Candidate ordering rotates and writes are nonblocking. Outside this
+coverage, or after expired samples, model-box selection remains a fallback.
+This is not a complete native bullet-manager/world-collision cutover.
+
+Manual checks pending: fire through visible gaps around NPC limbs, compare
+human and mutant silhouettes, moving NPCs, close cover and dead/respawned NPCs.
+Do not count these checks as completed by packet or geometry tests.
+
+Validation: 162 tests passed in the full Rust suite, followed by one additional
+passing combat regression proving skeleton gaps miss and historical NPC pose
+hits survive movement. Optimized native X-Ray and Rust server builds passed.
+The local multiplayer preview was refreshed with the existing saved world.
+
+### Shared native material response (2026-11-09)
+
+X-Ray and Rust now compile the same penetration/ricochet decision routine and
+density speed-loss calculation. The native caller retains original random-number
+consumption and effects. Rust retains deterministic shot sampling, tracing bounds
+and transactional damage. Magnetic penetration may become negative internally
+as in X-Ray; outgoing authoritative damage carries zero for exhausted penetration.
+
+The cutover also aligns the exact material transparency epsilon boundary, which
+Rust previously treated as transparent. Regression checks cover transparent
+materials, stop/ricochet flags, magnetic priority/depletion and density exhaustion.
+All 164 Rust tests passed after this change.
+
+Manual checks pending: foliage, solid walls, thin cover, grazing ricochets and
+Gauss shots through successive surfaces. Full native world collision traversal
+and dynamic-cover authority remain open.
+
+### Direct WebGPU detail instancing local release (2026-11-09)
+
+Local 8132 release `b6bc9bf56bffcaddb7a266f6518fb5184368cae8542b1480ac8ad414cdc0dce2`
+includes shared material response, the framebuffer restoration fix, detail
+instancing, instance-data reuse and bulk vec4 uniform uploads. The original
+asset pack is unchanged. Optimized native/browser/Rust builds passed.
+
+Renderer validation: 58 WebGPU tests, 16 real-GPU detail shader variants and
+130 instances per draw with 520 checked pixels across buffer replacements.
+This does not establish gameplay FPS or replace manual scene checks.
+
+Manual rendering checks pending: original max-graphics terrain and ground views,
+wind/static details, sun shadows, visibility-boundary movement, graphics reset,
+and level travel/reload. Capture the new detail preparation/submission counters
+with frame and GPU timings. Use the supplied Chrome trace as baseline.
+Full investigation and implementation notes are in
+`misc/web/webgpu/TERRAIN-PERFORMANCE-2026-11-09.md`.
+
+### Shared weapon reload decisions (2026-11-09)
+
+Magazine-fed weapons, shotgun ammunition fallback, next-ammunition cycling and
+the Rust inventory transaction now use the same X-Ray selection routine. The
+stock magazine type-switch/unload predicate is also shared. Rust supplies an
+availability snapshot read inside the inventory transaction and still commits
+all box/magazine changes atomically.
+
+Validation: 166 Rust tests passed, including selected-type priority, authored
+fallback order, locked refill, next-type wraparound, no-compatible-ammo cases,
+round conservation, mixed shotgun shells, launcher separation and action replay.
+
+Manual checks pending: switch ammo on partly loaded/full rifles, reload from
+several boxes, mix shotgun shells, clear jams and interrupt/restart reloads.
+This cutover does not implement native animation callbacks or replace Rust's
+reload scheduling. Those native weapon state transitions remain open.
+
+### Follow-up cache correction and reload build (2026-11-09)
+
+Local 8132 release `0e543b811c294750d302bcf1819ce3a0fd6b4b0346409227f8181d319d2e5886`
+includes the shared reload decisions and corrected detail-instance cache.
+The second supplied trace confirmed the instanced build was active but showed
+a 50.36 ms frame-callback median over seconds 10–18. Uniform conversion improved,
+while detail packing and uploads dominated. Unconditional per-frame cache
+invalidation was fixed using ordered visibility comparison and tracked content
+changes. Moving views or slot decompression can still invalidate all batches.
+
+Validation: 166 Rust tests, 59 renderer tests and optimized native/browser/Rust
+builds passed. The cache regression verifies 100 unchanged frames avoid repeated
+uploads and that relevant mutations invalidate reuse. Local release hashes were
+verified. No post-correction gameplay FPS measurement has been made.
+
+Manual checks pending: hold the same max-quality terrain view stationary, then
+move/rotate, check wind and shadows, and capture FPS/render time plus detail
+preparation/submission/reuse counters. Use the prior two traces as baselines.
+
+### Shared shotgun reload animation transitions (2026-11-09)
+
+X-Ray and Rust now use the same open/insert/end animation transition routine.
+An interrupted insertion commits one shell, retains the current animation's
+deadline and finishes when it ends. The previous Rust flow played an extra close
+animation after that deadline, unlike stock CWeaponShotgun::Action and
+OnAnimationEnd. Normal end-of-reload still plays its close animation.
+
+Validation: 167 Rust tests passed, including the interrupted-phase regression
+and existing ammo-conservation, mixed-shell, jam and replay checks.
+Manual checks pending: interrupt during opening versus insertion, interrupt
+near the insertion deadline, normal full-tube completion, exhausted reserve,
+weapon switching, death and reconnect. Verify exactly one current shell is
+inserted and no extra closing delay follows fire interruption.
+
+Still open: native-host ownership of the full weapon state machine. Rust retains
+wall-clock scheduling, durable transaction acknowledgement and session checks.
+
+### Shared environmental condition damage (2026-11-09)
+
+- Radiation must increase radiation without an immediate health/stamina hit from the pulse itself. Later radiation sickness remains part of the condition tick.
+- Psy exposure must affect psy health and health/stamina; chemical, heat and shock pulses must not create bleeding wounds.
+- Compare exposure with and without protective equipment and a protection booster. Re-enter the field after expiry; safe-zone policy must still gate harmful exposure.
+- Compare single-player environmental hits after the shared-kernel refactor, including heat hits on different bones. Native heat retains bone health scaling; continuous multiplayer fields have no bone and use scale 1.
+
+These rendered checks remain **manual / not run**. Optimized native, browser and Rust release builds pass; the idle local multiplayer preview was refreshed and its saved Zaton world clock resumed. The full server suite passes 169 tests. Automated kernel checks cover all five hit kinds, protection before immunity, complete absorption, heat-only bone scaling and signed immunity-booster deltas. Both engine and Rust use the same C++ implementation. This is not completion of native condition-tick ownership: the Rust field scheduler, catalog coefficients and persistent condition state remain, and native immunity boosters are not yet mirrored.
+
+### Native physical-hit condition proposals (2026-11-09)
+
+Native NPC melee, firearm, explosion and player collision proposals now carry final health/stamina losses from the actor's stock physical-hit calculation. Armour reduction and condition coefficients are evaluated in X-Ray; Rust authorizes and commits the proposal with gear wear. Invalid or stale proposals retain the existing fallback behavior. The private host packet is ZAH4; native host and Rust must be updated together.
+
+Manual checks remain unrun: compare NPC melee/firearm/explosion and fall damage with original actor settings, with and without armour; verify safe-zone protection, lethal-hit corpse ownership and reconnect after equipment changes. Wound randomization/scaling, native condition ticking and medicine/booster ownership remain open.
+
+Validation: 169 Rust tests pass after the ZAH4 change. The equipment transaction regression deliberately uses different reduced, health and stamina values and verifies the native final values commit atomically; rollback and stale-generation fallback remain covered. Packet checks reject nonfinite/negative/excessive deltas and the old proposal layout. Optimized builds are in progress; no deployment or rendered verification is claimed for this change yet.
+
+### Lossless native condition checkpoint (2026-11-09)
+
+`ZoneConditionState.h` defines the bounded ZCS1 host checkpoint. Standalone codec checks pass with:
+
+```sh
+c++ -std=c++17 -Wall -Wextra -Werror -Isrc server/tests/native_condition_checkpoint.cpp -o /tmp/zone-condition-checkpoint-test
+/tmp/zone-condition-checkpoint-test
+```
+
+Checks cover 1,000 byte-exact round trips, tiny wounds, the full 16-bit bone ID, maximum wound count, duplicate wound/booster rejection, invalid medicine duration, nonfinite values, every truncation length, trailing data and hostile counts. Actor restore replaces booster-derived values rather than applying boosters repeatedly. This is codec evidence only; the request/persistence bridge and live actor restore/retry verification remain unimplemented/unrun. The native actor's equipment timer is now per actor and checkpointed. When the bridge is enabled, manually compare two players with different belt equipment, retry/reconnect during a booster and treatment, and verify neither player changes the other's effect cadence.
+
+The checkpoint test now also covers the native ZCT1/ZCU1 envelope and the production replay cache: baseline request, mandatory checkpoint for a nonzero step, excessive timestep, identical retry, altered same-sequence request and old sequence. These tests do not prove live actor restoration or database commit fencing. Once connected, test repeated delivery, disconnect during a pending step, equipment change while awaiting a reply and host restart; no condition delta or booster may apply twice.
+
+Rust-side condition handoff checks (171-test suite): all host/player/revision/equipment fence mismatches and truncated replies are rejected; native checkpoint JSON/SQLite round trips preserve exact bytes; a stale equipment generation cannot commit; repeating a committed revision cannot apply it twice. Optimized native build passes. This does not yet validate live scheduling or replace Rust's condition simulation. The persistence operation is currently exercised by tests, not sent by gameplay peers.
+
+Native baseline acquisition is now connected to live equipment synchronization. The private Unix socket regression passes: request/reply delivery, changed equipment with delayed old reply, and player-incarnation cache retirement. This tests transport/lifecycle with a fixture endpoint, not the actual X-Ray actor calculation. Baselines remain templates and do not overwrite a player's saved condition. Saved-state conversion, live native condition stepping and rendered checks remain outstanding.
+
+Initial condition-import checks pass: exact named wounds (including small floats), ongoing medicine effect/duration fields, mapping of bleeding-restoration boosters to the native enum, legacy scalar bleeding, invalid bone-name characters, every truncated payload and rejection of time advancement during import. Native actor import resolves actual bone IDs and applies stock booster functions. The actor-level round trip and live import commit are not yet verified. When enabled, test switching from an existing save with bleeding, an active medkit and an active weight booster; verify no reset, duplicated boost or timer restart.
+
+### Native timed medicine and headless policy isolation
+
+The explicit host condition step now advances imported timed medicine in real seconds, matching booster timing, and applies each elapsed fraction through `CEntityCondition::ApplyInfluence`. The last fraction is clamped to the remaining duration. Standalone checks cover partial doses, exact completion, an oversized final step, exhausted treatment and invalid duration. The normal single-player scheduler is unchanged. Host-owned actors also ignore local god-mode flags in satiety and hit handling while retaining `CanBeHarmed` policy.
+
+This does not enable live condition ownership: peer scheduling, native hit/treatment mutations, and stopping the duplicate Rust tick remain required. Manual verification once enabled: import an active treatment, reconnect mid-treatment, and confirm no duration reset or double dose; check safe-zone protection separately from local debug flags. Actor-level runtime verification remains pending.
+
+### Native consumable proposals
+
+ZCM1 requests carry a validated checkpoint and a bounded configuration section name, with zero elapsed time. The native actor executes the same `ApplyConsumableEffects` function now used by `CEatableItem::UseBy`: stock medicine application followed by configured boosters. Immediate deltas are resolved without ticking medicine/booster timers; timed treatments remain in the checkpoint. Host actors suppress local use sounds. Missing required section fields are rejected before mandatory engine config reads. The host captures the result and restores its mirror; existing sequence/revision/equipment fences and replay caching apply.
+
+Standalone protocol checks pass for exact checkpoint/section decoding, missing checkpoint/section, invalid section characters, oversized names, bad lengths and nonzero elapsed time. All three targeted Rust condition tests pass, including consumable request/reply validation. The optimized native build has compiled ActorCondition, EntityCondition and eatable_item successfully; the complete link is still running. This is not yet connected to the inventory consume transaction: the remaining cutover must commit item use and the resulting checkpoint atomically, preserve custom thirst, and prevent any legacy effect application after native ownership. Manual cases remain pending: food, instant medkit, timed medkit, bandage, antirad, replacement booster, active medicine rejection semantics, retry and reconnect during consumption.
+
+### Atomic native consumption persistence
+
+`ConsumeNative` is an internal session-only persistence operation. It uses the existing inventory command authorization, item revision and durable request ledger, verifies the native proposal's item section and equipment generation, then writes its checkpoint and decrements one item portion in the same SQLite transaction. Condition revision changes reject the result. Stock medicine/booster effects are not applied again in Rust; configured custom hydration is applied once at consumption. Legacy consumption explicitly rejects native-owned checkpoints. Loadout generation/notification handling includes the native operation.
+
+The integration fixture verifies wrong-generation, wrong-section and wrong-condition rejection with unchanged inventory/state, exact native health/checkpoint preservation, a single portion/revision change and identical retry results. It also injects a failure after condition update but before item debit to verify atomic rollback. Peer scheduling and native condition ownership are still not enabled, so this transaction is currently exercised by the test fixture only. Live replay/reconnect and all rendered consumption cases remain manual checks after cutover.
+
+### Compute-gather grass renderer checkpoint — 2026-11-09
+
+Local8132 release `94dddce88ca36f7dcdec8a2b12fc4384b509e437ea39bbf2b41a6656fdd9e415`
+uses persistent slot/class GPU records and compute gathers into the original
+instanced vertex layout. Source, visibility order, wind, lighting and shadow
+math remain stock; no grass quality/distance reduction. No production deploy.
+
+Automated: optimized browser build,63renderer regressions, all16stock detail
+shader variants,1300hardware-checked pixels, source revision/allocation/pool
+reuse, pending-pass ordering and page-growth/eviction tests pass. Local release
+hashes include the new `detail-storage.js` module.
+
+Authorized isolated hardware gameplay check at1920×1080,maximal grass density,
+radius300,height2,geometry2,sun details on: stationary156.47FPS; continuous
+camera turn101.21FPS (previous span build28.82),turnp9515.88ms,p9918.43ms,
+zeroGPUerrors. Stationary throughput was slightly below prior163.05FPS; these
+are retained-run comparisons with live simulation/weather, not strict identical
+GPU work. See `misc/web/webgpu/TERRAIN-PERFORMANCE-2026-11-09.md` for evidence.
+
+Still manually check: other terrain/levels, multiplayer, grass wind/static
+variants and shadows during camera/visibility transitions, graphics-device reset,
+level reload/travel, and long sessions which force source-page eviction. The
+short benchmark and synthetic lifetime tests do not certify all scenes or promise
+100FPS everywhere. Keep maximal Advanced grass settings when comparing results.
+
+### Condition reply routing and current verification
+
+The admitted native condition receiver routes replies to either the pending baseline or one pending action per actor. Baselines cannot supersede an in-flight action with a newer replay sequence. Actions retry identical bytes, completed results are delivered once, and cancellation matches the full fence so an old cancellation cannot remove newer work. Queues/results retire on host boot or actor life changes; the peer must still validate condition revision/equipment before persistence. Unknown/duplicate responses do not create results.
+
+The private Unix-socket regression passes baseline/action interleaving, exact retry bytes, delayed baseline replies, one-shot result delivery and old-versus-current cancellation. The optimized native build completed successfully, including stock consumable refactoring and native timed medicine. All 27 equipment integration tests pass. Continuous native condition scheduling remains off pending native hit/field mutations and removal of the Rust stock tick; none of these checks claims rendered gameplay validation.
+
+### Full native hit proposals
+
+ZCH1 transports a checkpoint and validated physical/environmental hit (type, power, penetration, aim flag and named bone). The actor resolves its real skeleton, uses stock `CDamageManager::HitScale`, normalizes alternate knife hits like `CEntityAlive::Hit`, and executes `CActorCondition::ConditionHit` including native wound creation. Multiplayer armour rules are enabled only for this explicit proposal. The native mirror's outfit/helmet condition and last-hitter pointers are restored; no particles, impulses or sounds are emitted by proposal calculation. Safe-zone `CanBeHarmed` rejects damage effects.
+
+ZCV1 returns the resulting checkpoint plus outfit/helmet wear, kept together by the action reply router. Rust rejects missing/invalid wear, truncated results and stale fences; it cannot accidentally accept a hit as a checkpoint-only reply. Standalone native codec and targeted Rust checks pass. Fly build-context staging includes the new header and succeeds. The optimized native rebuild is in progress (the first attempt was invalidated by a concurrent header edit and terminated; a fresh build was then started).
+
+Still required: atomic damage/death plus wear persistence, integrating these proposals with PvP/NPC/field authorization and delayed shots, live actor hit/restore verification, and turning off duplicate Rust condition damage/ticks. These are not yet live gameplay changes. Manual cases: bullet and knife body/head hits, explosion, bleeding, radiation/psy/heat/chemical/shock, armour breakage, protected safe zone, lethal hit, repeated reply and concurrent equipment change.
+
+### Atomic native hit persistence
+
+`CommitNativeImpact` now validates the live condition revision and inventory generation, requires a matching outfit/helmet set, applies the proposed wear, installs the native checkpoint, and uses the existing atomic condition/death/corpse transaction. It preserves the combat deadline and refreshes loadout/appearance. Rust does not recalculate hit damage or wounds. Wear validation is shared with the earlier native armour proposal path, and all equipment is validated before any wear is written.
+
+The equipment regression now covers a missing helmet proposal, an injected condition-write failure after armour writes (all wear rolls back), exact native checkpoint/vitals commit, repeated revision rejection, and a lethal native checkpoint moving carried equipment into one corpse. This persistence path still requires live combat/field dispatch and native condition scheduling before the legacy Rust paths can be removed.
+
+### Native checkpoint presentation
+
+The HUD/movement view now obtains booster activity/expiry and base carry/walk limits from the validated native checkpoint when present. It adds the existing equipment additional-weight contribution once, without adding legacy Rust weight boosters again. The regression deliberately keeps conflicting legacy boosters and verifies native icons, expiry bits, weight limits and the overloaded boundary. It passes; the optimized native hit build also completed successfully.
+
+Current live integration gap: `inventory_poll` still dispatches legacy impact/field/consume operations, and `World::step` still runs the Rust condition tick. Do not auto-bootstrap players into native ownership until these dispatch paths, custom hydration/dehydration and protected-zone policy are connected and the stock tick is disabled together. Native checkpoint infrastructure, proposals and atomic persistence are implemented; live ownership is not.
+
+### Custom survival policy in native steps
+
+`State::prepare_native_step` prepares a cloned input: it advances custom thirst (including the thirst-only component of imported timed treatment), sets native `CanBeHarmed` from safe-zone policy and queues dehydration in the native health-delta accumulator. It does not apply stock treatment effects or modify live health. Checkpoint preparation is immutable and repeatable, so retrying a pending step cannot spend hydration or damage twice. Native timers/wounds/boosters remain intact.
+
+The library suite passes 115 tests; focused checks cover invalid duration/damage, safe-zone suppression and leaving protection, byte-preservation of native wounds/boosters, and timed hydration without duplicate treatment health. This helper still needs to be called by the live scheduler as part of the condition cutover; no live tick ownership change is claimed.
+
+### Live native condition step lane
+
+`inventory_poll` now has a native step lane for actors already carrying a committed native checkpoint. It accumulates elapsed real time, converts through the admitted campaign time factor, prepares custom policy, queues the native request, validates host/life/revision/equipment on reply, persists the result, then replaces live state after commit. Pending steps block conflicting inventory operations and player-hit reservations. Retry/stale work does not consume the elapsed-time debt. The world loop skips the Rust stock condition tick for these actors. A regression verifies 30 world frames cannot mutate their condition/treatment checkpoint. Server binary compilation and its five tests pass.
+
+Automatic bootstrap remains disabled. Native-owned actors with pending physical/field hits currently wait rather than use legacy mutations; hit/field dispatch, native consumption intent preparation, commit-reply recovery, field overflow and PvP reservation integration must be finished before enabling conversion. Scheduler actor/socket/database end-to-end verification is still pending. Native tick timing under sustained high campaign time factors also needs throughput validation.
+
+### Native queued hit/field dispatch
+
+The native condition lane now prioritizes queued physical contacts and environmental pulses, translates their stock hit types/bones/penetration, and sends zero-time native hit requests. It retains the event until its checkpoint/wear transaction commits, installs the resulting state/loadout, then removes that event. Native grenades retain PvP combat tagging without applying damage a second time. Already-authorized physical contacts retain damage authority when the player subsequently enters a safe zone; environmental pulses use current protected-zone policy. Native hit calculation also calls stock `CActor::HitArtefactsOnBelt` before condition handling, matching the original actor hit order.
+
+The server binary's five tests pass. The private socket fixture now verifies ZCV1 delivers the checkpoint and exact outfit/helmet wear together. The added artefact call is undergoing an optimized native incremental build. Remaining before automatic bootstrap: consumption intent preparation, commit-reply recovery, field overflow/throughput, direct PvP reservation path, and actor/socket/database end-to-end verification. Full weapon/projectile ownership also remains in the overall migration plan.
+
+### Durable native commit reply recovery
+
+Schema 23 adds one native condition receipt per player, replaced by each committed native step/hit. A SHA-256 fingerprint covers the exact typed proposal; matching life/visit/world and current committed revision are required for replay. The receipt is written in the same transaction as condition, armour and death. An exact repeat returns the committed result without rerunning effects; changed proposals remain stale. JSON float-roundtrip parsing preserves exact serialized reply values. Receipt storage is bounded by player count rather than tick count.
+
+The live lane retains the exact persistence operation until acknowledgement and retries it with refreshed session authority after a lost/closed/error reply. It blocks conflicting inventory/fire reservations during this interval and retires retry work on actor-incarnation change. Only an acknowledged commit removes the queued hit/field event or consumes time debt.
+
+All 27 equipment tests pass, including reopen/replay of a lethal native hit, one corpse, one receipt row, unchanged wear, and rejection of a changed proposal. Full server tests are running. The previous artefact-protection native build also passed. Live native consumption preparation and direct PvP/overflow integration still precede automatic bootstrap.
+
+### Native consumption intent dispatch
+
+Checkpoint-owned actors now route Consume through `PrepareNativeConsume`. This read-only session operation checks ownership, life, item revision, consumable type and required native configuration fields, and resolves the section from the database. It does not debit the item. Completed request IDs return the existing receipt rather than starting another effect calculation. The native condition lane queues a zero-time ZCM1 proposal and commits it through `ConsumeNative`; acknowledgement installs the complete condition/loadout and sends the action result. Conflicting inventory/fire operations wait while the intent or commit is pending.
+
+All 27 equipment tests pass, including no mutation during preparation, ownership/revision rejection, cached completed requests, native effect commit and rollback. Server binary tests pass. The full server suite is being rerun after updating the artificial v4 schema fixture to remove the new native receipt table and expect schema 23. Automatic native bootstrap is still disabled pending direct PvP integration, field overflow/throughput and end-to-end native scheduler validation.
+
+### Ordered native field batches
+
+ZCF1 carries up to 64 ordered field pulses with one checkpoint. The native actor applies each pulse through stock artefact/condition logic, carrying outfit/helmet wear forward inside the proposal, then restores original mirror gear. It stops on death. One ZCV1 result and one atomic hit transaction commit the entire batch; acknowledgement retires exactly that queue prefix. No aggregate-power approximation is used.
+
+The bounded codec regression passes pulse order/type/power preservation, every truncation, empty/65-pulse rejection, 64-pulse acceptance, nonfinite rejection and required wear replies. Native checkpoint standalone tests and server binary tests pass. Optimized native compilation is running; native actor batch-versus-sequential runtime verification remains pending. The full suite exposed two additional historical schema reconstruction fixtures, now updated to remove schema 23 receipt tables before testing v1/v2 migration. Full suite rerun is in progress. The overflow fallback remains a cutover blocker until native backpressure handling replaces legacy overflow mutation.
+
+### Native condition / queued firing handoff (pending cutover testing)
+
+After native-condition bootstrap is enabled, hold fire while stock condition updates and timed medicines are active. Shots must not disappear with an inventory-busy response or starve until the two-second queue timeout. Condition timers must catch up after firing. Repeat reciprocal fire and a shotgun volley, disconnect/reconnect while a native hit commit is pending, and verify no duplicated ammo debit, wounds, corpse or equipment wear. These are pending integration/manual cases; current native Release and Rust suite passes do not establish live gameplay completion.
+
+### Native physical hit batch acceptance (pending integration)
+
+Once firing uses native batch proposals, test a shotgun against an armoured actor with pellets hitting different bones. Wear from earlier pellets must affect later pellets; a lethal pellet must prevent subsequent hits from creating additional corpses. Retry/lost-response testing must preserve one ammunition debit and one victim condition commit. Compare against sequential native stock hits. Protocol validation is automated; actor-level equivalence and live firing are still unverified.
+
+Native firearm persistence automation now covers a two-victim rollback, complete checkpoint preservation, one ammunition debit, corpse ownership and stale round/equipment/condition fences. Live native firing scheduler integration and X-Ray batch-versus-sequential actor verification remain pending. Do not treat the database fixture's supplied native result as proof of native damage calculations or rendered multiplayer behavior.
+
+### Native firearm coordination (integration pending)
+
+The live scheduler now has a native firearm proposal path for checkpoint-owned victims. During testing, fire reciprocal shots and multi-victim shotgun volleys while medicine/condition updates are active. Disconnect the shooter during native resolution, expire held fire, and restart the native host: pending shots must either complete once or cancel without debit, and every victim must regain inventory/condition updates. Automated disconnected-shooter cancellation passes. Automatic bootstrap remains disabled and these live cases are not yet verified.
+
+### Native condition housekeeping
+
+After cutover, test reload during active condition timers, periodic location persistence, vulnerable logout, safe-zone logout and graceful shutdown. After the final save, no fresh autonomous native condition tick may overwrite it. Queued damage must finish before that save; native actors must never enter the legacy hit/field handlers when housekeeping runs. Automated scheduler coverage now checks checkpoint handoff, pending damage priority and death queue retirement; live reload/logout/shutdown verification remains pending.
+
+### Native melee cutover tests (live verification pending)
+
+Test direct slash, direct stab and off-axis splash hits against armoured players. Check health, power, wounds, belt artefacts and armour wear against native X-Ray behavior. Changing equipped weapon or attack mode while a native result is pending must reject stale work. Native result persistence now has automated mode-binding, rollback and full-checkpoint tests; visual timing, wound calculation and end-to-end host integration remain unverified. Knife reach/power/timing are still read/calculated by the existing Rust path pending full native weapon ownership.
+
+### Accelerated condition clock
+
+With native condition ownership enabled, verify timed medicine/boosters, bleeding, radiation and belt artefact effects at normal and accelerated campaign clocks. Introduce a short native reply delay and check that elapsed-time debt catches up without skipping condition updates or applying time twice after retry. Native stepping is bounded to one game second per substep and 60 per proposal; custom thirst remains bounded to one real second per proposal. Codec/substep tests pass; actor-level and load measurements remain pending.
+
+### Grass density changes while paused (2026-11-09)
+
+The renderer now joins grass calculation before reset/unload/destruction and
+before scheduling another calculation after a skipped render frame. Repeat the
+reported options flow: pause a loaded game, increase grass density, apply, and
+resume. Also alternate minimum/maximum density, detail radius/height, grass
+on/off, then save/load and travel. Expect no worker memory trap, continuing
+terrain rendering, and no stale grass after reset. Automated background coverage
+uses actual density/vid_restart commands on Zaton; it does not replace checking
+the options widgets, prolonged pause, multiplayer and other maps/GPUs. Details:
+`misc/web/webgpu/GRASS-RESET-CRASH-2026-11-09.md`.
+
+Local grass-reset fix published and hash-verified on both `localhost:8132` and
+`127.0.0.1:8132`, release `d02651c67b48a2d522315fc54cd74056608aa09606dcedaaf17621ce5a03464c`.
+Final headless actual-game run confirmed 8 sparse plus 8 dense config/reset loads,
+at least 30 frames after each, and visible gameplay after final settlement, with
+no captured runtime exceptions or GPU validation errors. Reload local preview
+for options-widget manual retesting; production remains unchanged.
+
+Real-host automated evidence: native_condition_probe passed on a headless Zaton actor with empty equipment. A12.25-game-second batch equals thirteen sequential updates byte for byte; restoring the initial checkpoint is exact. Evidence: ../mechanics-test/native-condition-live-f3w2wrhw/attempt-y0bc2tpx/probe.log. This does not cover wounds/equipment/medicine, live PvP, load or graceful native shutdown; host cleanup required SIGKILL after eight seconds.
+
+### Real native ordered hits and replay evidence (2026-11-09)
+
+The isolated optimized native probe in `../mechanics-test/native-condition-hits-20261109` passed: ordered radiation/psy/radiation batch equals three individual native hits byte-for-byte; a native bullet reduces health; exact request replay returns the identical result; restoring the baseline isolates the mirror. Accelerated 12.25-second stepping still equals thirteen sequential steps. These are genuine empty-equipment X-Ray actor results, not synthetic responses. They do not yet verify equipped armour, consumables, live gameplay database commits or capacity.
+
+Probe exit was 0; host cleanup required SIGKILL after SIGTERM. The host's “termination with exit code 3” diagnostic comes from the registered SIGTERM handler (`xrDebug.cpp`), so its interrupted physics stack is not evidence of an independently occurring physics crash. Graceful shutdown remains unverified. The runner now records pre-cleanup host status and termination/kill actions separately and rejects a host already exited at probe completion. Automatic native condition bootstrap remains disabled; bounded field backpressure and native weapon/projectile ownership remain unfinished.
+
+### Real native hit through SQLite verified (2026-11-09)
+
+The optimized native probe now installs a genuine X-Ray baseline through the persistence worker, commits a genuine bullet-hit checkpoint plus native wear, retries the exact transaction, and reads the stored condition through a separate SQLite connection. The hit checkpoint survives byte-for-byte and the retry returns the identical result without a second revision increment. All earlier real-host stepping, ordered fields and mirror-isolation assertions also pass. Evidence: `../mechanics-test/native-condition-durable-map-20261109/probe.log` and `result.json`.
+
+The runner now requires `--collision` as well as catalog/game/native-binary/output inputs. The first persistence attempt lacked active-map collision authority and failed; the corrected run uses the existing verified Zaton collision manifest rather than bypassing campaign authorization. This is an isolated empty-equipment native-host-to-worker/SQLite integration check, not rendered multiplayer validation or full actor/weapon migration. Native shutdown still requires forced cleanup and is not proven graceful. Bounded field overflow, automatic native condition bootstrap, equipped armour/medicine validation and full native weapon/projectile ownership remain open.
+
+### Native ownership enforced for legacy hit transactions (2026-11-09)
+
+Legacy `ResolveImpact` and `ResolveFields` now reject native-owned condition snapshots before calculating damage or changing equipment. This extends the existing firearm/knife/consumable ownership guards to direct impact and environmental transactions. The equipment regression sends both legacy request types after native checkpoint installation and verifies exact stored condition/revision and both equipment conditions are unchanged; the subsequent native hit transaction still succeeds. All 28 equipment integration tests pass (`/tmp/zone-native-owner-guard-tests.log`).
+
+This is a persistence boundary invariant, not the field-queue overflow fix: the in-memory saturation fallback is still open. Native socket field messages also need ordered backpressure/retention, rather than merely increasing the peer queue or silently dropping pulses. Automatic native condition bootstrap remains off until those delivery paths are migrated.
+
+### Native hit socket failure retention (2026-11-09)
+
+`flushHits` previously removed queued hits for non-transient socket errors such as ENOENT/ECONNREFUSED during receiver replacement. It now retires only a completely sent datagram, retains the oldest failed packet, stops after one failed attempt, and bounds successful work to 256 packets per call. The shared flush helper is tested for EAGAIN/EWOULDBLOCK/ENOBUFS/EINTR/ENOENT/ECONNREFUSED/EBADF, short sends, zero budget, and failure after a successful prefix. An actual private Unix datagram test removes/rebinds the receiver and verifies hits arrive once in order. Run: `c++ -std=c++17 -Wall -Wextra -Werror -Isrc server/tests/native_hit_delivery.cpp -o /tmp/zone-native-hit-delivery && /tmp/zone-native-hit-delivery` (socket binding requires sandbox permission).
+
+Optimized native xr_3da/xrGame build passed (`/tmp/zone-native-hit-delivery-build.log`). This proves socket-level retention only: a successful send still lacks application acknowledgement, native queue-full behavior and lease-expiry retirement remain, and Rust field saturation still needs ordered backpressure. No claim of end-to-end lossless delivery or complete migration.
+
+### Real native stock medkit replay and stepping (2026-11-09)
+
+The optimized real-host probe now uses stock `medkit` on its injured native actor, verifies a changed checkpoint and exact request replay, then compares a 12.25-game-second batch with thirteen sequential native steps from the same consumed checkpoint. Both match byte-for-byte. Earlier native fields/hits, baseline isolation and SQLite hit commit/replay assertions still pass. Evidence: `../mechanics-test/native-condition-medicine-20261109/probe.log` and `result.json`; optimized probe build at `/tmp/zone-native-medicine-probe-build.log`.
+
+The catalog's stock medkit uses 10-second health/bleeding boosters, not `apply_time_sec`. The JSON test names use “Medicine” broadly; this evidence covers stock consumable/booster replay and time stepping, not the separate timed-influence implementation. It does not yet couple this real consumable result to an inventory portion debit; that transaction currently has synthetic-checkpoint integration coverage. Field/native delivery backpressure, automatic bootstrap and full native weapon/projectile ownership remain open.
+
+### Native hit acceptance acknowledgement (2026-11-09, build pending)
+
+Native hits now carry monotonically increasing sequences in ZAH2/ZAH5 packets; ZHA1 cumulative acknowledgements are fenced by server epoch and native boot. X-Ray retains sent packets until acknowledged and retries at 100 ms intervals with a bounded 256-packet send budget. Rust holds at most one decoded hit when the consumer rejects it, stops socket draining, suppresses duplicate sequences, and acknowledges only accepted or explicitly invalid/expired/lifetime-obsolete hits. A deferred hit is rechecked against actor incarnation before delivery. Native field delivery reserves space for Rust pulses already sampled that tick rather than entering the overflow fallback.
+
+118 Rust library and 7 server binary tests pass, including an actual Unix-socket test for backpressure/no premature acknowledgement, retransmitted duplicates, wrong-boot rejection and respawn retirement. C++ tests pass for retained successful sends, errors, budgets and receiver removal/rebind. Optimized native compilation is running at `/tmp/zone-native-hit-ack-build.log` (session43803); not yet a complete runtime validation. Both native and Rust processes must be updated together; obsolete hit packet versions are no longer accepted at the socket boundary.
+
+Acknowledgement means acceptance into Rust's in-memory work queue, not SQLite durability. Native queue-full/lease-expiry retirement and Rust-originated field overflow remain open, so this does not establish lossless delivery through process crashes or enable automatic native bootstrap. Full native weapon/projectile ownership also remains unfinished.
+
+### Queued native hits no longer expire by age (2026-11-09)
+
+Removed the old 1.2-second receive-age rejection from the sequenced hit payload decoder. Hits held by backpressure remain valid while publisher epoch/boot and actor incarnation remain valid. The real-socket acknowledgement regression advances world time by ten seconds with one decoded hit deferred and another packet still unread; both are accepted exactly once afterward. Duplicate/wrong-boot packets remain suppressed, and a respawn still retires a deferred old-incarnation hit without applying it. All 118 library and 7 server binary tests pass (`/tmp/zone-native-hit-ack-age-tests.log`). Native optimized build session43803 is still live; no restart or publication performed. Native lease-expiry queue clearing is separate and remains unresolved.
+
+### Preserve hit delivery across snapshot lease timeout (2026-11-09, incremental build pending)
+
+The native refresh path no longer clears produced hits merely because its player-snapshot lease expires. It still stops new inputs/actor presence on expiry; map changes and admission/server epoch changes explicitly clear the old delivery scope. Rust's existing boot/incarnation fences reject obsolete targets. This closes another timeout-driven loss path without accepting new native hits under an expired lease.
+
+The real Unix-socket C++ regression now exercises production `transmit` rather than the superseded send-and-pop helper. Successful sends retain packets until the test models receiver acknowledgement; error/partial-send/budget/rebind checks pass. Native build session43803 is linking its original acknowledgement revision; the subsequent lease-retention source edit requires an incremental build after that handle completes. Queue-full behavior and durable crash recovery remain open.
+
+### Native environment ownership routing (2026-11-09, runtime validation pending)
+
+Added a native-condition ownership bit to the private ZAI5 actor snapshot (56-byte rows). Native mirrors copy it per incarnation. Their hit reporting now accepts actual X-Ray zone/physics-originated hits; legacy mirrors retain the NPC-only filter. Rust disables continuous-field sampling and electric-anomaly damage application for actors with both native movement and a committed native condition checkpoint, preventing the old duplicate field producer from filling those peers' queues. Actor-less/test native condition stepping retains its prior behavior.
+
+118 library and 7 server binary tests passed after the routing changes. The condition regression checks thirty ticks with the old producer, then thirty ticks in native environment ownership with zero duplicate Rust field hits and unchanged native state. A separate snapshot assertion checks the ownership bit differs between native/legacy actors. Optimized native build session62503 is running at `/tmp/zone-native-environment-build.log`; actual anomaly/physics damage delivery remains unverified. ZAI5 requires paired native/Rust deployment; no deployment performed. Automatic native condition bootstrap remains disabled pending real zone coverage and coordinated ownership transition, native producer queue saturation and full native weapon/projectile ownership.
+
+The previous lease-retention incremental native build passed (`/tmp/zone-native-hit-lease-build.log`). The superseded send-and-pop helper was removed; socket tests now exercise only the retained sender used by production.
+
+### Authored radiation validation failed; activation remains off (2026-11-09)
+
+Both optimized native environment build and release probe build passed. The extended real-host probe spawned a new native-owned actor at authored Zaton radiation volume spawn1096 (-68.04141,0.741196,-168.10297), after completing the earlier condition/persistence checks. It received no radiation hits within25seconds and exited1. Evidence: `../mechanics-test/native-condition-zone-20261109/probe.log` and `result.json`. This contradicts a claim that anomaly routing is already operational; automatic native condition activation remains off. No production deployment occurred.
+
+Next diagnostic revision logs actual received native pose and total hit count and enables the existing private `-zone-alife-probe` output to inspect mirror creation/contact hit counts. Release probe build session70376 is running at `/tmp/zone-native-environment-probe-diagnostic-build.log`. Native zone visibility, activation and spawn positioning must be resolved before removing this gate.
+
+### Radiation failure narrowed to native contact generation (2026-11-09)
+
+The diagnostic rerun (`../mechanics-test/native-condition-zone-diagnostic-20261109`) also failed with zero native hits. Existing native probe output confirms the mirror at approximately(-68.042,0.744,-168.102), alive, with a collision form and hit counter0. Thus the absent radiation event is upstream of Rust decoding/acknowledgement, not simply an incorrect requested position.
+
+Extended only the opt-in `-zone-alife-probe` diagnostic with bounded #zone rows (id,section,position,radius,enabled,state,maxPower) to distinguish an offline/disabled zone from native contact/scheduling issues. Native diagnostic build session30991 is linking (`/tmp/zone-native-zone-diagnostics-build.log`). No production behavior or activation flag was changed by this diagnostic addition; real anomaly coverage remains unproven and automatic bootstrap stays off.
+
+
+### Startup overlay save import (2026-11-09; manual game-load check pending)
+
+- [ ] Download Saves from a browser containing a known playable single-player save. Keep this backup outside the browser.
+- [ ] On a disposable browser profile/origin, choose Import Saves, select the backup, then Return to Game. Verify Load game lists the imported save and actually resumes it.
+- [ ] Import the same backup again: existing save/thumbnail pairs must be reported as kept, with no duplicate entries or changes to their bytes. Unrelated saves must remain intact.
+- [ ] Import a malformed JSON backup or one containing an invalid path/checksum/header: no saves should change; a readable error should appear and retry should work.
+- [ ] Keep another game tab running for the same origin, then try importing: it must request that the other game tab be closed. Retry after closing it.
+- [ ] Verify the import screen does not start the engine or download the game pack, and Return to Game restores normal startup/install behavior.
+
+Automated coverage: eight Node storage/import tests pass, including export/import round trips, case-insensitive pair conflicts, full-input validation, failed-write rollback, interrupted-import recovery and save-directory locks. Isolated headless Chrome verified real OPFS import/export bytes, conflict preservation, rejection while a game lock is held, invalid-input no-write behavior, and no engine/pack requests from the import screen. Evidence: `../mechanics-test/save-import-final-20261109/result.json` and `overlay.png`.
+
+Not yet validated: loading an actual imported compressed save through the running game. The automated fixture only proves file transport and header validation. Old backups lack checksums; header validation does not fully decompress/validate game content. Import preserves existing conflicting saves rather than offering overwrite, and imported timestamps reflect the restore because the backup format contains no original per-file modification times. No deployment/publication was performed for this change.
+
+### Real native radiation route verified; camera scheduling defect fixed (2026-11-09)
+
+Zone-state diagnostics showed the authored volume was online, enabled, radius15 and maxPower0.02 while the collidable living mirror stood inside it. The failure was stock fast/slow zone scheduling based solely on Device.vCameraPosition: the headless director camera remained hundreds of metres from the actual player. Slow scheduled updates could skip the radiation zone's short blowout window. Native A-Life hosts now choose fast zone updates from authoritative player interests within the same radius+50m threshold. Non-host/single-player behavior still uses the original camera rule.
+
+Optimized native build passed (`/tmp/zone-native-zone-interest-build.log`). Repeating the exact same isolated authored-volume test now receives five native radiation hits and confirms their native condition result increases radiation. All earlier stepping/medkit/replay/SQLite checks pass in that run. Evidence: `../mechanics-test/native-condition-zone-interest-20261109/probe.log` and `result.json` (probe exit0). This verifies actual CustomZone→actor→acknowledged socket→native condition routing for one radiation volume, not every anomaly family or all five maps. Cleanup remains forced; graceful shutdown is unverified.
+
+Manual coverage still needed after activation: simultaneous distant players, entry/exit/crouch at hazard boundaries, electric/thermal/chemical/gravity anomalies, safe-zone policy, death/reconnect/travel and dense-scene performance. Native producer saturation, coordinated condition ownership transition and full native weapon/projectile ownership remain open; automatic bootstrap remains disabled.
+
+### Native hit overload acceptance — pending implementation
+
+Developer harness prerequisite before native-condition activation: hold Rust hit acceptance while the native host produces more than 512 eligible hits. Verify bounded native and engine-event memory, no silently retired hits, private acknowledgement/condition traffic remains responsive, and recovery applies each still-valid hit exactly once in order. Repeat with receiver socket removal/rebind and with actor death/respawn or host epoch change during the stall. Verify simulation time does not jump forward into a burst of accumulated anomaly damage on recovery. Ordinary single-player pause/resume must remain unchanged. Existing retransmit tests do **not** cover producer saturation; this check is currently unimplemented, not passed.
+
+Native control refactor regression (2026-11-09): PASS in isolated `native-condition-control-mailbox-20261109` for stepping, medicine/impact replay, SQLite result durability and authored Zaton radiation. Does not cover pause/saturation. New pre-dispatch hit-capacity check is awaiting build/runtime validation; verify that >512 queued hits survive backpressure and that blocked damage does not indefinitely prevent actor lifecycle processing. Graceful native shutdown remains unverified.
+
+Native hit saturation integration (2026-11-09): PASS, evidence `../mechanics-test/native-condition-backpressure-20261109`. Real radiation fills512-hit queue with acknowledgements withheld; condition RPC succeeds while paused;513hits accepted during recovery; host resumes and five further radiation hits apply; zero overflow reports. This does not close multi-player burst, prolonged memory/backlog, socket removal, lifecycle/travel or process-crash cases. Graceful shutdown still unverified. Keep those cases pending rather than marking the whole overload checklist complete.
+
+Sustained native saturation: PASS in `native-condition-backpressure-hold-20261109`: simulation diagnostic unchanged for5seconds while snapshots continue, condition RPC works,512hits recovered, six subsequent radiation hits applied, zero overflow reports. Does not replace multi-player/lifecycle/memory tests. Native weapon callback owner fix awaits build and multi-actor execution validation.
+
+Native weapon ownership pending checks: two separate mirrored actors must receive only their own no-ammo/magazine-empty callbacks; enabling the director unlimited-ammo flag must not allow either network actor to reload/fire without persisted reserve rounds. Owner-callback build passed; finite-ammo guard build/runtime validation pending. These are prerequisites, not completed native weapon authority.
+
+Native reserve-ammo mirror pending: compare persisted box IDs/revisions/types/counts with native owner inventory; repeat identical snapshots after native consumption and ensure no refill; apply newer revision, remove box, switch weapon, holster, respawn and travel. Verify stock capacity rejection and no orphan/dropped-world boxes. Mirror implementation awaits build/runtime checks and does not enable native reload authority.
+
+Reserve-ammo integration PASS: `native-reserve-ammo-20261109` verifies two real owned stock ammo boxes, correct rounds, stable native IDs across a count/revision change, targeted removal and holster cleanup. Native reload/consumption, tombstones after consumption, multiple owners, travel and persistence of native deltas remain pending.
+
+Stock native reload execution PASS: `native-reload-action-20261109` invokes original Action and waits for stock animation completion; AK-74 loads23FMJ, keeps17AP, returns idle/not pending and does not refill for5seconds of repeated snapshots. SQLite ammo intentionally stays unchanged. This is not production reload authority or persisted consumption. Depleted box remained present at0, so destroyed-box tombstone verification is still pending.
+
+### Native weapon action ingress (2026-11-09, development only)
+
+- Automated standalone coverage: exact wire validation, replay fences, retained
+  completion until commit, abort tombstones, bounded/coalesced duplicate requests.
+- Pending integration: reload request through private host socket, complete native
+  magazine/reserve result, durable Rust transaction, lost-response retry, abort
+  restoration and player death/travel during reload. These are **not passed** by
+  codec or queue checks. Production reload routing remains unchanged.
+
+### Native weapon result transport (2026-11-09)
+
+- Passed: C++ encoder fixture decoded by Rust with exact mixed cartridge order,
+  launcher rounds, weapon condition/mode/jam and persisted/new ammo-box identity.
+- Passed: malformed/truncated/trailing payload rejection, finite condition checks,
+  duplicate box rejection in native encoding, bounds and status-only replies.
+- Native capture helper compiles against optimized native configuration. Actual
+  reload-result capture, native-created box ownership/lifetime, abort cleanup and
+  atomic SQLite commit remain unverified and are not enabled in production.
+
+### Native reload persistence (2026-11-09)
+
+Passed `native_reload_commits_box_graph_atomically_and_replays_after_restart`:
+- Magazine and reserve updates plus new native box assignment commit together.
+- Per-section round conservation rejects minted/lost ammo; missing box identities
+  and stale inventory generations are rejected.
+- Injected failure on the final weapon write rolls back earlier ammo changes.
+- Exact retries (including persistence-worker restart) return the stored result;
+  changed payload under the same native action sequence is rejected.
+
+Still pending: actual native socket→coordinator→SQLite→native commit handshake,
+loss/reconnect/life/travel scenarios, and all weapon families. Production action
+routing remains on the existing path until that integration is complete.

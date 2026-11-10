@@ -24,49 +24,26 @@ Texture2D s_occ;
 //#define SSAO_QUALITY 4
 //#endif
 
-#if !defined(SSAO_QUALITY) || SSAO_QUALITY <= 3
-#include "ssao.ps"
-//#ifdef SM_5
-//#undef SM_5
-//#endif
-#else
-#ifndef USE_HDAO
-#define USE_HDAO
-#endif
-#endif
-
-///////
-// xxx: disabled error in "ssao_hdao_new.ps" for msaa
-#ifdef MSAA_OPTIMIZATION
-#undef USE_HDAO
-#endif
-///////
-
-#ifdef USE_HDAO
-#if SSAO_QUALITY > 3
-//#_include "ssao_hdao_new.ps"
-// TODO: XXX: remove this after implementing hdao
-#undef SSAO_QUALITY
-#define SSAO_QUALITY 3
-#endif
+// The original Ultra HDAO also has a pixel-shader implementation. Use it
+// directly on WebGPU instead of reading an unimplemented compute output.
+#if defined(SSAO_QUALITY) && SSAO_QUALITY > 3
+#define USE_HDAO 1
+#include "ssao_hdao_new.ps"
+#elif defined(USE_HDAO)
 #define USE_HDAO_CODE
-#if !defined(SSAO_QUALITY) || SSAO_QUALITY <= 3
-#define  g_f2RTSize ( pos_decompression_params2.xy )
-//#define  g_f2RTSize float2( 1280.0, 1024.0 )
-#ifdef GBUFFER_OPTIMIZATION
+#define g_f2RTSize (pos_decompression_params2.xy)
 #define g_txDepth s_position
+#ifdef GBUFFER_OPTIMIZATION
 #define g_txNormal s_position
 #else
-#define g_txDepth s_position
 #define g_txNormal s_normal
 #endif
-//#_include "ssao_hdao.ps"
-#endif
-#else // USE_HDAO
-#ifdef USE_HBAO
+#include "ssao_hdao.ps"
+#elif defined(USE_HBAO)
 #include "ssao_hbao.ps"
-#endif	//	USE_HBAO
-#endif // USE_HDAO
+#else
+#include "ssao.ps"
+#endif
 
 #include "iostructs\p_combine.h"
 
@@ -139,27 +116,17 @@ _out _main ( _input I, uint iSample )
 #	endif*/
 
 #ifdef USE_HDAO
-#ifdef SM_5
 #if SSAO_QUALITY > 3
-	float occ = tex2D( s_occ, I.tc0.xy );	
-#else // SSAO_QUALITY > 3
-	float occ = calc_hdao( CS_P(P.xyz, N.xyz, I.tc0.xy, I.tcJ, I.pos2d, ISAMPLE ) );
-#endif // SSAO_QUALITY > 3
-#else // SM_5
-#if SSAO_QUALITY > 3
-	float occ = 1.0;//calc_new_hdao( CS_P(P.xyz, N.xyz, I.tc0.xy, I.tcJ, I.pos2d, ISAMPLE ) );
-#else // SSAO_QUALITY > 3
-	float occ = 1.0;//calc_hdao( CS_P(P.xyz, N.xyz, I.tc0.xy, I.tcJ, I.pos2d, ISAMPLE ) );
-#endif // SSAO_QUALITY > 3
-#endif // SM_5
-#else // USE_HDAO
-#ifdef USE_HBAO
-	float occ = float(calc_hbao(P.z, N.xyz, I.tc0.xy, I.pos2d));
-#else // USE_HBAO
-	float occ = calc_ssao( CS_P(P.xyz, N.xyz, I.tc0.xy, I.tcJ, I.pos2d, ISAMPLE ) );
+    float occ = calc_new_hdao(CS_P(P.xyz, N.xyz, I.tc0.xy, I.tcJ, I.pos2d, ISAMPLE));
+#else
+    float occ = calc_hdao(CS_P(P.xyz, N.xyz, I.tc0.xy, I.tcJ, I.pos2d, ISAMPLE));
 #endif
-#endif // USE_HDAO
-	
+#elif defined(USE_HBAO)
+    float occ = calc_hbao(P.z, N.xyz, I.tc0.xy, I.pos2d).x;
+#else
+    float occ = calc_ssao(CS_P(P.xyz, N.xyz, I.tc0.xy, I.tcJ, I.pos2d, ISAMPLE));
+#endif
+
 	hmodel	(hdiffuse, hspecular, mtl, N.w, D.w, P.xyz, N.xyz);
 //      hmodel		(hdiffuse, hspecular, mtl, 1, D.w, P.xyz, N.xyz);
 //	hdiffuse*=hdiffuse;			//. high contrast hemi

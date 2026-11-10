@@ -56,8 +56,10 @@ public:
     void switch_object(CSE_ALifeDynamicObject* object);
     static bool host_interests_requested();
 #if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    void refresh_host_interests(CLevel& level) const;
+    void poll_host_interests() const;
+    void advance_host_interests(CLevel& level) const;
     bool recover_host_world(IReader& source) const { return host_interests().restoreWorldCheckpoint(source); }
+    bool host_hit_capacity() const;
     void report_host_hit(u16 target, const SHit& hit) const;
     void report_host_death(CSE_Abstract& entity);
     void publish_host_npcs(CLevel& level) const;

@@ -44,6 +44,7 @@ pub struct DamageContact {
     target_life: u32,
     target_incarnation: u32,
     source: DamageSource,
+    native_armour: Option<crate::survival::NativeArmourImpact>,
 }
 
 #[derive(Clone)]
@@ -53,13 +54,16 @@ enum DamageSource {
 }
 
 impl DamageContact {
-    pub(crate) fn native(slot: Arc<()>, target: u32, target_life: u32, target_incarnation: u32, power: f32, kind: ImpactKind) -> Self {
-        Self { _slot: slot, target, power, target_life, target_incarnation, source: DamageSource::Native(kind) }
+    pub(crate) fn native(slot: Arc<()>, target: u32, target_life: u32, target_incarnation: u32, power: f32,
+        kind: ImpactKind, native_armour: Option<crate::survival::NativeArmourImpact>) -> Self {
+        Self { _slot: slot, target, power, target_life, target_incarnation, source: DamageSource::Native(kind), native_armour }
     }
+
+    pub fn native_armour(&self) -> Option<crate::survival::NativeArmourImpact> { self.native_armour }
 
     pub fn kind(&self) -> ImpactKind {
         match &self.source {
-            DamageSource::Grenade { .. } => ImpactKind::Blast,
+            DamageSource::Grenade { .. } => ImpactKind::Blast { bone: String::new() },
             DamageSource::Native(kind) => kind.clone(),
         }
     }
@@ -79,6 +83,14 @@ impl DamageContact {
 
     pub fn is_pvp(&self) -> bool {
         matches!(self.source, DamageSource::Grenade { shooter, .. } if self.target != shooter)
+    }
+
+    pub fn tag_native_commit(&self, world: &mut World, damaged: bool) {
+        if damaged && self.is_same_life(world)
+            && let DamageSource::Grenade { shooter, shooter_life } = self.source
+            && self.target != shooter {
+            world.tag_pvp_hit(shooter,shooter_life,self.target);
+        }
     }
 
     pub fn apply(self, world: &mut World, impact: ArmourImpact, power_loss: f32, fatal: bool) -> bool {
@@ -105,7 +117,11 @@ impl DamageContact {
             }
         } else if entity.health > 0 {
             // Keep condition progress that occurred while SQLite was busy.
-            entity.apply_hit(power, wound);
+            let site = match &self.source {
+                DamageSource::Native(kind) => kind.wound_site(),
+                DamageSource::Grenade { .. } => (crate::survival::WoundKind::Blast, ""),
+            };
+            entity.apply_hit_at(power, wound.then_some(site));
             if let Some(condition) = &mut entity.condition {
                 condition.power = (condition.power - power_loss).max(0.0);
             }
@@ -387,14 +403,15 @@ impl Projectile {
             if let Some(npc) = &entity.native {
                 native_hits.push(NativeAttack { target_id: id, target: npc.target, shooter: self.shooter, life: self.shooter_life,
                     damage: NativeDamage { kind: NativeHitKind::Explosion, power: [power, 0.0, 0.0], penetration: 0.0, impulse: 0.0 },
-                    direction: direction.try_normalize().unwrap_or(Vector::Y).to_array(), offset: rotate_yaw(offset, -entity.yaw).to_array() });
+                    direction: direction.try_normalize().unwrap_or(Vector::Y).to_array(),
+                    offset: rotate_yaw(offset, -entity.yaw).to_array(), ray: None });
                 continue;
             }
             if let Some(key) = &entity.character_key {
                 // Keep the projectile's capacity slot until its final
                 // persistent target finishes, including under worker backlog.
                 hits.push(DamageContact {
-                    _slot: self._slot.clone(), target: id, power, target_life: key.life,
+                    _slot: self._slot.clone(), target: id, power, target_life: key.life, native_armour: None,
                     target_incarnation: entity.incarnation,
                     source: DamageSource::Grenade { shooter: self.shooter, shooter_life: self.shooter_life },
                 });

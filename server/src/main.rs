@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     future::IntoFuture,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -28,7 +28,7 @@ use tokio::{
     time::MissedTickBehavior,
 };
 use zone_server::{
-    alife_attacks::Receipt as NativeReceipt,
+    alife_attacks::{Receipt as NativeReceipt, ShotOutcome as NativeShotOutcome},
     collision::CollisionMap,
     contract, control, protocol, replication,
     knife,
@@ -41,6 +41,7 @@ const CONDITION_CHECKPOINT_TICKS: u32 = TICK_HZ * 5;
 #[derive(Clone)]
 struct HttpState {
     survival: bool,
+    native_player_movement: bool,
     sessions: Vec<Arc<SessionConfig>>,
     commands: mpsc::Sender<Command>,
     token: Option<String>,
@@ -88,6 +89,8 @@ struct InventoryRuntime {
 enum CheckpointPhase { Running, Draining, Final }
 enum InventoryResponse {
     LoadCharacter,
+    NativeConsumePrepare { sequence:u32, command:zone_server::inventory::Move },
+    NativeCondition { fence: zone_server::native_condition::Fence, seconds: f32, action: NativeConditionAction },
     Action { sequence: Option<u32>, death: bool },
     ReloadPrepare,
     ReloadApply,
@@ -107,10 +110,28 @@ struct OwnedReload {
     root: String,
     first_commit: Option<Value>,
     plan: Option<zone_server::reload_timing::ReloadPlan>,
+    native_rules: Option<zone_server::combat::NativeWeaponRules>,
     slot: u8,
     phase: ReloadPhase,
     until: Instant,
     interrupted: bool,
+}
+#[derive(Clone, Copy)]
+enum NativeConditionAction { Tick, Impact { combat_until_ms:i64 }, Field { count:usize }, Consume { sequence:u32 } }
+#[derive(Clone)]
+struct NativeCommitRetry {
+    operation: zone_server::persistence::Operation,
+    fence: zone_server::native_condition::Fence,
+    seconds:f32,
+    action:NativeConditionAction,
+}
+struct NativeConsumeIntent { sequence:u32, command:zone_server::inventory::Move, section:String }
+struct NativeConditionPending {
+    fence: zone_server::native_condition::Fence,
+    before: zone_server::survival::Record,
+    location: zone_server::survival::Location,
+    seconds: f32,
+    action: NativeConditionAction,
 }
 struct InventoryPending {
     response: InventoryResponse,
@@ -122,7 +143,15 @@ struct QueuedFire {
     item: String,
     shot: zone_server::combat::TracedShot,
     queue_index: Option<u32>,
+    // Keep the rules used to trace the shot while it waits for the transaction.
+    native_rules: Option<zone_server::combat::NativeWeaponRules>,
     special: Option<SpecialAttack>,
+}
+type PreparedFire = (zone_server::inventory::Context, Vec<zone_server::survival::FireVictim>, Vec<FireReservation>);
+struct NativeFirePreparation {
+    attack:zone_server::native_condition::Attack,
+    request: PreparedFire,
+    fences: Vec<(usize, zone_server::native_condition::Fence)>,
 }
 struct FireReservation { peer: u64, actor: u32, life: u32 }
 enum SpecialAttack { Throw(Throwable, zone_server::hand_grenade::Force), Knife(knife::Mode) }
@@ -147,6 +176,8 @@ struct Offer {
     offer: SdpOffer,
     #[serde(default)]
     identity_secret: Option<String>,
+    #[serde(default)]
+    native_movement: bool,
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -295,8 +326,13 @@ struct Peer {
     next_travel: Option<u32>,
     travel_use: Option<u32>,
     inventory_pending: Option<InventoryPending>,
+    native_condition_pending: Option<NativeConditionPending>,
+    native_commit_retry: Option<NativeCommitRetry>,
+    native_consume: Option<NativeConsumeIntent>,
+    native_condition_clock: Option<(u32, f32)>,
     reload: Option<OwnedReload>,
     queued_fire: Option<QueuedFire>,
+    native_fire: Option<NativeFirePreparation>,
     incoming_fire: bool,
     impact_hits: VecDeque<zone_server::combat::DamageContact>,
     field_hits: Vec<zone_server::environment::Pulse>,
@@ -313,6 +349,8 @@ struct Peer {
     checkpoint_combat_until: Option<u32>,
     replication: replication::Replicator,
     state_budget: replication::ByteBudget,
+    npc_pose_ticks: HashMap<u32, u32>,
+    native_sound: Option<(u64, u32)>,
     lifecycle: zone_server::lifecycle::Lifecycle,
     weapon_view: Option<zone_server::combat::WeaponView>,
     grenades_visible: bool,
@@ -339,8 +377,13 @@ impl Peer {
             next_travel: None,
             travel_use: None,
             inventory_pending: None,
+            native_condition_pending: None,
+            native_commit_retry: None,
+            native_consume: None,
+            native_condition_clock: None,
             reload: None,
             queued_fire: None,
+            native_fire: None,
             incoming_fire: false,
             impact_hits: VecDeque::new(),
             field_hits: Vec::new(),
@@ -357,6 +400,8 @@ impl Peer {
             checkpoint_combat_until: None,
             replication: replication::Replicator::default(),
             state_budget: replication::ByteBudget::default(),
+            npc_pose_ticks: HashMap::new(),
+            native_sound: None,
             lifecycle: zone_server::lifecycle::Lifecycle::default(),
             weapon_view: None,
             grenades_visible: false,
@@ -506,20 +551,32 @@ impl Peer {
             .is_some_and(|actor| if actor.health == 0 { !self.inventory_dead } else { !self.disconnect_saved })
     }
 
+    fn condition_housekeeping_due(&self,world:&World,phase:CheckpointPhase)->bool {
+        if self.reload.is_some() || self.queued_fire.is_some() {return true;}
+        if phase==CheckpointPhase::Final || (!self.connected() && !self.logout_waiting(world)) {
+            return !self.disconnect_saved;
+        }
+        !newer(self.next_checkpoint,world.tick)
+    }
+
+    fn native_condition_busy(&self) -> bool {
+        self.native_condition_pending.is_some() || self.native_commit_retry.is_some() || self.native_consume.is_some()
+    }
+
     fn inventory_busy(&self) -> bool {
-        self.inventory_pending.is_some() || self.reload.is_some() || self.queued_fire.is_some() || self.knife_swing.is_some()
+        self.native_fire.is_some() || self.inventory_pending.is_some() || self.native_condition_pending.is_some() || self.native_commit_retry.is_some() || self.native_consume.is_some() || self.reload.is_some() || self.queued_fire.is_some() || self.knife_swing.is_some()
             || self.grenade_throw.is_some()
             || self.incoming_fire || !self.impact_hits.is_empty() || !self.field_hits.is_empty()
     }
 
     fn can_queue_shot(&self) -> bool {
-        self.queued_fire.is_none() && self.knife_swing.is_none() && self.grenade_throw.is_none()
+        self.native_consume.is_none() && self.native_commit_retry.is_none() && self.native_condition_pending.is_none() && self.queued_fire.is_none() && self.knife_swing.is_none() && self.grenade_throw.is_none()
             && !self.inventory_pending.as_ref().is_some_and(|pending|
             matches!(pending.response, InventoryResponse::Fire { .. }))
     }
 
     fn can_resume_body(&self) -> bool {
-        self.queued_fire.is_none() && !self.incoming_fire && self.impact_hits.is_empty()
+        self.native_fire.is_none() && self.queued_fire.is_none() && !self.incoming_fire && self.impact_hits.is_empty()
             && self.inventory_pending.as_ref().is_none_or(|pending|
                 matches!(pending.response, InventoryResponse::Checkpoint | InventoryResponse::Fields(_)))
     }
@@ -534,6 +591,10 @@ impl Peer {
         self.logout_until = old.logout_until;
         self.owned_fire_cooldown = old.owned_fire_cooldown;
         self.inventory_pending = old.inventory_pending;
+        self.native_condition_pending = old.native_condition_pending;
+        self.native_commit_retry=old.native_commit_retry;
+        self.native_consume=old.native_consume;
+        self.native_condition_clock = old.native_condition_clock;
         self.field_hits = old.field_hits;
     }
 }
@@ -699,6 +760,7 @@ async fn main() -> Result<()> {
         .map(|(catalog, rules)| zone_server::survival::Tuning::from_catalog(catalog, rules))
         .transpose()?;
     let mut loot = Vec::new();
+    let native_player_movement = std::env::var("ZONE_NATIVE_PLAYER_MOVEMENT").as_deref() == Ok("1");
     let mut regions = Vec::with_capacity(specs.len());
     for spec in specs {
         let session = Arc::new(spec.session);
@@ -717,6 +779,10 @@ async fn main() -> Result<()> {
             ensure!(spec.loose_loot.is_none(), "loose loot requires ZONE_AUTHORED_LOOT");
         }
         let mut world = session.make_world(spec.alife_socket.is_some())?;
+        ensure!(!native_player_movement || (spec.alife_socket.is_some() && database.is_some()
+            && catalog.is_some() && session.collision().is_some()),
+            "ZONE_NATIVE_PLAYER_MOVEMENT requires A-Life, persistence, a catalog and map collision for every region");
+        world.native_player_movement = native_player_movement;
         world.survival_tuning = tuning.clone();
         if let Some(path) = spec.environment_fields {
             ensure!(database.is_some(), "continuous fields require a persistence database");
@@ -756,6 +822,7 @@ async fn main() -> Result<()> {
     let shutdown_commands = tx.clone();
     let state = Arc::new(HttpState {
         survival:catalog.is_some(),
+        native_player_movement,
         sessions,
         commands: tx,
         token,
@@ -1119,7 +1186,7 @@ async fn world_info(State(state): State<Arc<HttpState>>, headers: HeaderMap) -> 
     let travel_use = state.travel.as_ref().map_or_else(Vec::new, |routes| routes.interaction_points(&session.contract.world));
     (StatusCode::OK, Json(json!({
         "contract":session.contract,"content":session.content,"persistence":state.persistence.is_some(),
-        "survival":state.survival,"campaign":state.sessions.len() > 1,"travelUse":travel_use
+        "survival":state.survival,"nativePlayerMovement":state.native_player_movement,"campaign":state.sessions.len() > 1,"travelUse":travel_use
     })))
 }
 
@@ -1133,6 +1200,9 @@ async fn offer(
             StatusCode::FORBIDDEN,
             Json(json!({"error":"unauthorized origin or token"})),
         );
+    }
+    if body.native_movement != state.native_player_movement {
+        return (StatusCode::CONFLICT, Json(json!({"error":"client and server player controllers differ"})));
     }
     let Some(region) = state.sessions.iter().position(|session| session.contract == body.contract) else {
         return (
@@ -1318,6 +1388,8 @@ async fn run(
         actor.character_key = Some(CharacterKey { principal: saved.principal.clone(), life: saved.life });
         let mut peer = Peer::new(Instant::now(), None);
         peer.region = index;
+        peer.npc_pose_ticks.clear();
+        peer.native_sound = None;
         peer.player = Some(id);
         peer.principal = Some(saved.principal);
         peer.inventory_life = Some(saved.life);
@@ -1447,7 +1519,11 @@ async fn run(
                     metrics.tick=entry.world.tick;
                     let movement_errors: u64 = regions.iter().map(|r|r.world.movement_errors).sum();
                     let persistent_entities: usize = regions.iter().map(|r|r.scenes.len()).sum();
-                    let _=reply.send(json!({"metrics":metrics,"maxPlayers":max_players,"tickHz":TICK_HZ,"snapshotHz":TICK_HZ/SNAPSHOT_EVERY,"world":entry.session.contract.world,"contentRevision":entry.session.contract.content_revision,"movementErrors":movement_errors,"persistentEntities":persistent_entities,"persistenceHealthy":runtime_healthy,"authEpoch":auth_epoch}));
+                    let native_clocks: BTreeMap<_, _> = regions.iter().filter_map(|region| {
+                        let (milliseconds, factor) = region.alife_interests.as_ref()?.campaign_clock(region.world.tick)?;
+                        Some((&region.session.contract.world, json!({"gameTimeMs":milliseconds,"timeFactor":factor})))
+                    }).collect();
+                    let _=reply.send(json!({"metrics":metrics,"maxPlayers":max_players,"tickHz":TICK_HZ,"snapshotHz":TICK_HZ/SNAPSHOT_EVERY,"world":entry.session.contract.world,"contentRevision":entry.session.contract.content_revision,"movementErrors":movement_errors,"persistentEntities":persistent_entities,"persistenceHealthy":runtime_healthy,"authEpoch":auth_epoch,"nativeClocks":native_clocks}));
                 },
                 None=>break,
             },
@@ -1467,22 +1543,22 @@ async fn run(
                     }
                         let peer=peers.get_mut(&id).unwrap();
                         peer.receive(input);
-                        let Region { session, world, combat, .. } = &mut regions[peer.region];
-                        drain(peer,&socket,world,&mut metrics,session,combat,&inventory);
+                        let Region { session, world, combat, alife_interests, .. } = &mut regions[peer.region];
+                        drain(peer,&socket,world,&mut metrics,session,combat,&inventory,alife_interests.as_ref());
                     }
                 }
             },
             _=timers.tick()=>{
                 let now=Instant::now();
                 for peer in peers.values_mut() {
-                    let Region { session, world, combat, .. } = &mut regions[peer.region];
+                    let Region { session, world, combat, alife_interests, .. } = &mut regions[peer.region];
                     if (!peer.inventory_ready && now.duration_since(peer.born)>Duration::from_secs(15))
                         || now.duration_since(peer.last_input)>Duration::from_secs(20)
                         || (!peer.inventory_ready && peer.logout_until.is_some_and(|until| !newer(until, world.tick)))
                     {peer.disconnect();}
                     if peer.transport.as_ref().is_some_and(|transport| transport.deadline <= now) {
                         peer.receive(RtcInput::Timeout(now));
-                        drain(peer,&socket,world,&mut metrics,session,combat,&inventory);
+                        drain(peer,&socket,world,&mut metrics,session,combat,&inventory,alife_interests.as_ref());
                     }
                     if !peer.connected() {
                         peer.disconnect();
@@ -1506,14 +1582,22 @@ async fn run(
             },
             _=simulation.tick()=>{
                 let now=Instant::now();if now.duration_since(last_tick)>Duration::from_millis(50){metrics.late_ticks+=1;}last_tick=now;
+                let campaign_clock = regions.first().and_then(|region| {
+                    let tick = region.world.tick.wrapping_add(1);
+                    if !tick.is_multiple_of(TICK_HZ) { return None; }
+                    region.alife_interests.as_ref()?.campaign_clock(tick)
+                });
                 for (index, region) in regions.iter_mut().enumerate() {
                     let Region { session, world, combat, alife_interests, .. } = region;
                     if let Some(host) = alife_interests {
-                        host.refresh_npcs(world, inventory.store.as_ref(), |receipt, health| native_shot_result(&mut peers, &mut metrics, receipt, health));
+                        host.refresh_npcs(world, inventory.store.as_ref(), |outcome| native_shot_result(&mut peers, &mut metrics, outcome));
                     }
                     world.step();
-                    if world.tick.is_multiple_of(TICK_HZ / 10) && let Some(host) = alife_interests {
+                    if (world.native_player_movement || world.tick.is_multiple_of(TICK_HZ / 10)) && let Some(host) = alife_interests {
                         host.publish(world);
+                        if index != 0 && let Some((milliseconds, factor)) = campaign_clock {
+                            host.publish_campaign_clock(milliseconds, factor);
+                        }
                     }
                     let mut detonations = combat.step_projectiles(world);
                     let mut field_hits = HashMap::<_, Vec<_>>::new();
@@ -1523,21 +1607,34 @@ async fn run(
                     let mut contacts = HashMap::<u32, Vec<_>>::new();
                     if let Some(host) = alife_interests {
                         use zone_server::alife_interests::NativeImpact;
-                        host.drain_impacts(world, |impact| match impact {
-                            NativeImpact::Physical(hit) => contacts.entry(hit.target).or_default().push(hit),
-                            NativeImpact::Field(target, pulse) => field_hits.entry(target).or_default().push(pulse),
+                        host.drain_impacts(world, |impact| {
+                            match impact {
+                                NativeImpact::Physical(hit)=>contacts.entry(hit.target).or_default().push(hit),
+                                NativeImpact::Field(target,pulse)=> {
+                                    if let Some(peer)=peers.values_mut().find(|peer|peer.region==index && peer.player==Some(target)) {
+                                        // Reserve room for pulses already sampled this tick. Keep
+                                        // the native packet pending until the peer can accept it.
+                                        let sampled=field_hits.get(&target).map_or(0,Vec::len);
+                                        if peer.field_hits.len()+sampled>=zone_server::environment::MAX_PENDING_PULSES {
+                                            return Err(NativeImpact::Field(target,pulse));
+                                        }
+                                        field_hits.entry(target).or_default().push(pulse);
+                                    }
+                                }
+                            }
+                            Ok(())
                         });
                     }
                     for detonation in &mut detonations {
                         if let Some(host) = alife_interests {
-                            for hit in detonation.native_hits.drain(..) { host.queue_attack(hit, world.tick, None); }
+                            for hit in detonation.native_hits.drain(..) { host.queue_attack(hit, world.tick); }
                         }
                         for hit in detonation.hits.drain(..) {
                             contacts.entry(hit.target).or_default().push(hit);
                         }
                     }
                     if let Some(host) = alife_interests {
-                        host.flush_attacks(world, |receipt| native_shot_result(&mut peers, &mut metrics, receipt, None));
+                        host.flush_attacks(world, |outcome| native_shot_result(&mut peers, &mut metrics, outcome));
                     }
                     combat.expire_corpses(world);
                     combat.capture(world);
@@ -1552,7 +1649,7 @@ async fn run(
                         if world.tick.is_multiple_of(3) { peer.send_grenades(world, combat); }
                         poll_grenade_throw(peer, world, combat, &mut metrics);
                         poll_knife(peer, world, combat, &mut metrics);
-                        poll_trigger(peer, world, combat, &mut metrics);
+                        poll_trigger(peer, world, combat, &mut metrics, alife_interests.as_ref());
                     }
                     if let Some(store) = &inventory.store {
                         store.observe_loot_players(&session.contract.world, world);
@@ -1577,7 +1674,7 @@ async fn run(
                     let start=Instant::now();
                     for peer in peers.values_mut() {
                         if !peer.inventory_ready { continue; }
-                        let Region { session, world, combat, .. } = &mut regions[peer.region];
+                        let Region { session, world, combat, alife_interests, .. } = &mut regions[peer.region];
                         if let (Some(transport), Some(id)) = (&mut peer.transport, peer.player) {
                             if let Some(actor) = world.entities.get(&id) && actor.armour_revision != peer.armour_seen
                                 && transport.rtc.channel(transport.control).is_some_and(|mut channel|
@@ -1611,7 +1708,7 @@ async fn run(
                             }
                             if let Some(mut channel)=transport.rtc.channel(transport.state) {
                                 if channel.buffered_amount()>16*1024 {metrics.skipped_snapshots+=1;continue;}
-                                let ack=world.entities.get(&id).map_or(0,|e|e.last_input());
+                                let ack=world.movement_ack(id);
                                 let packets=peer.replication.encode(world.tick,id,ack,&visible);
                                 let size=packets.iter().map(Vec::len).sum();
                                 if !peer.state_budget.admit(world.tick,size) {
@@ -1624,8 +1721,18 @@ async fn run(
                                     if !channel.write(true,&bytes).unwrap_or(false) {metrics.skipped_snapshots+=1;break;}
                                     metrics.state_payload_bytes+=bytes.len() as u64;
                                 }
+                                if let Some(host) = alife_interests.as_ref() {
+                                    send_native_media(host, world, id, &visible, &mut peer.npc_pose_ticks,
+                                        &mut peer.native_sound, &mut peer.state_budget, |bytes| {
+                                            if channel.buffered_amount() >= 12 * 1024 || !channel.write(true, bytes).unwrap_or(false) {
+                                                return false;
+                                            }
+                                            metrics.state_payload_bytes += bytes.len() as u64;
+                                            true
+                                        });
+                                }
                             }
-                            drain(peer,&socket,world,&mut metrics,session,combat,&inventory);
+                            drain(peer,&socket,world,&mut metrics,session,combat,&inventory,alife_interests.as_ref());
                         }
                     }
                     metrics.replication_us=start.elapsed().as_micros() as u64;metrics.max_replication_us=metrics.max_replication_us.max(metrics.replication_us);
@@ -1635,6 +1742,72 @@ async fn run(
     }
     Ok(())
 }
+fn send_native_media(
+    host: &zone_server::alife_interests::AlifeInterests,
+    world: &World,
+    viewer: u32,
+    visible: &[zone_server::world::SnapshotEntity],
+    pose_ticks: &mut HashMap<u32, u32>,
+    last_sound: &mut Option<(u64, u32)>,
+    budget: &mut replication::ByteBudget,
+    mut send: impl FnMut(&[u8]) -> bool,
+) {
+    use zone_server::alife_npcs::{NPC_POSE_OPCODE, NPC_SOUND_OPCODE};
+    let Some(actor) = world.entities.get(&viewer) else { return };
+    if world.tick.is_multiple_of(TICK_HZ)
+        && let Some(frame) = host.environment(world.tick)
+    {
+        let mut bytes = Vec::with_capacity(4 + frame.len());
+        bytes.extend_from_slice(&[0x58, 0x5a, protocol::VERSION, zone_server::alife_interests::ENVIRONMENT_OPCODE]);
+        bytes.extend_from_slice(frame);
+        if budget.admit(world.tick, bytes.len()) { send(&bytes); }
+    }
+    for sound in host.sounds().filter(|sound| sound.position.distance_squared(actor.position) <= sound.range * sound.range).take(24) {
+        if last_sound.is_some_and(|(boot, last)| boot == sound.host && !newer(sound.sequence, last)) { continue; }
+        let mut bytes = Vec::with_capacity(4 + sound.data.len());
+        bytes.extend_from_slice(&[0x58, 0x5a, protocol::VERSION, NPC_SOUND_OPCODE]);
+        bytes.extend_from_slice(&sound.data);
+        if !budget.admit(world.tick, bytes.len()) || !send(&bytes) { break; }
+        *last_sound = Some((sound.host, sound.sequence));
+    }
+    if world.tick.is_multiple_of(6) {
+        let mut nearby: Vec<_> = host.sound_loops().filter_map(|sound| {
+            let distance = sound.position.distance_squared(actor.position);
+            (distance <= sound.range * sound.range).then_some((distance, sound))
+        }).collect();
+        nearby.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, sound) in nearby.into_iter().take(12) {
+            let mut bytes = Vec::with_capacity(12 + sound.data.len());
+            bytes.extend_from_slice(&[0x58, 0x5a, protocol::VERSION, zone_server::alife_interests::LOOP_SOUND_OPCODE]);
+            bytes.extend_from_slice(&sound.sequence.to_le_bytes());
+            bytes.extend_from_slice(&sound.tick.to_le_bytes());
+            bytes.extend_from_slice(&sound.data);
+            if !budget.admit(world.tick, bytes.len()) || !send(&bytes) { break; }
+        }
+    }
+    pose_ticks.retain(|id, _| world.entities.contains_key(id));
+    let mut candidates: Vec<_> = visible.iter().filter_map(|entity| {
+        let (tick, pose) = host.npc_pose(world.entities.get(&entity.id)?.native.as_ref()?)?;
+        if entity.health == 0 && pose[4] == 0 { return None; }
+        let old = pose_ticks.get(&entity.id).copied();
+        let distance = actor.position.distance_squared(entity.position);
+        let interval = if distance <= 20.0 * 20.0 { 3 } else if distance <= 45.0 * 45.0 { 6 } else { 15 };
+        if old.is_some_and(|old| !newer(tick, old) || world.tick.wrapping_sub(old) < interval) { return None; }
+        let priority = old.map_or(u32::MAX, |old| world.tick.wrapping_sub(old).saturating_mul(15 / interval));
+        Some((entity.id, tick, pose, priority, distance))
+    }).collect();
+    candidates.sort_unstable_by(|a, b| b.3.cmp(&a.3).then_with(|| a.4.total_cmp(&b.4)));
+    for (id, tick, pose, _, _) in candidates.into_iter().take(6) {
+        let mut bytes = Vec::with_capacity(12 + pose.len());
+        bytes.extend_from_slice(&[0x58, 0x5a, protocol::VERSION, NPC_POSE_OPCODE]);
+        bytes.extend_from_slice(&id.to_le_bytes());
+        bytes.extend_from_slice(&tick.to_le_bytes());
+        bytes.extend_from_slice(pose);
+        if !budget.admit(world.tick, bytes.len()) || !send(&bytes) { break; }
+        pose_ticks.insert(id, tick);
+    }
+}
+
 fn inventory_context(peer:&Peer,world:&World,session:&SessionConfig,runtime:&InventoryRuntime)->Result<zone_server::inventory::Context,String>{
     let catalog=runtime.catalog.as_ref().ok_or("inventory unavailable")?;
     let principal=peer.principal.clone().ok_or("persistent identity required")?;
@@ -1660,9 +1833,11 @@ fn inventory_enqueue(
     response: InventoryResponse,
 ) -> Result<(), String> {
     if peer.inventory_pending.is_some()
+        || peer.native_condition_pending.is_some()
+        || ((peer.native_commit_retry.is_some() || peer.native_consume.is_some()) && !matches!(response, InventoryResponse::NativeCondition { .. }))
         || peer.incoming_fire
         || ((peer.queued_fire.is_some() || !peer.impact_hits.is_empty() || !peer.field_hits.is_empty())
-            && !matches!(response, InventoryResponse::Impact(_) | InventoryResponse::Fields(_)))
+            && !matches!(response, InventoryResponse::Impact(_) | InventoryResponse::Fields(_) | InventoryResponse::NativeCondition { .. }))
     {
         return Err("inventory busy; retry the same request ID".into());
     }
@@ -1726,7 +1901,10 @@ fn reload_applied(peer: &mut Peer, world: &mut World, mut result: Value) {
         finish_reload(peer, result, !committed);
         return;
     }
-    if !committed {
+    if zone_server::reload_timing::tube_reload_after_animation(
+        zone_server::reload_timing::TubeReloadPhase::Insert, !committed)
+        == zone_server::reload_timing::TubeReloadPhase::Close
+    {
         schedule_reload(peer, ReloadPhase::Close);
         return;
     }
@@ -1747,7 +1925,25 @@ fn reload_applied(peer: &mut Peer, world: &mut World, mut result: Value) {
     reload.until = Instant::now();
 }
 
-fn poll_reload(peer: &mut Peer, world: &World, session: &SessionConfig, runtime: &InventoryRuntime) -> bool {
+fn reload_animation_finished(phase: ReloadPhase) -> Option<ReloadPhase> {
+    use zone_server::reload_timing::{TubeReloadPhase, tube_reload_after_animation};
+    let native = match phase {
+        ReloadPhase::Open => TubeReloadPhase::Open,
+        // Fire interruption already inserted the current shell and changed the
+        // stock substate to End. OnAnimationEnd now finishes, without another cue.
+        ReloadPhase::FinishInsert | ReloadPhase::Close => TubeReloadPhase::Close,
+        _ => unreachable!("phase has no completed animation"),
+    };
+    match tube_reload_after_animation(native, false) {
+        TubeReloadPhase::Insert => Some(ReloadPhase::Apply),
+        TubeReloadPhase::Complete => None,
+        _ => unreachable!("unexpected native reload animation transition"),
+    }
+}
+
+fn poll_reload(peer: &mut Peer, world: &World, session: &SessionConfig, runtime: &InventoryRuntime,
+    host: Option<&zone_server::alife_interests::AlifeInterests>) -> bool
+{
     let Some(reload) = peer.reload.as_ref() else { return false; };
     let valid = runtime.checkpoints == CheckpointPhase::Running && peer.connected()
         && peer.inventory_life == Some(reload.command.life)
@@ -1761,17 +1957,25 @@ fn poll_reload(peer: &mut Peer, world: &World, session: &SessionConfig, runtime:
         return false;
     }
     match reload.phase {
-        ReloadPhase::Open => schedule_reload(peer, ReloadPhase::Apply),
-        ReloadPhase::FinishInsert => schedule_reload(peer, ReloadPhase::Close),
-        ReloadPhase::Close => finish_reload(peer, json!({"status":"rejected","reason":"reload_cancelled"}), false),
+        phase @ (ReloadPhase::Open | ReloadPhase::FinishInsert | ReloadPhase::Close) => {
+            if let Some(next) = reload_animation_finished(phase) {
+                schedule_reload(peer, next);
+            } else {
+                finish_reload(peer, json!({"status":"rejected","reason":"reload_cancelled"}), false);
+            }
+        }
         phase => {
             let Ok(context) = inventory_context(peer, world, session, runtime) else {
                 finish_reload(peer, json!({"status":"rejected","reason":"reload_cancelled"}), true);
                 return false;
             };
-            let preparing = phase == ReloadPhase::Prepare;
+            let reload = peer.reload.as_mut().expect("active reload");
+            if phase == ReloadPhase::Prepare && reload.plan.is_none() {
+                reload.native_rules = peer.player.and_then(|id| host?.weapon_rules(world, id));
+            }
+            let preparing = phase == ReloadPhase::Prepare && runtime.reload_timings.is_some();
             let operation = zone_server::persistence::Operation::TimedReload(reload.command.clone(),
-                if preparing { runtime.reload_timings.clone() } else { None });
+                if preparing { runtime.reload_timings.clone() } else { None }, reload.native_rules.clone());
             let response = if preparing { InventoryResponse::ReloadPrepare } else { InventoryResponse::ReloadApply };
             let _ = inventory_enqueue(peer, runtime, context, operation, response);
         }
@@ -1805,11 +2009,12 @@ fn shot_result(peer: &mut Peer, metrics: &mut Metrics, sequence: u32, tick: Opti
     shot_event(peer, sequence, tick, json!(result));
 }
 
-fn native_shot_result(peers: &mut HashMap<u64, Peer>, metrics: &mut Metrics, receipt: NativeReceipt, health: Option<u16>) {
+fn native_shot_result(peers: &mut HashMap<u64, Peer>, metrics: &mut Metrics, outcome: NativeShotOutcome) {
     use zone_server::combat::ShotResult;
+    let NativeShotOutcome { receipt, hit } = outcome;
     if let Some(peer) = peers.get_mut(&receipt.peer) {
-        let result = health.map_or(ShotResult::Miss { ammo: receipt.ammo }, |health| ShotResult::Hit {
-            target: receipt.target, health, ammo: receipt.ammo,
+        let result = hit.map_or(ShotResult::Miss { ammo: receipt.ammo }, |hit| ShotResult::Hit {
+            target: hit.target, health: hit.health, ammo: receipt.ammo,
         });
         shot_result(peer, metrics, receipt.sequence, receipt.followup_tick, result);
     }
@@ -1821,6 +2026,7 @@ fn submit_owned_shot(
     combat: &zone_server::combat::Combat,
     command: FireControl,
     queue_index: Option<u32>,
+    host: Option<&zone_server::alife_interests::AlifeInterests>,
 ) -> Result<(), &'static str> {
     if let Some(reload) = &mut peer.reload {
         // A trigger press inserts the current shell and then closes the action.
@@ -1843,8 +2049,9 @@ fn submit_owned_shot(
     if !peer.can_queue_shot() {
         return Err("inventory_busy");
     }
-    let shot = combat.trace_owned_round(world, player, aim, queue_index.is_some_and(|index| index > 0))?;
-    peer.queued_fire = Some(QueuedFire { enqueued: Instant::now(), sequence, item, shot, queue_index, special: None });
+    let native_rules = host.and_then(|host| host.weapon_rules(world, player));
+    let shot = combat.trace_owned_round(world, player, aim, queue_index.unwrap_or(0), native_rules.as_ref())?;
+    peer.queued_fire = Some(QueuedFire { enqueued: Instant::now(), sequence, item, shot, queue_index, native_rules, special: None });
     Ok(())
 }
 
@@ -1865,7 +2072,8 @@ fn queue_throw(
         return Err("cooldown");
     }
     let shot = combat.prepare_hand_throw(world, player, aim, matches!(throwable, Throwable::Bolt))?;
-    peer.queued_fire = Some(QueuedFire { enqueued: Instant::now(), sequence, item, shot, queue_index: None, special: Some(SpecialAttack::Throw(throwable, force)) });
+    peer.queued_fire = Some(QueuedFire { enqueued: Instant::now(), sequence, item, shot, queue_index: None,
+        native_rules: None, special: Some(SpecialAttack::Throw(throwable, force)) });
     Ok(())
 }
 
@@ -1981,6 +2189,7 @@ fn grenade_control(peer: &mut Peer, world: &World, combat: &zone_server::combat:
 
 fn poll_trigger(
     peer: &mut Peer, world: &World, combat: &zone_server::combat::Combat, metrics: &mut Metrics,
+    host: Option<&zone_server::alife_interests::AlifeInterests>,
 ) {
     let Some(held) = &peer.trigger else { return; };
     if world.tick.wrapping_sub(held.sampled_at) >= TRIGGER_LEASE_TICKS
@@ -1996,7 +2205,7 @@ fn poll_trigger(
     }
     let sequence = held.sequence;
     let command = FireControl { sequence, item: Some(held.item.clone()), aim: held.aim };
-    if let Err(reason) = submit_owned_shot(peer, world, combat, command, Some(next.index))
+    if let Err(reason) = submit_owned_shot(peer, world, combat, command, Some(next.index), host)
         && reason != "invalid_tick"
     {
         peer.trigger = None;
@@ -2049,7 +2258,8 @@ fn poll_knife(peer: &mut Peer, world: &World, combat: &zone_server::combat::Comb
     });
     match result {
         Ok(shot) => peer.queued_fire = Some(QueuedFire {
-            enqueued: Instant::now(), sequence, item, shot, queue_index: None, special: Some(SpecialAttack::Knife(mode)),
+            enqueued: Instant::now(), sequence, item, shot, queue_index: None, native_rules: None,
+            special: Some(SpecialAttack::Knife(mode)),
         }),
         Err(reason) => shot_result(peer, metrics, sequence, None, zone_server::combat::ShotResult::Rejected { reason }),
     }
@@ -2240,6 +2450,10 @@ fn pump_inventory(peers: &mut HashMap<u64, Peer>, regions: &mut [Region], runtim
     ready.sort_unstable();
     let actors: HashMap<_, _> = peers.iter().filter_map(|(&id, peer)| Some(((peer.region, peer.player?), id))).collect();
     for (enqueued, shooter) in ready {
+        if peers[&shooter].native_fire.is_some() {
+            poll_native_fire(shooter,peers,regions,runtime,metrics);
+            continue;
+        }
         let peer = &peers[&shooter];
         let Region { session, world, .. } = &regions[peer.region];
         let round = peer.queued_fire.as_ref().expect("queued shot");
@@ -2251,7 +2465,7 @@ fn pump_inventory(peers: &mut HashMap<u64, Peer>, regions: &mut [Region], runtim
             continue;
         }
         let expired = enqueued.elapsed() >= Duration::from_secs(2);
-        if !expired && (peer.incoming_fire || peer.inventory_pending.is_some() || !peer.impact_hits.is_empty() || !peer.field_hits.is_empty()) {
+        if !expired && (peer.incoming_fire || peer.native_condition_busy() || peer.inventory_pending.is_some() || !peer.impact_hits.is_empty() || !peer.field_hits.is_empty()) {
             continue;
         }
         let mut groups: Vec<(u32, Vec<zone_server::combat::ShotTarget>)> = Vec::new();
@@ -2263,7 +2477,7 @@ fn pump_inventory(peers: &mut HashMap<u64, Peer>, regions: &mut [Region], runtim
         // the older shot can reserve both actors without a lock cycle.
         if !expired && groups.iter().filter_map(|(actor, _)| actors.get(&(peer.region, *actor))).any(|id| {
             let target = &peers[id];
-            target.incoming_fire || target.inventory_pending.is_some() || !target.impact_hits.is_empty() || !target.field_hits.is_empty()
+            target.incoming_fire || target.native_fire.is_some() || target.native_condition_busy() || target.inventory_pending.is_some() || !target.impact_hits.is_empty() || !target.field_hits.is_empty()
         }) {
             continue;
         }
@@ -2290,12 +2504,137 @@ fn pump_inventory(peers: &mut HashMap<u64, Peer>, regions: &mut [Region], runtim
                     shooter_location: checkpoint_location(peer, world, session, actor)?,
                     combat_lock_ms: (world.combat_lock_ticks * 1000).div_ceil(TICK_HZ),
                 };
-                targets.push(zone_server::survival::FireVictim { authority, additional: hits.collect() });
+                targets.push(zone_server::survival::FireVictim { authority, native: None, additional: hits.collect() });
             }
             Some((context, targets, victims))
         })();
+        if let Some(request)=request {
+            if request.1.iter().any(|target|target.authority.before.state.native_checkpoint().is_some()) {
+                prepare_native_fire(shooter,peers,regions,runtime,request);
+                continue;
+            }
+            submit_prepared_fire(shooter,peers,regions,runtime,metrics,Some(request));
+        } else {
+            submit_prepared_fire(shooter,peers,regions,runtime,metrics,None);
+        }
+    }
+}
+
+fn prepare_native_fire(shooter:u64, peers:&mut HashMap<u64,Peer>, regions:&mut [Region], runtime:&InventoryRuntime, request:PreparedFire) {
+    let peer=&peers[&shooter];
+    let Some(round)=peer.queued_fire.as_ref() else {return;};
+    use zone_server::native_condition::Attack;
+    let (attack,powers,count,penetration)=match &round.special {
+        None=>{
+            let Some(profile)=round.shot.ballistics else {return;};
+            let Some(damage)=round.native_rules.as_ref().and_then(|rules|
+                rules.traced_damage(&round.item,profile,round.queue_index.unwrap_or(0))) else {return;};
+            (Attack::Firearm(profile),damage.power,1,damage.penetration)
+        },
+        Some(SpecialAttack::Knife(mode))=>{
+            let Some(catalog)=runtime.catalog.as_deref() else {return;};
+            let Ok(profile)=knife::Profile::from_catalog(catalog,*mode) else {return;};
+            let (powers,count)=profile.powers(round.shot.knife_splash);
+            (Attack::Knife{mode:*mode,splash:round.shot.knife_splash},powers.map(|power|power as f32),count,0.0)
+        },
+        Some(SpecialAttack::Throw(..))=>return,
+    };
+    let Region{world,alife_interests,..}=&mut regions[peer.region];
+    let Some(host)=alife_interests.as_mut() else {return;};
+    let mut proposals=Vec::new();
+    for (index,(target,reservation)) in request.1.iter().zip(&request.2).enumerate() {
+        let Some(checkpoint)=target.authority.before.state.native_checkpoint() else {continue;};
+        let Some(actor)=world.entities.get(&reservation.actor) else {return;};
+        let Some(equipment)=actor.loadout.fields.armour.generation() else {return;};
+        // Protection was resolved by the authoritative shot trace. A later
+        // safe-zone entry cannot retroactively erase an accepted hit.
+        let Some(input)=checkpoint.with_policy(false,0.0) else {return;};
+        let hits:Vec<_>=match attack {
+            Attack::Firearm(_)=>std::iter::once(&target.authority.target).chain(&target.additional)
+                .map(|hit|zone_server::native_condition::Hit{kind:6,power:powers[0]*hit.speed_factor,
+                    penetration:hit.penetration.unwrap_or(penetration),aimed:false,bone:&hit.bone}).collect(),
+            Attack::Knife{..}=>powers[..count].iter().map(|power|zone_server::native_condition::Hit{
+                kind:5,power:*power,penetration:0.0,aimed:false,bone:&target.authority.target.bone}).collect(),
+        };
+        let Some(proposal)=host.prepare_condition_batch(actor.id,actor.incarnation(),
+            u64::from(target.authority.before.revision),equipment,actor.loadout.mass as f32,&input,&hits) else {return;};
+        proposals.push((index,proposal));
+    }
+    let mut fences=Vec::new();
+    for (index,proposal) in proposals {
+        let fence=proposal.fence;
+        if !host.queue_condition(proposal) {
+            for (_,queued) in fences {host.cancel_condition(queued);}
+            return;
+        }
+        fences.push((index,fence));
+    }
+    for victim in &request.2 {peers.get_mut(&victim.peer).unwrap().incoming_fire=true;}
+    peers.get_mut(&shooter).unwrap().native_fire=Some(NativeFirePreparation{attack,request,fences});
+}
+
+fn poll_native_fire(shooter:u64, peers:&mut HashMap<u64,Peer>, regions:&mut [Region],
+    runtime:&InventoryRuntime, metrics:&mut Metrics) {
+    let region=peers[&shooter].region;
+    let mut pending=peers.get_mut(&shooter).unwrap().native_fire.take().unwrap();
+    let peer=&peers[&shooter];
+    let Region{world,session,alife_interests,..}=&mut regions[region];
+    let mut valid=peer.connected() && peer.queued_fire.as_ref().is_some_and(|round|
+        round.enqueued.elapsed()<Duration::from_secs(2)
+        && (round.queue_index.is_none_or(|index|index==0) || peer.trigger.as_ref().is_some_and(|held|
+            held.sequence==round.sequence && world.tick.wrapping_sub(held.sampled_at)<TRIGGER_LEASE_TICKS)))
+        && peer.player.and_then(|id|world.entities.get(&id)).is_some_and(|actor|
+            actor.health>0 && !actor.travelling && actor.character_key.as_ref().is_some_and(|key|
+                key.life==pending.request.0.life));
+    for (index,fence) in &pending.fences {
+        let reservation=&pending.request.2[*index];
+        valid &= alife_interests.as_ref().and_then(|host|host.condition_host())==Some((fence.epoch,fence.boot))
+            && peers.get(&reservation.peer).is_some_and(|victim| victim.region==region
+                && victim.condition_revision==pending.request.1[*index].authority.before.revision
+                && victim.campaign_visit==pending.request.1[*index].authority.context.visit)
+            && world.entities.get(&reservation.actor).is_some_and(|actor|actor.health>0 && !actor.travelling
+                && actor.incarnation()==fence.incarnation
+                && actor.loadout.fields.armour.generation()==Some(fence.equipment));
+    }
+    if valid {
+        if let Some(host)=alife_interests.as_mut() {
+            for (index,fence) in &pending.fences {
+                if pending.request.1[*index].native.is_some() {continue;}
+                if let Some((received,result))=host.take_condition_result(fence.player) {
+                    if received!=*fence || result.wear.is_none() {valid=false;break;}
+                    pending.request.1[*index].native=Some(zone_server::native_condition::Shot{
+                        attack:pending.attack,equipment:fence.equipment,result});
+                }
+            }
+        }
+    }
+    if valid && pending.fences.iter().any(|(index,_)|pending.request.1[*index].native.is_none()) {
+        peers.get_mut(&shooter).unwrap().native_fire=Some(pending);
+        return;
+    }
+    if let Some(host)=alife_interests.as_mut() {
+        for (_,fence) in &pending.fences {host.cancel_condition(*fence);}
+    }
+    // Submission synchronously reacquires these reservations if queued. On
+    // cancellation or enqueue failure no player is left permanently locked.
+    for victim in &pending.request.2 {
+        if let Some(peer)=peers.get_mut(&victim.peer) {peer.incoming_fire=false;}
+    }
+    let refreshed=valid.then(||inventory_context(&peers[&shooter],world,session,runtime).ok()).flatten();
+    let request=refreshed.map(|context| {
+        for target in &mut pending.request.1 {target.authority.context.expires=context.expires;}
+        pending.request.0=context;
+        pending.request
+    });
+    submit_prepared_fire(shooter,peers,regions,runtime,metrics,request);
+}
+
+fn submit_prepared_fire(shooter:u64, peers:&mut HashMap<u64,Peer>, regions:&mut [Region],
+    runtime:&InventoryRuntime, metrics:&mut Metrics, request:Option<PreparedFire>) {
+    let region=peers[&shooter].region;
+    let world=&regions[region].world;
         let peer = peers.get_mut(&shooter).unwrap();
-        let QueuedFire { sequence, item, shot, queue_index, special, .. } = peer.queued_fire.take().unwrap();
+        let QueuedFire { sequence, item, shot, queue_index, native_rules, special, .. } = peer.queued_fire.take().unwrap();
         let tick = world.tick;
         let mut locked = Vec::new();
         if request.is_some_and(|(context, targets, victims)| {
@@ -2305,9 +2644,9 @@ fn pump_inventory(peers: &mut HashMap<u64, Peer>, regions: &mut [Region], runtim
                 Some(SpecialAttack::Throw(Throwable::Grenade, force)) => zone_server::persistence::Operation::ThrowGrenade(item, force),
                 Some(SpecialAttack::Throw(Throwable::Bolt, force)) => zone_server::persistence::Operation::ThrowBolt(item, force),
                 Some(SpecialAttack::Knife(mode)) => zone_server::persistence::Operation::StrikeKnife(item, mode,
-                    targets.into_iter().next().map(|group| Box::new(group.authority)), shot.knife_splash),
+                    targets.into_iter().next().map(Box::new), shot.knife_splash),
                 None => zone_server::persistence::Operation::FireWeapon(item, targets,
-                    zone_server::combat::FireState { queue_index, traced: shot.ballistics }),
+                    zone_server::combat::FireState { queue_index, traced: shot.ballistics, native_rules }),
             };
             inventory_enqueue(peer, runtime, context, operation,
                 InventoryResponse::Fire { sequence, tick, shot, queue_index, victims, firearm }).is_ok()
@@ -2318,18 +2657,155 @@ fn pump_inventory(peers: &mut HashMap<u64, Peer>, regions: &mut [Region], runtim
             shot_result(peer, metrics, sequence, queue_index.filter(|index| *index > 0).map(|_| tick),
                 zone_server::combat::ShotResult::Rejected { reason: "inventory_unavailable" });
         }
+}
+
+// Only actors with a committed native checkpoint enter this lane. Bootstrap is
+// enabled separately after every mutation producer has moved to native proposals.
+fn native_condition_poll(peer:&mut Peer, world:&mut World, session:&SessionConfig,
+    runtime:&InventoryRuntime, mut host:Option<&mut zone_server::alife_interests::AlifeInterests>) -> bool {
+    if !peer.player.and_then(|id|world.entities.get(&id)).and_then(|actor|actor.condition.as_ref())
+        .is_some_and(|state|state.native_checkpoint().is_some()) {
+        if let (Some(pending),Some(host))=(peer.native_condition_pending.take(),host.as_deref_mut()) {
+            host.cancel_condition(pending.fence);
+        }
+        peer.native_condition_clock=None;
+        peer.native_consume=None;
+        return false;
     }
+    let actor=&world.entities[&peer.player.unwrap()];
+    let state=actor.condition.as_ref().unwrap();
+    let debt={
+        let (last,debt)=peer.native_condition_clock.get_or_insert((world.tick,0.0));
+        *debt += world.tick.wrapping_sub(*last) as f32 / TICK_HZ as f32; *last=world.tick;
+        *debt
+    };
+    if peer.native_condition_pending.is_none() {
+        if actor.health==0 {
+            peer.impact_hits.clear();peer.field_hits.clear();peer.native_consume=None;
+            return false;
+        }
+        // Damage and accepted consumables precede housekeeping. Between native
+        // actions, let reload and durable location/logout checkpoints run.
+        if peer.impact_hits.is_empty() && peer.field_hits.is_empty() && peer.native_consume.is_none()
+            && (runtime.checkpoints!=CheckpointPhase::Running
+                || peer.condition_housekeeping_due(world,runtime.checkpoints)) {return false;}
+    }
+    let Some(host)=host else {return true;};
+    if let Some(pending)=peer.native_condition_pending.as_ref() {
+        let current=host.condition_host()==Some((pending.fence.epoch,pending.fence.boot))
+            && actor.incarnation()==pending.fence.incarnation && actor.health>0 && !actor.travelling
+            && u64::from(peer.condition_revision)==pending.fence.revision
+            && actor.loadout.fields.armour.generation()==Some(pending.fence.equipment);
+        if !current {
+            host.cancel_condition(pending.fence); peer.native_condition_pending=None; return true;
+        }
+        if let Some((fence,result))=host.take_condition_result(actor.id) {
+            if fence!=pending.fence || (matches!(pending.action,NativeConditionAction::Tick|NativeConditionAction::Consume{..})==result.wear.is_some()) {return true;}
+            let pending=peer.native_condition_pending.take().unwrap();
+            if let Ok(context)=inventory_context(peer,world,session,runtime) {
+                let condition=zone_server::native_condition::Commit {
+                    before:pending.before,equipment:fence.equipment,checkpoint:result.checkpoint,location:pending.location };
+                let operation=match pending.action {
+                    NativeConditionAction::Tick=>zone_server::persistence::Operation::CommitNativeCondition(condition),
+                    NativeConditionAction::Impact{combat_until_ms}=>zone_server::persistence::Operation::CommitNativeImpact(
+                        zone_server::native_condition::Impact{condition,wear:result.wear.unwrap(),combat_until_ms}),
+                    NativeConditionAction::Field{..}=>zone_server::persistence::Operation::CommitNativeImpact(
+                        zone_server::native_condition::Impact{condition,wear:result.wear.unwrap(),combat_until_ms:0}),
+                    NativeConditionAction::Consume{..}=>{
+                        let Some(intent)=peer.native_consume.as_ref() else {return true;};
+                        zone_server::persistence::Operation::ConsumeNative(intent.command.clone(),zone_server::native_condition::Consumption{
+                            before:condition.before,equipment:condition.equipment,checkpoint:condition.checkpoint,section:intent.section.clone()})
+                    },
+                };
+                peer.native_commit_retry=Some(NativeCommitRetry{operation:operation.clone(),fence,seconds:pending.seconds,action:pending.action});
+                let _=inventory_enqueue(peer,runtime,context,operation,InventoryResponse::NativeCondition{fence,seconds:pending.seconds,action:pending.action});
+            }
+        }
+        return true;
+    }
+    if actor.health==0 || actor.travelling {return true;}
+    while peer.impact_hits.front().is_some_and(|hit|!hit.is_current(world)) {peer.impact_hits.pop_front();}
+    if !peer.impact_hits.is_empty() || !peer.field_hits.is_empty() {
+        let (kind,power,action)=if let Some(hit)=peer.impact_hits.front() {
+            (hit.kind(),hit.power,NativeConditionAction::Impact{combat_until_ms:if hit.is_pvp() {
+                zone_server::survival_rules::unix_millis().unwrap_or(0)+i64::from(world.combat_lock_ticks)*1000/i64::from(TICK_HZ)
+            } else {0}})
+        } else {
+            (zone_server::survival::ImpactKind::Strike,peer.field_hits[0].power,NativeConditionAction::Field{count:peer.field_hits.len().min(64)})
+        };
+        let (hit_type,bone,penetration)=if matches!(action,NativeConditionAction::Field{..}) {
+            use zone_server::environment::Kind;
+            (match peer.field_hits[0].kind {Kind::Radiation=>3,Kind::Acid=>2,Kind::Heat=>10,Kind::Psy=>4,Kind::Shock=>1},"",0.0)
+        } else {
+            use zone_server::survival::ImpactKind;
+            match &kind {ImpactKind::Blast{bone}=>(8,bone.as_str(),0.0),ImpactKind::Wound{bone}=>(5,bone.as_str(),0.0),
+                ImpactKind::Strike=>(7,"",0.0),ImpactKind::Bullet{bone,penetration}=>(6,bone.as_str(),*penetration)}
+        };
+        let protected=matches!(action,NativeConditionAction::Field{..})&&world.is_protected(actor);
+        let Some(input)=state.native_checkpoint().unwrap().with_policy(protected,0.0) else {return true;};
+        let Some(equipment)=actor.loadout.fields.armour.generation() else {return true;};
+        let Some(location)=checkpoint_location(peer,world,session,actor) else {return true;};
+        let request=if let NativeConditionAction::Field{count}=action {
+            host.prepare_condition_fields(actor.id,actor.incarnation(),u64::from(peer.condition_revision),
+                equipment,actor.loadout.mass as f32,&input,&peer.field_hits[..count])
+        } else {
+            host.prepare_condition_hit(actor.id,actor.incarnation(),u64::from(peer.condition_revision),
+                equipment,actor.loadout.mass as f32,&input,zone_server::native_condition::Hit{kind:hit_type,power,
+                    penetration,aimed:false,bone})
+        };
+        let Some(request)=request else {return true;};
+        let fence=request.fence;
+        if host.queue_condition(request) {
+            peer.native_condition_pending=Some(NativeConditionPending{fence,before:zone_server::survival::Record{
+                revision:peer.condition_revision,state:state.clone()},location,seconds:0.0,action});
+        }
+        return true;
+    }
+    if let Some(intent)=peer.native_consume.as_ref() {
+        let Some(equipment)=actor.loadout.fields.armour.generation() else {return true;};
+        let Some(location)=checkpoint_location(peer,world,session,actor) else {return true;};
+        let Some(request)=host.prepare_condition_consume(actor.id,actor.incarnation(),u64::from(peer.condition_revision),
+            equipment,actor.loadout.mass as f32,state.native_checkpoint().unwrap(),&intent.section) else {return true;};
+        let fence=request.fence;
+        if host.queue_condition(request) {
+            peer.native_condition_pending=Some(NativeConditionPending{fence,before:zone_server::survival::Record{
+                revision:peer.condition_revision,state:state.clone()},location,seconds:0.0,
+                action:NativeConditionAction::Consume{sequence:intent.sequence}});
+        }
+        return true;
+    }
+    // A queued shot already owns its place in the fire scheduler. Starting
+    // another autonomous condition step here would starve it on every poll.
+    // Accumulated condition time stays in `debt` until the shot completes.
+    if peer.queued_fire.is_some() || peer.incoming_fire { return true; }
+    if !peer.connected() && peer.disconnect_saved {return false;}
+    let Some((_,factor))=host.campaign_clock(world.tick).filter(|(_,f)|f.is_finite()&&*f>0.0) else {return true;};
+    let seconds=debt.min(60.0/factor).min(1.0);
+    if seconds<=0.0 {return true;}
+    let Some(tuning)=world.survival_tuning.as_ref() else {return true;};
+    let Some((before,input))=state.prepare_native_step(tuning,seconds,world.is_protected(actor)) else {return true;};
+    let Some(location)=checkpoint_location(peer,world,session,actor) else {return true;};
+    let Some(equipment)=actor.loadout.fields.armour.generation() else {return true;};
+    let Some(request)=host.prepare_condition(actor.id,actor.incarnation(),u64::from(peer.condition_revision),
+        equipment,seconds*factor,actor.loadout.mass as f32,Some(&input)) else {return true;};
+    let fence=request.fence;
+    if host.queue_condition(request) {
+        peer.native_condition_pending=Some(NativeConditionPending{fence,
+            before:zone_server::survival::Record{revision:peer.condition_revision,state:before},location,seconds,action:NativeConditionAction::Tick});
+    }
+    true
 }
 
 fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRuntime,metrics:&mut Metrics,effects:&mut FireEffects){
     let Region { session, world, combat, alife_interests, .. } = region;
     if runtime.catalog.is_none() || runtime.store.is_none() || peer.principal.is_none()
-        || peer.incoming_fire || (!peer.inventory_ready && peer.inventory_life.is_none()) { return; }
+        || peer.native_fire.is_some() || peer.incoming_fire || (!peer.inventory_ready && peer.inventory_life.is_none()) { return; }
     if let Some(pending)=&mut peer.inventory_pending {
         match pending.reply.try_recv(){
             Err(oneshot::error::TryRecvError::Empty)=>return,
             Err(oneshot::error::TryRecvError::Closed)=>{
                 match peer.inventory_pending.take().unwrap().response {
+                    InventoryResponse::NativeCondition { .. } => return, // replay exact persisted proposal next poll
                     InventoryResponse::Travel { .. } => retire_traveller(peer, world),
                     InventoryResponse::Fire { victims, .. } => effects.hits.extend(victims.into_iter().map(|victim| (victim.peer, None))),
                     _ => {}
@@ -2340,6 +2816,53 @@ fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRun
             Ok(result)=>{
                 let pending=peer.inventory_pending.take().unwrap();
                 match pending.response {
+                    InventoryResponse::NativeConsumePrepare { sequence, command } => {
+                        let mut value=result.unwrap_or_else(|error|json!({"error":error}));
+                        if value["status"]=="prepared" && let Some(section)=value["section"].as_str() {
+                            peer.native_consume=Some(NativeConsumeIntent{sequence,command,section:section.into()});
+                        } else {
+                            value.as_object_mut().map(|v|{v.remove("condition");v.remove("condition_wound_heal");});
+                            peer.control(json!({"type":"action_result","sequence":sequence,"result":value}));
+                        }
+                    }
+                    InventoryResponse::NativeCondition { fence, seconds, action } => {
+                        let mut result=result;
+                        if let NativeConditionAction::Consume{sequence}=action && let Ok(value)=&mut result {
+                            if value["status"].is_string() || value["error"].is_string() {
+                                peer.native_commit_retry=None; peer.native_consume=None;
+                                let mut reply=value.clone();
+                                reply.as_object_mut().map(|v|{v.remove("condition");v.remove("condition_wound_heal");v.remove("loadout");v.remove("appearance");});
+                                peer.control(json!({"type":"action_result","sequence":sequence,"result":reply}));
+                                if value["status"]=="committed" {peer.control(json!({"type":"inventory_dirty"}));}
+                            }
+                            if value["status"]=="committed" {
+                                value["state"]=value["condition"]["state"].clone();
+                                value["revision"]=value["condition"]["revision"].clone();
+                            }
+                        }
+                        if result.as_ref().is_ok_and(|value|value["status"]=="committed"||value["status"]=="stale") {
+                            peer.native_commit_retry=None;
+                        }
+                        if let Ok(mut value)=result && value["status"]=="committed"
+                            && let (Some(revision),Ok(state))=(value["revision"].as_u64(),serde_json::from_value::<zone_server::survival::State>(value["state"].clone()))
+                            && peer.condition_revision.checked_add(1).map(u64::from)==Some(revision)
+                            && let Some(actor)=peer.player.and_then(|id|world.entities.get_mut(&id))
+                            && actor.incarnation()==fence.incarnation {
+                            let damaged=actor.condition.as_ref().is_some_and(|old|old.health>state.health);
+                            actor.health=state.health_points(); actor.condition=Some(state);
+                            let dead=actor.health==0;
+                            match action {
+                                NativeConditionAction::Impact{..}=>if let Some(hit)=peer.impact_hits.pop_front() {hit.tag_native_commit(world,damaged);},
+                                NativeConditionAction::Field{count}=>{peer.field_hits.drain(..count.min(peer.field_hits.len()));},
+                                NativeConditionAction::Tick|NativeConditionAction::Consume{..}=>{},
+                            }
+                            apply_loadout(peer,world,&mut value);
+                            peer.condition_revision=revision as u32;
+                            if let Some((_,debt))=&mut peer.native_condition_clock {*debt=(*debt-seconds).max(0.0);}
+                            peer.disconnect_saved=false; peer.next_checkpoint=world.tick.wrapping_add(CONDITION_CHECKPOINT_TICKS);
+                            if dead {peer.inventory_dead=true;peer.trigger=None;peer.control(json!({"type":"inventory_dirty"}));}
+                        }
+                    }
                     InventoryResponse::LoadCharacter => {
                         if !peer.connected() { return; }
                         let saved = result.ok().and_then(|value| serde_json::from_value::<LoadedCharacter>(value).ok());
@@ -2413,13 +2936,11 @@ fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRun
                                 }
                             }
                             let forwarded = alife_interests.as_mut().is_some_and(|host| {
-                                let attacks: Vec<_> = shot.native_attacks(world, &charge).enumerate().map(|(index, attack)| {
-                                    let receipt = (index == 0 && player_hit.is_none()).then_some(NativeReceipt {
-                                        peer: id, sequence, followup_tick, ammo: charge.ammo, target: attack.target_id,
-                                    });
-                                    (attack, receipt)
-                                }).collect();
-                                host.queue_attacks(&attacks, world.tick) && player_hit.is_none()
+                                let attacks: Vec<_> = shot.native_attacks(world, &charge).collect();
+                                let receipt = player_hit.is_none().then_some(NativeReceipt {
+                                    peer: id, sequence, followup_tick, ammo: charge.ammo,
+                                });
+                                host.queue_attacks(&attacks, world.tick, receipt) && receipt.is_some()
                             });
                             if !forwarded {
                                 let result = if multi { player_hit.unwrap_or_else(|| shot.volley_miss(charge.ammo)) }
@@ -2513,6 +3034,8 @@ fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRun
                         let mut value = result.unwrap_or_else(|error| json!({"error":error}));
                         apply_loadout(peer, world, &mut value);
                         let condition = value.as_object_mut().and_then(|object| object.remove("condition"));
+                        let wound_heal = value.as_object_mut().and_then(|object| object.remove("condition_wound_heal"))
+                            .and_then(|value| value.as_f64()).unwrap_or(0.0) as f32;
                         if let Some(Ok(record)) = condition.map(serde_json::from_value::<zone_server::survival::Record>)
                             && value["life"].as_u64() == peer.inventory_life.map(u64::from)
                             && record.revision > peer.condition_revision
@@ -2521,7 +3044,7 @@ fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRun
                             if let Some(actor) = peer.player.and_then(|id| world.entities.get_mut(&id))
                                 && actor.health > 0 && let Some(live) = &actor.condition
                             {
-                                actor.set_condition(record.state.merge_dose(&before, live));
+                                actor.set_condition(record.state.merge_dose(&before, live, wound_heal));
                             }
                         }
                         if value["status"] == "committed" {
@@ -2592,7 +3115,20 @@ fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRun
         }
         return;
     }
+    if let Some(retry)=peer.native_commit_retry.clone() {
+        if !peer.player.and_then(|id|world.entities.get(&id)).is_some_and(|actor|actor.incarnation()==retry.fence.incarnation) {
+            peer.native_commit_retry=None;
+            return;
+        }
+        if let Ok(context)=inventory_context(peer,world,session,runtime) {
+            let _=inventory_enqueue(peer,runtime,context,retry.operation,InventoryResponse::NativeCondition{
+                fence:retry.fence,seconds:retry.seconds,action:retry.action});
+        }
+        return;
+    }
+    if native_condition_poll(peer,world,session,runtime,alife_interests.as_mut()) {return;}
     let Some(actor) = peer.player.and_then(|id| world.entities.get(&id)) else { return; };
+    if actor.condition.as_ref().is_none_or(|state|state.native_checkpoint().is_none()) {
     while peer.impact_hits.front().is_some_and(|hit| !hit.is_current(world)) {
         peer.impact_hits.pop_front();
     }
@@ -2602,6 +3138,7 @@ fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRun
         ) {
             let impact = zone_server::survival::Impact {
                 kind: hit.kind(), power: hit.power,
+                native_armour: hit.native_armour(),
                 before: zone_server::survival::Record { revision: peer.condition_revision, state: state.clone() },
                 location,
                 combat_lock_ms: if hit.is_pvp() { (world.combat_lock_ticks * 1000).div_ceil(TICK_HZ) } else { 0 },
@@ -2631,7 +3168,8 @@ fn inventory_poll(id:u64,peer:&mut Peer,region:&mut Region,runtime:&InventoryRun
         }
         return;
     }
-    if poll_reload(peer, world, session, runtime) || peer.queued_fire.is_some() { return; }
+    }
+    if poll_reload(peer, world, session, runtime, alife_interests.as_ref()) || peer.queued_fire.is_some() { return; }
     if actor.health == 0 {
         if !peer.inventory_dead && let Ok(context) = inventory_context(peer,world,session,runtime) {
             let _ = inventory_submit(peer, world, session, runtime, None, zone_server::persistence::Operation::InventoryDeath(context), true);
@@ -2667,6 +3205,7 @@ fn drain(
     session: &SessionConfig,
     combat: &mut zone_server::combat::Combat,
     inventory: &InventoryRuntime,
+    host: Option<&zone_server::alife_interests::AlifeInterests>,
 ) {
     // Bound work per peer so malicious or busy peers cannot monopolize a turn.
     for _ in 0..256 {
@@ -2844,20 +3383,29 @@ fn drain(
                                         let context = inventory_context(peer, world, session, inventory)?;
                                         if matches!(command.action, zone_server::inventory::MoveAction::Consume) {
                                             let before = actor.condition.clone().ok_or("condition unavailable")?;
+                                            if before.native_checkpoint().is_some() {
+                                                if peer.native_consume.is_some() {return Err("consumption pending".into());}
+                                                return inventory_enqueue(peer,inventory,context,
+                                                    zone_server::persistence::Operation::PrepareNativeConsume(command.clone()),
+                                                    InventoryResponse::NativeConsumePrepare{sequence,command});
+                                            }
                                             let record = zone_server::survival::Record { revision: peer.condition_revision, state: before.clone() };
                                             let operation = zone_server::persistence::Operation::Consume(command, context.clone(), record);
                                             inventory_enqueue(peer, inventory, context, operation, InventoryResponse::Dose { sequence, before })
                                         } else {
                                             if actor.health == 0 { return Err("dead actor".into()); }
-                                            if inventory.reload_timings.is_some() && matches!(command.action,
+                                            if matches!(command.action,
                                                 zone_server::inventory::MoveAction::Reload | zone_server::inventory::MoveAction::NextAmmo)
+                                                && (inventory.reload_timings.is_some() || world.native_player_movement
+                                                    && actor.loadout.active_item.is_some_and(|id|
+                                                        u128::from_str_radix(&command.item, 16).ok() == Some(u128::from_le_bytes(id))))
                                             {
                                                 if peer.inventory_busy() || actor.travelling {
                                                     return Err("inventory busy; retry the same request ID".into());
                                                 }
                                                 world.entities.get_mut(&player).unwrap().cancel_aim();
                                                 peer.reload = Some(OwnedReload { sequence, root: command.request_id.clone(),
-                                                    command, first_commit: None, plan: None, slot: 0, phase: ReloadPhase::Prepare,
+                                                    command, first_commit: None, plan: None, native_rules: None, slot: 0, phase: ReloadPhase::Prepare,
                                                     until: Instant::now(), interrupted: false });
                                                 return Ok(());
                                             }
@@ -2888,7 +3436,7 @@ fn drain(
                                                 }
                                                 else { queue_throw(peer, world, combat, command, zone_server::hand_grenade::Force::Quick) }
                                             }
-                                            else { submit_owned_shot(peer, world, combat, command, None) };
+                                            else { submit_owned_shot(peer, world, combat, command, None, host) };
                                         if let Err(reason) = result {
                                             shot_result(peer, metrics, sequence, None, zone_server::combat::ShotResult::Rejected { reason });
                                         }
@@ -2913,7 +3461,7 @@ fn drain(
                                     } else if peer.trigger.is_some() {
                                         Err("trigger_held")
                                     } else {
-                                        submit_owned_shot(peer, world, combat, command, Some(0))
+                                        submit_owned_shot(peer, world, combat, command, Some(0), host)
                                     };
                                     match result {
                                         Ok(()) => peer.trigger = Some(HeldTrigger {
@@ -2968,6 +3516,71 @@ fn drain(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_conditions_yield_to_checkpoints_but_never_skip_pending_damage() {
+        let mut world=World::new();world.safe_zones.clear();
+        let id=world.spawn(Kind::Player,Vec3::default());
+        let mut bytes=b"ZCS1".to_vec();let mut values=[0.0f32;52];
+        values[0]=1.0;values[1]=1.0;values[5]=1.0;values[18]=1.0;values[19]=50.0;values[20]=60.0;
+        for value in values {bytes.extend_from_slice(&value.to_le_bytes());}
+        for value in [0u32,16,0,0] {bytes.extend_from_slice(&value.to_le_bytes());}
+        let checkpoint=zone_server::native_condition::Checkpoint::parse(bytes).unwrap();
+        let mut state=serde_json::to_value(zone_server::survival::State::default()).unwrap();
+        state["native_checkpoint"]=serde_json::to_value(checkpoint).unwrap();
+        world.entities.get_mut(&id).unwrap().condition=Some(serde_json::from_value(state).unwrap());
+        let mut peer=Peer::new(Instant::now(),None);peer.player=Some(id);peer.inventory_life=Some(0);
+        peer.logout_until=Some(world.tick+60);
+        let session=SessionConfig::synthetic();
+        let mut runtime=InventoryRuntime{store:None,catalog:None,reload_timings:None,auth_epoch:0,
+            logout_ticks:60,checkpoints:CheckpointPhase::Running,travel:None};
+        assert!(!native_condition_poll(&mut peer,&mut world,&session,&runtime,None));
+        peer.next_checkpoint=world.tick+60;
+        assert!(native_condition_poll(&mut peer,&mut world,&session,&runtime,None));
+        runtime.checkpoints=CheckpointPhase::Draining;
+        assert!(!native_condition_poll(&mut peer,&mut world,&session,&runtime,None));
+        runtime.checkpoints=CheckpointPhase::Final;
+        assert!(!native_condition_poll(&mut peer,&mut world,&session,&runtime,None));
+        peer.disconnect_saved=true;
+        assert!(!native_condition_poll(&mut peer,&mut world,&session,&runtime,None));
+        peer.field_hits.push(zone_server::environment::Pulse{kind:zone_server::environment::Kind::Heat,power:0.1});
+        assert!(native_condition_poll(&mut peer,&mut world,&session,&runtime,None));
+        assert_eq!(peer.field_hits.len(),1);
+        world.entities.get_mut(&id).unwrap().health=0;
+        assert!(!native_condition_poll(&mut peer,&mut world,&session,&runtime,None));
+        assert!(peer.field_hits.is_empty());
+    }
+
+    #[test]
+    fn cancelled_native_fire_releases_all_victims_without_submitting_inventory() {
+        use zone_server::combat::{Aim,Combat,MAX_OWNED_RANGE};
+        let mut world=World::new(); world.safe_zones.clear();
+        let actor=world.spawn(Kind::Player,Vec3::default());
+        let mut combat=Combat::default();combat.capture(&world);
+        let shot=combat.trace_shot(&world,combat.prepare_owned_shot(&world,actor,
+            Aim{tick:0,yaw:0.0,pitch:0.0}).unwrap(),MAX_OWNED_RANGE);
+        let now=Instant::now();
+        let context=zone_server::inventory::Context{principal:"a".repeat(32),life:0,visit:0,auth_epoch:0,
+            world:"synthetic".into(),position:[0.0;3],eye_height:1.55,interaction_radius:2.0,
+            collision:None,expires:now+Duration::from_secs(2)};
+        let mut peer=Peer::new(now,None);peer.player=Some(actor);
+        peer.queued_fire=Some(QueuedFire{enqueued:now,sequence:1,item:"1".repeat(32),shot,
+            queue_index:None,native_rules:None,special:None});
+        peer.native_fire=Some(NativeFirePreparation{attack:zone_server::native_condition::Attack::Knife{mode:knife::Mode::Slash,splash:false},request:(context,Vec::new(),
+            vec![FireReservation{peer:2,actor:22,life:0},FireReservation{peer:3,actor:33,life:0}]),fences:Vec::new()});
+        assert!(peer.inventory_busy());assert!(!peer.can_resume_body());
+        let mut peers=HashMap::from([(1,peer),(2,Peer::new(now,None)),(3,Peer::new(now,None))]);
+        peers.get_mut(&2).unwrap().incoming_fire=true;peers.get_mut(&3).unwrap().incoming_fire=true;
+        let mut regions=vec![Region{session:Arc::new(SessionConfig::synthetic()),world,combat,
+            scenes:Default::default(),alife_interests:None}];
+        let runtime=InventoryRuntime{store:None,catalog:None,reload_timings:None,auth_epoch:0,
+            logout_ticks:60,checkpoints:CheckpointPhase::Running,travel:None};
+        poll_native_fire(1,&mut peers,&mut regions,&runtime,&mut Metrics::default());
+        assert!(peers[&1].native_fire.is_none());assert!(peers[&1].queued_fire.is_none());
+        assert!(peers[&1].inventory_pending.is_none());
+        assert!(!peers[&2].incoming_fire);assert!(!peers[&3].incoming_fire);
+        assert!(!peers[&1].inventory_busy());
+    }
+
     #[test]
     fn entering_safety_and_disconnecting_cannot_bypass_a_pending_blast() {
         use zone_server::combat::{Aim, ArmourImpact, ChargedShot, Combat, LaunchSpec, ShotResult, MAX_OWNED_RANGE};
@@ -3032,6 +3645,7 @@ mod tests {
         let (commands, _) = mpsc::channel(1);
         let mut state = HttpState {
             survival:false,
+            native_player_movement: false,
             sessions: vec![Arc::new(SessionConfig::synthetic())],
             commands,
             token: None,
@@ -3052,6 +3666,17 @@ mod tests {
         headers.insert("authorization", "Bearer test-token".parse().unwrap());
         assert!(authorized(&state, &headers));
     }
+    #[test]
+    fn interrupted_insert_finishes_without_a_second_close_animation() {
+        use zone_server::reload_timing::{TubeReloadPhase as Native, tube_reload_after_animation as next};
+        assert!(matches!(reload_animation_finished(ReloadPhase::Open), Some(ReloadPhase::Apply)));
+        assert!(reload_animation_finished(ReloadPhase::FinishInsert).is_none());
+        assert!(reload_animation_finished(ReloadPhase::Close).is_none());
+        assert_eq!(next(Native::Insert, false), Native::Insert);
+        assert_eq!(next(Native::Insert, true), Native::Close);
+        assert_eq!(next(Native::Close, false), Native::Complete);
+    }
+
     #[test]
     fn control_commands_cannot_supply_identity_damage_or_position() {
         for data in [

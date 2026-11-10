@@ -130,7 +130,7 @@ void CBlender_Compile::_cpp_Compile(ShaderElement* _SH)
         bUseSteepParallax = true;
     }
 */
-#ifdef USE_DX11
+#if defined(USE_DX11) || defined(XR_PLATFORM_WEB)
     TessMethod = 0;
 #endif
 

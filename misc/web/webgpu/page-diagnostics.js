@@ -54,7 +54,8 @@ gpuChannel.onmessage = ({ data }) => {
   if (data.preparedEnabled !== undefined) {
     preparedPanel.textContent = JSON.stringify({enabled: data.preparedEnabled,
       uniformBatches: data.uniformBatches, uniformRecords: data.uniformRecords,
-      uniformBytesCopied: data.uniformBytesCopied, uniformReuses: data.uniformReuses,
+      uniformBytesCopied: data.uniformBytesCopied, uniformBulkBytes:data.uniformBulkBytes, uniformReuses: data.uniformReuses,
+      detailDraws:data.detailDraws, detailInstances:data.detailInstances,
       preparedHits: data.preparedHits, preparedMisses: data.preparedMisses, materialHits: data.materialHits});
   }
   if (data.directDrawsEnabled !== undefined) {

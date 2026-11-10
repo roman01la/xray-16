@@ -4,6 +4,8 @@ import {validateInventoryView} from './inventory-abi.mjs';
 import {validateCorpseView,validateCorpseIntent} from './corpse-search.mjs';
 import {validateWorldItems} from './world-items.mjs';
 import {validateAppearanceView} from './appearance-abi.mjs';
+import {MAX_REPLAY} from './prediction.mjs';
+import {NPC_POSE_MAX_BYTES,ENVIRONMENT_BYTES} from './protocol.mjs';
 function validateInventoryIntent(intent){
   if(!intent||Object.keys(intent).length!==4||!['life','item','revision','action'].every(k=>Object.hasOwn(intent,k)))throw Error('Invalid inventory intent');
   // Use the same strict command validator as the network codec. Only the main
@@ -45,7 +47,7 @@ export class BrowserEngineBridge {
     this.predictionInputs=new LatestMailbox((sequence,history)=>this.send({type:'prediction-inputs',sequence,history}));
     this.onInputSent=e=>{if(this.ready)this.predictionInputs.offer(e.detail);};client.addEventListener('input-sent',this.onInputSent);
     this.snapshots=new LatestMailbox((sequence,snapshot)=>this.send({type:'snapshot',sequence,snapshot,
-      vitals:this.client.vitals??null,grenades:this.client.grenades??null}));
+      vitals:this.client.vitals??null,grenades:this.client.grenades??null,nativeMedia:this.client.takeNativeMedia?.()}));
     this.appearances=new LatestMailbox((sequence,entries)=>this.send({type:'appearances',sequence,entries}));
     this.lastAppearances=[];
     this.onLifecycle=()=>{
@@ -127,7 +129,7 @@ export class BrowserEngineBridge {
       }
       if(m.type==='engine-applied'){
         if(!Number.isInteger(m.tick)||m.tick<0||m.tick>0xffffffff||!Number.isInteger(m.entities)||m.entities<1||m.entities>7424)throw new Error('Invalid engine report');
-        if(m.prediction && (typeof m.prediction.ready!=='boolean'||(m.prediction.active!==undefined&&typeof m.prediction.active!=='boolean')||!Number.isInteger(m.prediction.replays)||m.prediction.replays<0||m.prediction.replays>8))throw Error('Invalid prediction report');
+        if(m.prediction && (typeof m.prediction.ready!=='boolean'||(m.prediction.active!==undefined&&typeof m.prediction.active!=='boolean')||!Number.isInteger(m.prediction.replays)||m.prediction.replays<0||m.prediction.replays>MAX_REPLAY))throw Error('Invalid prediction report');
         this.onApplied({tick:m.tick,entities:m.entities,...(m.prediction?{prediction:m.prediction}:{})});return;
       }
       if(m.type==='prediction-applied'){this.predictionInputs.ack(m.sequence);return;}
@@ -253,6 +255,15 @@ export class EngineBridgeEndpoint {
         if(this.snapshot || !Number.isSafeInteger(m.sequence) || m.sequence<1 || !Array.isArray(m.snapshot?.entities) || m.snapshot.entities.length>7424 || m.snapshot.playerId!==this.session.playerId)throw new Error('Invalid engine snapshot');
         this.vitals=m.vitals==null?null:validateVitals(m.vitals);
         this.grenades=m.grenades==null?null:validateGrenades(m.grenades);
+        const media=m.nativeMedia;
+        if(media!==undefined&&(!Array.isArray(media?.poses)||media.poses.length>64||
+          media.poses.some(p=>!(p instanceof Uint8Array)||p.length<50||p.length>NPC_POSE_MAX_BYTES)||
+          !Array.isArray(media.sounds)||media.sounds.length>64||
+          media.sounds.some(p=>!(p instanceof Uint8Array)||p.length<25||p.length>151)||
+          media.loops!==undefined&&(!Array.isArray(media.loops)||media.loops.length>32||
+            media.loops.some(p=>!(p instanceof Uint8Array)||p.length<33||p.length>159))||
+          media.environment!==undefined&&(!(media.environment instanceof Uint8Array)||
+            media.environment.length!==ENVIRONMENT_BYTES)))throw Error('Invalid native media');
         this.snapshot=m;return;
       }
       if(m.type==='weapon-slot'){

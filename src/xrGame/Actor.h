@@ -408,7 +408,11 @@ protected:
     // Motions (передвижения актрера)
     //////////////////////////////////////////////////////////////////////////
 public:
-    void g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Jump, float dt);
+    void g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Jump, float dt, bool zoneMovement = false);
+    void resetZoneMovement(const Fvector& position, const Fvector& velocity, bool crouched);
+    bool driveZoneMovement(u32 controls, float yaw, float speedScale, float dt);
+    u32 sampleZoneMovement(Fvector& position, Fvector& velocity);
+    void updateZoneActorPose(const Fvector& position, float yaw, float pitch, float dt);
     void g_cl_ValidateMState(float dt, u32 mstate_wf);
     void g_cl_Orientate(u32 mstate_rl, float dt);
     void g_sv_Orientate(u32 mstate_rl, float dt);

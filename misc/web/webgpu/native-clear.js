@@ -1,4 +1,3 @@
-import { EngineFormat } from './engine-formats.js';
 
 // WebGPU loadOp clears are whole-attachment operations. Partial clears use a
 // dedicated triangle pipeline, preserving pixels outside each clipped rectangle.
@@ -6,10 +5,9 @@ export function clearNativeRects(renderer, token, depthOnly, color, depth, recta
   renderer.flushNativeStates?.();
   const info = renderer.info(token);
   if (!info?.gpu) throw Error('Missing native rectangle-clear texture');
-  renderer.setNativeAttachment(renderer.fbo, depthOnly ? EngineFormat.DEPTH_STENCIL_ATTACHMENT : EngineFormat.COLOR_ATTACHMENT0, token);
   renderer.endPass();
   const pipelines = renderer.rectClearPipelines ??= new Map();
-  const key = `${depthOnly}:${info.format}`;
+  const key = `${depthOnly}:${info.format}:${info.samples||1}`;
   let pipeline = pipelines.get(key);
   if (!pipeline) {
     const module = renderer.device.createShaderModule({code:`
@@ -21,7 +19,7 @@ struct Clear { color: vec4f, depth: f32 };
 }
 ${depthOnly ? '@fragment fn fs() -> @builtin(frag_depth) f32 { return value.depth; }' : '@fragment fn fs() -> @location(0) vec4f { return value.color; }'}
 `});
-    const descriptor = {layout:'auto',vertex:{module,entryPoint:'vs'},
+    const descriptor = {layout:'auto',multisample:{count:info.samples||1},vertex:{module,entryPoint:'vs'},
       fragment:{module,entryPoint:'fs',targets:depthOnly ? [] : [{format:info.format}]},primitive:{topology:'triangle-list'}};
     if (depthOnly) descriptor.depthStencil = {format:info.format,depthWriteEnabled:true,depthCompare:'always'};
     pipeline = renderer.device.createRenderPipeline(descriptor);

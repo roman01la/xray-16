@@ -45,6 +45,7 @@ export function shaderValueType(type) {
     uint: "UNSIGNED_INT",
     bool: "BOOL",
     sampler2D: "SAMPLER_2D",
+    sampler2DMS: "SAMPLER_2D_MULTISAMPLE",
     sampler3D: "SAMPLER_3D",
     samplerCube: "SAMPLER_CUBE",
     sampler2DShadow: "SAMPLER_2D_SHADOW",

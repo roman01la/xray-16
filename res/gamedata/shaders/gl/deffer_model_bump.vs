@@ -60,5 +60,9 @@ v2p_bumped _main( v_model I )
 	O.tcdbump		= O.tcdh.xy * dt_params.xy;		// dt tc
 #endif
 
+#ifdef XR_WEB_TESSELLATION
+    // Retain projection reflection for the post-VS compute surface evaluator.
+    O.hpos = mul(m_P, float4(Pe, 1.0));
+#endif
 	return	O;
 }

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #ifdef XR_PLATFORM_WEB
+#include "BrowserVideoModes.h"
 #include <emscripten.h>
 #include <emscripten/html5.h>
 #endif
@@ -76,7 +77,8 @@ void TrackBrowserViewport()
     if (display[0] >= 640 && display[1] >= 480)
     {
         const double scale = std::min(1.0, 4096.0 / std::max(display[0], display[1]));
-        browserDisplaySize = {int(std::lround(display[0] * scale)), int(std::lround(display[1] * scale))};
+        browserDisplaySize = {std::max(640, int(std::lround(display[0] * scale))),
+                              std::max(480, int(std::lround(display[1] * scale)))};
     }
 }
 } // namespace
@@ -303,9 +305,9 @@ void CRenderDevice::SelectResolution(const bool windowed)
     const auto display = GetBrowserDisplaySize();
     if (psDeviceMode.Width == 0 || psDeviceMode.Height == 0)
     {
-        // Start at up to 1080 lines, in the display's aspect ratio.
-        psDeviceMode.Height = std::max(480, std::min(1080, display.y));
-        psDeviceMode.Width = std::max(640, int(std::lround(double(display.x) * psDeviceMode.Height / display.y)));
+        const auto mode = BrowserVideoModes::DefaultForDisplay({u32(display.x), u32(display.y)});
+        psDeviceMode.Width = mode.width;
+        psDeviceMode.Height = mode.height;
     }
     const auto size = BrowserRenderSize(browserViewportSize.load(std::memory_order_relaxed));
     dwWidth = size.x;

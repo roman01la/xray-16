@@ -7,6 +7,8 @@ use anyhow::{Result, ensure};
 use rusqlite::{Transaction, params};
 use serde::{Deserialize, Serialize};
 
+pub(crate) const BELT_CELLS: u8 = 5;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Placement {
@@ -126,7 +128,7 @@ pub(crate) fn place(
             };
             let width = catalog
                 .effective_number(&outfit.section, &outfit.state, "artefact_count", 0.0)?
-                .clamp(0.0, 5.0) as u8;
+                .clamp(0.0, f64::from(BELT_CELLS)) as u8;
             let item_width = u8::try_from(definition.integer("inv_grid_width")?)?;
             let item_height = definition.integer("inv_grid_height")?;
             if item_width == 0

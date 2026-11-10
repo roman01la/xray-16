@@ -1,7 +1,13 @@
 FROM rust:1.93.1-bookworm AS build
 WORKDIR /src
-COPY server/Cargo.toml server/Cargo.lock ./server/
+COPY server/Cargo.toml server/Cargo.lock server/build.rs ./server/
 COPY server/src ./server/src
+COPY src/xrGame/CombatRules.h src/xrGame/ZoneConditionState.h src/xrGame/ZoneConditionProtocol.h src/xrGame/ZoneConditionHit.h src/xrGame/ZoneConditionImport.h ./src/xrGame/
+COPY src/Common ./src/Common
+COPY src/xrCommon ./src/xrCommon
+COPY src/xrCore ./src/xrCore
+COPY src/Include/xrAPI ./src/Include/xrAPI
+COPY src/utils/xrMiscMath ./src/utils/xrMiscMath
 COPY server/config ./server/config
 COPY misc/web/multiplayer ./misc/web/multiplayer
 RUN cargo build --release --locked --manifest-path server/Cargo.toml --bin zone-server

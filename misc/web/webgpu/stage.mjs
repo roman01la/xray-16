@@ -16,7 +16,7 @@ const capture = process.env.XRAY_SHADER_CAPTURE === "1";
 const output = process.env.XRAY_WEB_OUTPUT ? resolve(process.env.XRAY_WEB_OUTPUT) : join(dist, capture ? "webgpu-dev" : "webgpu");
 await mkdir(output, { recursive: true });
 await copyFile(resolve(source, '../../../server/web/opfs-store.mjs'), join(output, 'opfs-store.mjs'));
-for (const obsolete of ["command-context.js", "gl-constants.js"])
+for (const obsolete of ["command-context.js", "gl-constants.js", "detail-visibility.js", "detail-hiz.js", "meshoptimizer-LICENSE.txt"])
   await rm(join(output, obsolete), {force:true});
 for (const file of [
   "xr_3da.wasm",
@@ -32,15 +32,26 @@ for (const file of [
   await copyFile(join(dist, file), join(output, file));
 for (const file of [
   "backend.js",
+  "detail-instancing.js",
+  "detail-storage.js",
+  "tessellation-cache.js",
+  "tessellation-core.js",
+  "tessellation-patterns.js",
+  "tessellation-kernel.js",
+  "tessellation-shader.js",
   "native-runtime.js",
   "shader-compiler-client.mjs",
   "shader-compiler-worker.mjs",
   "shader-cache.mjs",
   "compiler-core.mjs",
+  "mip-bias.mjs",
   "wasm-toolchain.mjs",
   "pack-uniforms.mjs",
   "native-queue.js",
   "native-clear.js",
+  "fluid-kernels.js",
+  "fluid-simulation.js",
+  "fluid-renderer.js",
   "native-imgui.js",
   "native-selftest.js",
   "shader-key.js",

@@ -6,6 +6,10 @@
 
 class ENGINE_API CMotionDef;
 
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+namespace xray::combat { struct FireRules; }
+#endif
+
 //размер очереди считается бесконечность
 //заканчиваем стрельбу, только, если кончились патроны
 #define WEAPON_ININITE_QUEUE -1
@@ -148,13 +152,14 @@ public:
     void OnPrevFireMode();
     bool HasFireModes() { return m_bHasDifferentFireModes; }
 #if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    xray::combat::FireRules NativeFireRules();
     u8 NativeFireModeSelector() const
     {
         return m_bHasDifferentFireModes && m_iCurFireMode >= 0 && m_iCurFireMode < 255
             ? static_cast<u8>(m_iCurFireMode + 1) : 0;
     }
 #endif
-#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__) || (defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB))
     void SetPresentationScope(pcstr section);
     void SetPresentationFireMode(u8 selector)
     {

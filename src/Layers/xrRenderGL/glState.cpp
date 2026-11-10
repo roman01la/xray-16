@@ -32,6 +32,7 @@ glState::glState()
     m_pDepthStencilState.StencilRef = 0;
 
     m_pBlendState.BlendEnable = TRUE;
+    m_pBlendState.AlphaToCoverageEnable = FALSE;
     m_pBlendState.SrcBlend = D3DBLEND_ONE;
     m_pBlendState.DestBlend = D3DBLEND_ZERO;
     m_pBlendState.SrcBlendAlpha = D3DBLEND_ONE;
@@ -102,6 +103,7 @@ void glState::Apply()
 
 #ifdef XR_PLATFORM_WEB
     RCache.set_DepthWrite(m_pDepthStencilState.DepthWriteMask ? TRUE : FALSE);
+    QueueWebGPUState(WebGPUState::AlphaToCoverage, m_pBlendState.AlphaToCoverageEnable);
     RCache.set_Blend(m_pBlendState.BlendEnable, m_pBlendState.SrcBlend, m_pBlendState.DestBlend,
         m_pBlendState.SrcBlendAlpha, m_pBlendState.DestBlendAlpha, m_pBlendState.BlendOp,
         m_pBlendState.BlendOpAlpha);
@@ -148,6 +150,10 @@ void glState::UpdateRenderState(u32 name, u32 value)
 {
     switch (name)
     {
+    case XRDX11RS_ALPHATOCOVERAGE:
+        m_pBlendState.AlphaToCoverageEnable = value != 0;
+        break;
+
     case D3DRS_CULLMODE:
         rasterizerCullMode = (D3DCULL)value;
         break;

@@ -21,6 +21,15 @@ public:
         return true;
     }
 
+    void InvalidateRange(GLuint program, GLuint first, u32 count)
+    {
+        if (program >= programs.size()) return;
+        auto& slots = programs[program];
+        const size_t end = std::min(slots.size(), size_t(first) + count);
+        for (size_t location = first; location < end; ++location)
+            slots[location].size = 0;
+    }
+
 private:
     struct Slot
     {
@@ -290,9 +299,10 @@ public:
         if (C->destination & RC_dest_geometry) { L = C->gs; }
         if (C->destination & RC_dest_all) { L = C->pp; }
         L.location += e;
-        for (u32 i = 0; i < count; ++i)
-            g_uniformShadow.Update(L.program, L.location + i, &values[i], sizeof(Fvector4));
-        QueueWebGPUUniform(L.program, L.location, 0, values, count * 4); return;
+        // The array is replaced unconditionally. Invalidate overlapping scalar
+        // shadows without comparing/copying every row or allocating shadow slots.
+        g_uniformShadow.InvalidateRange(L.program, L.location, count);
+        QueueWebGPUUniform(L.program, L.location, 4, values, count * 4); return;
         CHK_GL(glUniform4fv(L.location, count, reinterpret_cast<const float*>(values)));
     }
 #endif

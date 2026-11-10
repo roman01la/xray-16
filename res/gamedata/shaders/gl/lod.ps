@@ -30,7 +30,7 @@ float4 _main ( v2p I )
 	float4	H;
 	sample_Textures(D, H, I.tc1, I.tc0, I.af, float2(0.0,0.0) );
 	D.w	= (D.w-(96.0/255.0)*0.5)/(1.0-(96.0/255.0)*0.5);
-	return	D.w;
+	return float4(D.w);
 }
 
 #else	//	ATOC
@@ -67,7 +67,7 @@ f_deffer 	_main	( v2p I )
 
 	if( D.w-(96.0/255.0) >= 0 ) mask |= 0x1;
   
-	[unroll] for( int i = 1; i < MSAA_SAMPLES; ++i )
+	for( int i = 1; i < MSAA_SAMPLES; ++i )
 	{
 		float4 DI;
 		float4 HI;

@@ -1,5 +1,12 @@
 #include "pch_script.h"
 #include "ActorCondition.h"
+#include "CombatRules.h"
+#include "ZoneConditionState.h"
+#include "ZoneConditionImport.h"
+#include "ZoneConditionMedicine.h"
+#include "ZoneConditionHit.h"
+#include "Hit.h"
+#include "Include/xrRender/Kinematics.h"
 #include "Actor.h"
 #include "ActorEffector.h"
 #include "Inventory.h"
@@ -172,7 +179,8 @@ float CActorCondition::GetZoneMaxPower(ALife::EHitType hit_type) const
 
 void CActorCondition::UpdateCondition()
 {
-    if (psActorFlags.test(AF_GODMODE_RT))
+    const bool zoneActor = object().zoneAlifeTarget();
+    if (!zoneActor && psActorFlags.test(AF_GODMODE_RT))
     {
         UpdateSatiety();
         UpdateBoosters();
@@ -187,15 +195,15 @@ void CActorCondition::UpdateCondition()
         }
     }
 
-    if (GodMode())
+    if (!zoneActor && GodMode())
         return;
     if (!object().g_Alive())
         return;
-    if (!object().Local() && m_object != Level().CurrentViewEntity())
+    if (!zoneActor && !object().Local() && m_object != Level().CurrentViewEntity())
         return;
 
     float base_weight = object().MaxCarryWeight();
-    float cur_weight = object().inventory().TotalWeight();
+    float cur_weight = zoneActor && m_zoneInventoryWeight >= 0.f ? m_zoneInventoryWeight : object().inventory().TotalWeight();
 
     if ((object().mstate_real & mcAnyMove))
     {
@@ -225,7 +233,7 @@ void CActorCondition::UpdateCondition()
     m_fAlcohol += m_fV_Alcohol * m_fDeltaTime;
     clamp(m_fAlcohol, 0.0f, 1.0f);
 
-    if (IsGameTypeSingle())
+    if (IsGameTypeSingle() && !zoneActor)
     {
         CEffectorCam* ce = Actor()->Cameras().GetCamEffector((ECamEffectorType)effAlcohol);
         if ((m_fAlcohol > 0.0001f))
@@ -274,15 +282,15 @@ void CActorCondition::UpdateCondition()
 
     inherited::UpdateCondition();
 
-    if (IsGameTypeSingle())
+    if (IsGameTypeSingle() && !zoneActor)
         UpdateTutorialThresholds();
 
-    if (GetHealth() < 0.05f && m_death_effector == NULL && IsGameTypeSingle())
+    if (GetHealth() < 0.05f && m_death_effector == NULL && IsGameTypeSingle() && !zoneActor)
     {
         if (pSettings->section_exist("actor_death_effector"))
             m_death_effector = xr_new<CActorDeathEffector>(this, "actor_death_effector");
     }
-    if (m_death_effector && m_death_effector->IsActual())
+    if (!zoneActor && m_death_effector && m_death_effector->IsActual())
     {
         m_death_effector->UpdateCL();
 
@@ -290,7 +298,259 @@ void CActorCondition::UpdateCondition()
             m_death_effector->Stop();
     }
 
-    AffectDamage_InjuriousMaterialAndMonstersInfluence();
+    // Host environmental contacts already cross the authorization boundary.
+    if (!zoneActor)
+        AffectDamage_InjuriousMaterialAndMonstersInfluence();
+}
+
+xray::zone_condition::State CActorCondition::CaptureZoneCondition()
+{
+    R_ASSERT(object().zoneAlifeTarget());
+    static_assert(ALife::eHitTypeMax == xray::zone_condition::HitTypes);
+    static_assert(eBoostMaxCount == xray::zone_condition::BoostTypes);
+    xray::zone_condition::State state;
+    state.values = {GetHealth(), m_fPower, m_fRadiation, m_fPsyHealth, m_fEntityMorale, m_fPowerMax, m_fAlcohol, m_fSatiety, m_fDeltaHealth, m_fDeltaPower, m_fDeltaRadiation, m_fDeltaPsyHealth, m_fDeltaCircumspection, m_fDeltaEntityMorale, m_fHealthLost, m_fHitBoneScale, m_fWoundBoneScale, std::max(0.f, m_fInvulnerableTime - Device.fTimeGlobal), GetMaxHealth(), object().inventory().GetMaxWeight(), m_MaxWalkWeight, m_fV_SatietyPower, m_equipmentUpdateTime};
+    state.rates = {m_change_v.m_fV_Radiation, m_change_v.m_fV_PsyHealth, m_change_v.m_fV_Circumspection, m_change_v.m_fV_EntityMorale, m_change_v.m_fV_RadiationHealth, m_change_v.m_fV_Bleeding, m_change_v.m_fV_WoundIncarnation, m_change_v.m_fV_HealthRestore};
+    state.protections = {m_fBoostBurnImmunity, m_fBoostShockImmunity, m_fBoostRadiationImmunity, m_fBoostTelepaticImmunity, m_fBoostChemicalBurnImmunity, m_fBoostExplImmunity, m_fBoostStrikeImmunity, m_fBoostFireWoundImmunity, m_fBoostWoundImmunity, m_fBoostRadiationProtection, m_fBoostTelepaticProtection, m_fBoostChemicalBurnProtection};
+    if (m_curr_medicine_influence.InProcess())
+        state.medicine = {m_curr_medicine_influence.fHealth, m_curr_medicine_influence.fPower, m_curr_medicine_influence.fSatiety, m_curr_medicine_influence.fRadiation, m_curr_medicine_influence.fWoundsHeal, m_curr_medicine_influence.fMaxPowerUp, m_curr_medicine_influence.fAlcohol, m_curr_medicine_influence.fTimeTotal, m_curr_medicine_influence.fTimeCurrent};
+    state.conditionFlags = m_condition_flags.get();
+    state.flags = m_bLimping | (m_bCantWalk << 1) | (m_bCantSprint << 2) |
+        (m_bIsBleeding << 3) | (m_bCanBeHarmed << 4);
+    for (auto* original : m_WoundVector)
+    {
+        xray::zone_condition::Wound wound;
+        wound.bone = original->GetBoneNum();
+        wound.destroyed = original->GetDestroy();
+        for (unsigned i=0;i<xray::zone_condition::HitTypes;++i)
+            wound.sizes[i] = original->TypeSize(static_cast<ALife::EHitType>(i));
+        state.wounds.push_back(wound);
+    }
+    for (const auto& entry : m_booster_influences)
+        state.boosters.push_back({unsigned(entry.first), entry.second.fBoostValue, entry.second.fBoostTime});
+    return state;
+}
+
+bool CActorCondition::RestoreZoneCondition(const xray::zone_condition::State& state)
+{
+    if (!object().zoneAlifeTarget() || !xray::zone_condition::valid(state))
+        return false;
+    // Replace the absolute derived values together with the booster map. Calling
+    // ApplyBooster/load here would accumulate modifiers on a retry.
+    m_fPower = state.values[1];
+    m_fRadiation = state.values[2];
+    m_fPsyHealth = state.values[3];
+    m_fEntityMorale = state.values[4];
+    m_fPowerMax = state.values[5];
+    m_fAlcohol = state.values[6];
+    m_fSatiety = state.values[7];
+    m_fDeltaHealth = state.values[8];
+    m_fDeltaPower = state.values[9];
+    m_fDeltaRadiation = state.values[10];
+    m_fDeltaPsyHealth = state.values[11];
+    m_fDeltaCircumspection = state.values[12];
+    m_fDeltaEntityMorale = state.values[13];
+    m_fHealthLost = state.values[14];
+    m_fHitBoneScale = state.values[15];
+    m_fWoundBoneScale = state.values[16];
+    m_MaxWalkWeight = state.values[20];
+    m_fV_SatietyPower = state.values[21];
+    m_equipmentUpdateTime = state.values[22];
+    SetHealth(state.values[0]);
+    m_fInvulnerableTime = state.values[17] > 0.f ? Device.fTimeGlobal + state.values[17] : 0.f;
+    max_health() = state.values[18];
+    object().inventory().SetMaxWeight(state.values[19]);
+    m_change_v.m_fV_Radiation = state.rates[0];
+    m_change_v.m_fV_PsyHealth = state.rates[1];
+    m_change_v.m_fV_Circumspection = state.rates[2];
+    m_change_v.m_fV_EntityMorale = state.rates[3];
+    m_change_v.m_fV_RadiationHealth = state.rates[4];
+    m_change_v.m_fV_Bleeding = state.rates[5];
+    m_change_v.m_fV_WoundIncarnation = state.rates[6];
+    m_change_v.m_fV_HealthRestore = state.rates[7];
+    m_fBoostBurnImmunity = state.protections[0];
+    m_fBoostShockImmunity = state.protections[1];
+    m_fBoostRadiationImmunity = state.protections[2];
+    m_fBoostTelepaticImmunity = state.protections[3];
+    m_fBoostChemicalBurnImmunity = state.protections[4];
+    m_fBoostExplImmunity = state.protections[5];
+    m_fBoostStrikeImmunity = state.protections[6];
+    m_fBoostFireWoundImmunity = state.protections[7];
+    m_fBoostWoundImmunity = state.protections[8];
+    m_fBoostRadiationProtection = state.protections[9];
+    m_fBoostTelepaticProtection = state.protections[10];
+    m_fBoostChemicalBurnProtection = state.protections[11];
+    m_curr_medicine_influence.fHealth = state.medicine[0];
+    m_curr_medicine_influence.fPower = state.medicine[1];
+    m_curr_medicine_influence.fSatiety = state.medicine[2];
+    m_curr_medicine_influence.fRadiation = state.medicine[3];
+    m_curr_medicine_influence.fWoundsHeal = state.medicine[4];
+    m_curr_medicine_influence.fMaxPowerUp = state.medicine[5];
+    m_curr_medicine_influence.fAlcohol = state.medicine[6];
+    m_curr_medicine_influence.fTimeTotal = state.medicine[7];
+    m_curr_medicine_influence.fTimeCurrent = state.medicine[8];
+    m_condition_flags.assign(state.conditionFlags);
+    m_bLimping = state.flags & 1; m_bCantWalk = state.flags & 2; m_bCantSprint = state.flags & 4;
+    m_bIsBleeding = state.flags & 8; m_bCanBeHarmed = state.flags & 16;
+    ClearWounds();
+    for (const auto& source : state.wounds)
+    {
+        auto* wound = xr_new<CWound>(source.bone);
+        for (unsigned i=0;i<xray::zone_condition::HitTypes;++i)
+            wound->AddHit(source.sizes[i], static_cast<ALife::EHitType>(i));
+        wound->SetDestroy(source.destroyed);
+        m_WoundVector.push_back(wound);
+    }
+    m_booster_influences.clear();
+    for (const auto& source : state.boosters)
+    {
+        SBooster booster;
+        booster.m_type = static_cast<EBoostParams>(source.type);
+        booster.fBoostValue = source.value;
+        booster.fBoostTime = source.remaining;
+        m_booster_influences.emplace(booster.m_type, booster);
+    }
+    m_bTimeValid = false;
+    m_fDeltaTime = 0.f;
+    return true;
+}
+
+bool CActorCondition::ImportZoneCondition(const xray::zone_condition::Import& source)
+{
+    if (!object().zoneAlifeTarget()) return false;
+    auto* skeleton = smart_cast<IKinematics*>(object().Visual());
+    if (!skeleton) return false;
+    std::vector<xray::zone_condition::Wound> wounds;
+    for (const auto& named : source.wounds)
+    {
+        const u16 bone = named.bone.empty() ? BI_NONE : skeleton->LL_BoneID(named.bone.c_str());
+        if (bone == BI_NONE && !named.bone.empty()) return false;
+        for (const auto& previous : wounds) if (previous.bone == bone) return false;
+        wounds.push_back({bone, false, named.sizes});
+    }
+    ClearAllBoosters();
+    m_booster_influences.clear();
+    auto state = CaptureZoneCondition();
+    state.values[0]=source.values[0]; state.values[1]=source.values[1];
+    state.values[7]=source.values[2]; state.values[2]=source.values[3];
+    state.values[3]=source.values[4]; state.values[6]=source.values[5];
+    for (unsigned i=8;i<14;++i) state.values[i]=0.f;
+    state.medicine=source.medicine; state.wounds=std::move(wounds);
+    state.flags=(state.flags&24u)|source.flags;
+    if (!RestoreZoneCondition(state)) return false;
+    for (const auto& saved : source.boosters)
+    {
+        SBooster booster; booster.m_type=static_cast<EBoostParams>(saved.type);
+        booster.fBoostValue=saved.value; booster.fBoostTime=saved.remaining;
+        m_booster_influences.emplace(booster.m_type,booster);
+        BoostParameters(booster);
+    }
+    return true;
+}
+
+bool CActorCondition::HitZoneBatch(const xray::zone_condition::Hit* hits, u32 count, xray::zone_condition::Wear& wear)
+{
+    if (!object().zoneAlifeTarget() || !count || count>64) return false;
+    for (u32 i=0;i<count;++i)
+        if (!xray::zone_condition::validHit(hits[i])) return false;
+    auto* outfit=object().inventory().ItemFromSlot(OUTFIT_SLOT);
+    auto* helmet=object().inventory().ItemFromSlot(HELMET_SLOT);
+    const float oldOutfit=outfit ? outfit->GetCondition() : -1.f;
+    const float oldHelmet=helmet ? helmet->GetCondition() : -1.f;
+    wear={oldOutfit,oldHelmet};
+    bool valid=true;
+    for (u32 i=0;i<count && GetHealth()>0.f;++i)
+    {
+        if (!HitZoneCondition(hits[i],wear)) {valid=false;break;}
+        // Subsequent hits see wear from earlier hits in this proposal.
+        if (outfit) outfit->SetCondition(wear.outfit);
+        if (helmet) helmet->SetCondition(wear.helmet);
+    }
+    if (outfit) outfit->SetCondition(oldOutfit);
+    if (helmet) helmet->SetCondition(oldHelmet);
+    return valid;
+}
+
+bool CActorCondition::HitZoneCondition(const xray::zone_condition::Hit& source, xray::zone_condition::Wear& wear)
+{
+    if (!object().zoneAlifeTarget() || !xray::zone_condition::validHit(source)) return false;
+    auto* skeleton = smart_cast<IKinematics*>(object().Visual());
+    if (!skeleton) return false;
+    const u16 bone = source.bone.empty() ? BI_NONE : skeleton->LL_BoneID(source.bone.c_str());
+    // Stock AddWound supports actor bones 0..63 and the unknown-bone sentinel.
+    if ((!source.bone.empty() && bone == BI_NONE) || (bone != BI_NONE && bone >= 64)) return false;
+    auto* outfit = object().inventory().ItemFromSlot(OUTFIT_SLOT);
+    auto* helmet = object().inventory().ItemFromSlot(HELMET_SLOT);
+    const float oldOutfit = outfit ? outfit->GetCondition() : -1.f;
+    const float oldHelmet = helmet ? helmet->GetCondition() : -1.f;
+    wear = {oldOutfit, oldHelmet};
+    if (!CanBeHarmed()) return true;
+    auto type = static_cast<ALife::EHitType>(source.type);
+    // Same normalization and skeleton scales as CEntityAlive::Hit, without its
+    // particle, sound, physics impulse or network side effects on the mirror.
+    if (type == ALife::eHitTypeWound_2) type = ALife::eHitTypeWound;
+    object().CDamageManager::HitScale(bone, m_fHitBoneScale, m_fWoundBoneScale, source.aimed);
+    Fvector direction; direction.set(0.f, 1.f, 0.f);
+    Fvector position; position.set(0.f, 0.f, 0.f);
+    const float power = object().HitArtefactsOnBelt(source.power, static_cast<ALife::EHitType>(source.type));
+    SHit hit(power, direction, nullptr, bone, position, 0.f, type, source.penetration, source.aimed);
+    auto* previousWho = m_pWho;
+    const auto previousWhoID = m_iWhoID;
+    m_zoneConditionProposal = true;
+    ConditionHit(&hit);
+    m_zoneConditionProposal = false;
+    m_pWho = previousWho;
+    m_iWhoID = previousWhoID;
+    wear = {outfit ? outfit->GetCondition() : -1.f, helmet ? helmet->GetCondition() : -1.f};
+    if (outfit) outfit->SetCondition(oldOutfit);
+    if (helmet) helmet->SetCondition(oldHelmet);
+    SetConditionDeltaTime(0.f);
+    inherited::UpdateCondition();
+    UpdateWounds();
+    return true;
+}
+
+bool CActorCondition::ConsumeZoneCondition(const shared_str& section)
+{
+    if (!object().zoneAlifeTarget() || !pSettings->section_exist(section)) return false;
+    // The private request names a config section; never let a malformed section
+    // reach mandatory config reads. Inventory authorization remains in Rust.
+    for (const auto* key : {"eat_health", "eat_power", "eat_satiety", "eat_radiation", "wounds_heal_perc"})
+        if (!pSettings->line_exist(section, key)) return false;
+    for (u8 i = 0; i < (u8)eBoostMaxCount; ++i)
+        if (pSettings->line_exist(section, ef_boosters_section_names[i]) && !pSettings->line_exist(section, "boost_time"))
+            return false;
+    ApplyConsumableEffects(section);
+    // Commit immediate deltas without advancing hunger, medicine or boosters.
+    SetConditionDeltaTime(0.f);
+    inherited::UpdateCondition();
+    UpdateWounds();
+    return true;
+}
+
+void CActorCondition::AdvanceZoneCondition(float gameSeconds, float inventoryWeight)
+{
+    R_ASSERT(object().zoneAlifeTarget());
+    R_ASSERT(_valid(gameSeconds) && gameSeconds >= 0.f && gameSeconds <= 1.f);
+    R_ASSERT(_valid(inventoryWeight) && inventoryWeight >= 0.f);
+    const float timeFactor = IsGameTypeSingle() ? Level().GetGameTimeFactor() : 1.f;
+    if (gameSeconds == 0.f || timeFactor <= 0.f) return;
+    const float fraction = xray::zone_condition::medicineFraction(m_curr_medicine_influence.InProcess() ?
+        m_curr_medicine_influence.fTimeTotal : 0.f, m_curr_medicine_influence.fTimeCurrent, gameSeconds / timeFactor);
+    if (fraction > 0.f)
+    {
+        auto dose = m_curr_medicine_influence;
+        dose.fHealth *= fraction; dose.fPower *= fraction; dose.fSatiety *= fraction;
+        dose.fRadiation *= fraction; dose.fWoundsHeal *= fraction;
+        dose.fMaxPowerUp *= fraction; dose.fAlcohol *= fraction;
+        inherited::ApplyInfluence(dose, shared_str());
+    }
+    m_zoneInventoryWeight = inventoryWeight;
+    SetConditionDeltaTime(gameSeconds);
+    UpdateCondition();
+    UpdateWounds();
+    object().UpdateArtefactsOnBeltAndOutfit();
+    m_zoneInventoryWeight = -1.f;
 }
 
 void CActorCondition::UpdateBoosters()
@@ -309,7 +569,7 @@ void CActorCondition::UpdateBoosters()
         }
     }
 
-    if (m_object == Level().CurrentViewEntity())
+    if (!object().zoneAlifeTarget() && m_object == Level().CurrentViewEntity())
         CurrentGameUI()->UIMainIngameWnd->UpdateBoosterIndicators(m_booster_influences);
 }
 
@@ -430,9 +690,8 @@ void CActorCondition::UpdateSatiety()
         clamp(m_fSatiety, 0.0f, 1.0f);
     }
 
-    float satiety_health_koef = (m_fSatiety - m_fSatietyCritical) /
-        (m_fSatiety >= m_fSatietyCritical ? 1 - m_fSatietyCritical : m_fSatietyCritical);
-    if (CanBeHarmed() && !psActorFlags.test(AF_GODMODE_RT))
+    const float satiety_health_koef = xray::combat::satietyHealthFactor(m_fSatiety, m_fSatietyCritical);
+    if (CanBeHarmed() && (object().zoneAlifeTarget() || !psActorFlags.test(AF_GODMODE_RT)))
     {
         m_fDeltaHealth += m_fV_SatietyHealth * satiety_health_koef * m_fDeltaTime;
         m_fDeltaPower += m_fV_SatietyPower * m_fSatiety * m_fDeltaTime;
@@ -441,7 +700,7 @@ void CActorCondition::UpdateSatiety()
 
 CWound* CActorCondition::ConditionHit(SHit* pHDS)
 {
-    if (GodMode())
+    if (!object().zoneAlifeTarget() && GodMode())
         return NULL;
     return inherited::ConditionHit(pHDS);
 }
@@ -454,15 +713,13 @@ void CActorCondition::PowerHit(float power, bool apply_outfit)
 // weight - "удельный" вес от 0..1
 void CActorCondition::ConditionJump(float weight)
 {
-    float power = m_fJumpPower;
-    power += m_fJumpWeightPower * weight * (weight > 1.f ? m_fOverweightJumpK : 1.f);
+    const float power = xray::combat::movementPowerCost(m_fJumpPower, m_fJumpWeightPower, weight, m_fOverweightJumpK);
     m_fPower -= HitPowerEffect(power);
 }
 
 void CActorCondition::ConditionWalk(float weight, bool accel, bool sprint)
 {
-    float power = m_fWalkPower;
-    power += m_fWalkWeightPower * weight * (weight > 1.f ? m_fOverweightWalkK : 1.f);
+    float power = xray::combat::movementPowerCost(m_fWalkPower, m_fWalkWeightPower, weight, m_fOverweightWalkK);
     power *= m_fDeltaTime * (accel ? (sprint ? m_fSprintK : m_fAccelK) : 1.f);
     m_fPower -= HitPowerEffect(power);
 }
@@ -476,10 +733,7 @@ void CActorCondition::ConditionStand(float weight)
 
 bool CActorCondition::IsCantWalk() const
 {
-    if (m_fPower < m_fCantWalkPowerBegin)
-        m_bCantWalk = true;
-    else if (m_fPower > m_fCantWalkPowerEnd)
-        m_bCantWalk = false;
+    m_bCantWalk = xray::combat::conditionRestricted(m_fPower, m_fCantWalkPowerBegin, m_fCantWalkPowerEnd, m_bCantWalk);
     return m_bCantWalk;
 }
 
@@ -501,19 +755,14 @@ bool CActorCondition::IsCantWalkWeight()
 
 bool CActorCondition::IsCantSprint() const
 {
-    if (m_fPower < m_fCantSprintPowerBegin)
-        m_bCantSprint = true;
-    else if (m_fPower > m_fCantSprintPowerEnd)
-        m_bCantSprint = false;
+    m_bCantSprint = xray::combat::conditionRestricted(m_fPower, m_fCantSprintPowerBegin, m_fCantSprintPowerEnd, m_bCantSprint);
     return m_bCantSprint;
 }
 
 bool CActorCondition::IsLimping() const
 {
-    if (m_fPower < m_fLimpingPowerBegin || GetHealth() < m_fLimpingHealthBegin)
-        m_bLimping = true;
-    else if (m_fPower > m_fLimpingPowerEnd && GetHealth() > m_fLimpingHealthEnd)
-        m_bLimping = false;
+    m_bLimping = xray::combat::conditionLimping(m_fPower, GetHealth(), m_fLimpingPowerBegin,
+        m_fLimpingPowerEnd, m_fLimpingHealthBegin, m_fLimpingHealthEnd, m_bLimping);
     return m_bLimping;
 }
 extern bool g_bShowHudInfo;
@@ -828,7 +1077,7 @@ bool CActorCondition::ApplyInfluence(const SMedicineInfluenceValues& V, const sh
     if (m_curr_medicine_influence.InProcess())
         return false;
 
-    if (m_object->Local() && m_object == Level().CurrentViewEntity())
+    if (!object().zoneAlifeTarget() && m_object->Local() && m_object == Level().CurrentViewEntity())
     {
         if (pSettings->line_exist(sect, "use_sound"))
         {
@@ -852,7 +1101,7 @@ bool CActorCondition::ApplyBooster(const SBooster& B, const shared_str& sect)
 {
     if (B.fBoostValue > 0.0f)
     {
-        if (m_object->Local() && m_object == Level().CurrentViewEntity())
+        if (!object().zoneAlifeTarget() && m_object->Local() && m_object == Level().CurrentViewEntity())
         {
             if (pSettings->line_exist(sect, "use_sound"))
             {

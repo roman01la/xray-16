@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "WeaponShotgun.h"
+#include "CombatRules.h"
 #include "Entity.h"
 #include "ParticlesObject.h"
 #include "xrEngine/xr_level_controller.h"
@@ -45,7 +46,7 @@ bool CWeaponShotgun::Action(u16 cmd, u32 flags)
         return true;
 
     if (m_bTriStateReload && GetState() == eReload && cmd == kWPN_FIRE && flags & CMD_START &&
-        m_sub_state == eSubstateReloadInProcess) //остановить перезагрузку
+        xray::combat::tubeReloadCanInterrupt(static_cast<xray::combat::TubeReloadPhase>(m_sub_state))) //остановить перезагрузку
     {
         AddCartridge(1);
         m_sub_state = eSubstateReloadEnd;
@@ -59,32 +60,25 @@ void CWeaponShotgun::OnAnimationEnd(u32 state)
     if (!m_bTriStateReload || state != eReload)
         return inherited::OnAnimationEnd(state);
 
-    switch (m_sub_state)
-    {
-    case eSubstateReloadBegin:
-    {
-        m_sub_state = eSubstateReloadInProcess;
-        SwitchState(eReload);
-    }
-    break;
-
-    case eSubstateReloadInProcess:
-    {
-        if (0 != AddCartridge(1))
-        {
-            m_sub_state = eSubstateReloadEnd;
-        }
-        SwitchState(eReload);
-    }
-    break;
-
-    case eSubstateReloadEnd:
+    using xray::combat::TubeReloadPhase;
+    static_assert(eSubstateReloadBegin == static_cast<unsigned>(TubeReloadPhase::Open));
+    static_assert(eSubstateReloadInProcess == static_cast<unsigned>(TubeReloadPhase::Insert));
+    static_assert(eSubstateReloadEnd == static_cast<unsigned>(TubeReloadPhase::Close));
+    if (m_sub_state > eSubstateReloadEnd)
+        return;
+    const auto phase = static_cast<TubeReloadPhase>(m_sub_state);
+    const bool insertionFailed = phase == TubeReloadPhase::Insert && AddCartridge(1) != 0;
+    const auto next = xray::combat::tubeReloadAfterAnimation(phase, insertionFailed);
+    if (next == TubeReloadPhase::Complete)
     {
         m_sub_state = eSubstateReloadBegin;
         SwitchState(eIdle);
     }
-    break;
-    };
+    else
+    {
+        m_sub_state = static_cast<u32>(next);
+        SwitchState(eReload);
+    }
 }
 
 void CWeaponShotgun::Reload()
@@ -182,22 +176,14 @@ bool CWeaponShotgun::HaveCartridgeInInventory(u8 cnt)
     if (!m_pInventory)
         return false;
 
-    u32 ac = GetAmmoCount(m_ammoType);
-    if (ac < cnt)
-    {
-        for (u8 i = 0; i < u8(m_ammoTypes.size()); ++i)
-        {
-            if (m_ammoType == i)
-                continue;
-            ac += GetAmmoCount(i);
-            if (ac >= cnt)
-            {
-                m_ammoType = i;
-                break;
-            }
-        }
-    }
-    return ac >= cnt;
+    u32 ac = 0;
+    const unsigned selected = xray::combat::selectReloadAmmo(
+        static_cast<unsigned>(m_ammoTypes.size()), m_ammoType, false, false,
+        [&](unsigned candidate) { ac += GetAmmoCount(static_cast<u8>(candidate)); return ac >= cnt; });
+    if (selected >= m_ammoTypes.size())
+        return false;
+    m_ammoType = static_cast<u8>(selected);
+    return true;
 }
 
 u8 CWeaponShotgun::AddCartridge(u8 cnt)

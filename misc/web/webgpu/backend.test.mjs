@@ -410,19 +410,20 @@ test("native clears and presentation flush pending pass state and retain compati
       objects:new WeakMap([[fb,{}],[color,{}],[depth,{}]]),pipelineStateKey:'cached',
     });r.gl.frontend=r;r.begin=mask=>{r.cleared={mask,fbo:r.fbo,state:structuredClone(r.state)};};return r;
   };
-  const n=make(),l=make();let pending=true;
+  const n=make();let pending=true;const clears=[];
+  n.objects.set(color,{gpu:{},format:'rgba8unorm'});
+  n.objects.set(depth,{gpu:{},format:'depth24plus-stencil8'});
+  n.endPass=()=>{}; n.view=t=>t;
+  n.enc=()=>({beginRenderPass(d){clears.push(d);return {end(){}};}});
   n.flushNativeStates=()=>{if(pending){n.consumeStateBatch(new Uint32Array([15,EngineFormat.FRAMEBUFFER,1,0,0,0]),0,6,undefined,[null,fb],[null,color,depth]);pending=false;}};
-  l.call('bindFramebuffer',[EngineFormat.FRAMEBUFFER,fb]);
   n.clearNativeTarget(color,EngineFormat.COLOR_BUFFER_BIT,0.25,0.5,0.75,1,1,0);
-  l.call('framebufferTexture2D',[EngineFormat.FRAMEBUFFER,EngineFormat.COLOR_ATTACHMENT0,EngineFormat.TEXTURE_2D,color,0]);
-  l.call('colorMask',[true,true,true,true]);l.call('clearColor',[0.25,0.5,0.75,1]);l.clear(EngineFormat.COLOR_BUFFER_BIT);
-  assert.deepEqual(n.cleared,l.cleared);
+  assert.deepEqual(clears[0],{colorAttachments:[{view:color,loadOp:'clear',storeOp:'store',clearValue:[0.25,0.5,0.75,1]}]});
   const mask=EngineFormat.DEPTH_BUFFER_BIT|EngineFormat.STENCIL_BUFFER_BIT;
   n.clearNativeTarget(depth,mask,0,0,0,0,0.5,7);
-  l.call('framebufferTexture2D',[EngineFormat.FRAMEBUFFER,EngineFormat.DEPTH_STENCIL_ATTACHMENT,EngineFormat.TEXTURE_2D,depth,0]);
-  l.call('depthMask',[true]);l.call('clearDepth',[0.5]);l.call('stencilMask',[0xffffffff]);l.call('clearStencil',[7]);l.clear(mask);
-  assert.deepEqual(n.cleared,l.cleared);assert.deepEqual(n.info(fb),l.info(fb));
-  pending=true;n.call('bindFramebuffer',[EngineFormat.DRAW_FRAMEBUFFER,null]);assert.equal(n.fbo,null);assert.equal(n.readFbo,fb);
+  assert.deepEqual(clears[1].colorAttachments,[]);
+  assert.equal(clears[1].depthStencilAttachment.view,depth);
+  assert.equal(clears[1].depthStencilAttachment.stencilClearValue,7);
+  assert.equal(n.info(fb).attachments,undefined,'standalone clear must not corrupt cached engine attachments');
   pending=true;let bindings=false,uniforms=false;
   n.flushNativeBindings=()=>{bindings=true;};n.flushNativeUniforms=()=>{uniforms=true;};
   n.blit=args=>{assert.equal(pending,false);assert.equal(bindings,true);assert.equal(uniforms,true);assert.equal(n.readFbo,fb);assert.equal(n.fbo,null);assert.deepEqual(args,[0,0,1280,720,0,0,1280,720,EngineFormat.COLOR_BUFFER_BIT,EngineFormat.NEAREST]);};
@@ -524,4 +525,13 @@ test('failed asynchronous screenshot mapping releases its GPU readback buffer', 
     endPass(){},enc(){return {copyTextureToBuffer(){order.push('copy');}};},flush(){order.push('submit');}});
   await r.captureScreenshot('/test.jpg');
   assert.deepEqual(order,['copy','submit','destroy']);
+});
+
+test('multisample color copies encode a resolve pass, not an illegal texture copy',()=>{
+  const r=Object.create(GPUFrontend.prototype),src={},dst={},views=[],passes=[];
+  r.objects=new WeakMap([[src,{gpu:{},format:'rgba8unorm',samples:4}],[dst,{gpu:{},format:'rgba8unorm',samples:1}]]);
+  r.endPass=()=>{};r.view=t=>(views.push(t),t);r.enc=()=>({beginRenderPass:d=>(passes.push(d),{end(){}}),copyTextureToTexture(){throw Error('must resolve')}});
+  r.copyNativeTexture(src,dst,4,4);
+  assert.deepEqual(views,[src,dst]);assert.equal(passes[0].colorAttachments[0].resolveTarget,dst);assert.equal(passes[0].colorAttachments[0].loadOp,'load');
+  r.info(dst).samples=4;assert.throws(()=>r.copyNativeTexture(src,dst,4,4),/Invalid multisample/);
 });

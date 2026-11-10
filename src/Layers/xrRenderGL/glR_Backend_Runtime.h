@@ -405,6 +405,17 @@ IC u32 GetIndexCount(D3DPRIMITIVETYPE T, u32 iPrimitiveCount)
 }
 
 
+#ifdef XR_PLATFORM_WEB
+ICF void CBackend::RenderDetails(u32 instanceBuffer, u32 instances, u32 baseV, u32 countV, u32 startI, u32 PC)
+{
+    stat.render.calls++;
+    stat.render.verts += countV * instances;
+    stat.render.polys += PC * instances;
+    constants.flush();
+    SubmitWebGPUDetailDraw(decl, vb, ib, vb_stride, pp, instanceBuffer, instances, PC * 3, startI, baseV);
+}
+#endif
+
 ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV, u32 startI, u32 PC)
 {
     GLenum Topology = TranslateTopology(T);
@@ -415,7 +426,7 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV,
     stat.render.polys += PC;
     constants.flush();
 #ifdef XR_PLATFORM_WEB
-    SubmitWebGPUDraw(decl, vb, ib, vb_stride, pp, Topology, true, iIndexCount, startI, baseV);
+    SubmitWebGPUDraw(decl, vb, ib, vb_stride, pp, Topology, true, iIndexCount, startI, baseV, webTessellationLOD);
 #else
     CHK_GL(glDrawElementsBaseVertex(Topology, iIndexCount, GL_UNSIGNED_SHORT, (void*)(startI * sizeof(GLushort)), baseV));
 #endif
@@ -432,7 +443,7 @@ ICF void CBackend::Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC)
     stat.render.polys += PC;
     constants.flush();
 #ifdef XR_PLATFORM_WEB
-    SubmitWebGPUDraw(decl, vb, 0, vb_stride, pp, Topology, false, iIndexCount, startV, 0);
+    SubmitWebGPUDraw(decl, vb, 0, vb_stride, pp, Topology, false, iIndexCount, startV, 0, webTessellationLOD);
         return;
 #endif
     CHK_GL(glDrawArrays(Topology, startV, iIndexCount));

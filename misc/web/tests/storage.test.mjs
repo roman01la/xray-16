@@ -100,11 +100,18 @@ test("engine sync replaces same-size stale files and refuses corrupt or failed d
   }
 });
 
-test("unified graphics defaults are seeded once in each mode's own app-data directory", async () => {
+test("unified settings are seeded once in each mode's own app-data directory", async () => {
   const source = await readFile(new URL("../page/ingest-worker.js", import.meta.url), "utf8");
   const files = new Map();
   const directory = (path) => ({
     async getDirectoryHandle(name) { return directory(`${path}/${name}`); },
+    async *entries() {
+      for (const key of files.keys()) {
+        const name = key.slice(path.length + 1);
+        if (key.startsWith(path + "/") && !name.includes("/"))
+          yield [name, { kind: "file" }];
+      }
+    },
     async getFileHandle(name, { create = false } = {}) {
       const key = `${path}/${name}`;
       if (!files.has(key)) {
@@ -124,7 +131,6 @@ test("unified graphics defaults are seeded once in each mode's own app-data dire
       };
     },
   });
-  let response;
   const context = vm.createContext({
     Blob,
     Uint8Array,
@@ -134,20 +140,41 @@ test("unified graphics defaults are seeded once in each mode's own app-data dire
       locks: { request: async (key, prepare) => prepare() },
     },
     fetch: async () => ({ ok: true, json: async () => ({ files: [], retired: [] }) }),
-    postMessage: (result) => (response = result),
+    postMessage: () => {},
   });
   vm.runInContext(source.replace("import {migrateStockBindings} from './stock-bindings.mjs';", ""), context);
+  context.navigator.languages = ["ja-JP", "pl-PL", "en-US"];
   for (const [root, appDirectory] of [["stream-cop", "_appdata_"], ["zone-engine-preview-public", "_multiplayer_/v1"]]) {
-    const data = { id: 1, type: "sync-engine-data", root, appDirectory };
     const config = `/${root}/${appDirectory}/user.ltx`;
-    await context.onmessage({ data });
-    assert.equal(response.type, "done");
-    assert.equal(files.get(config), "_preset Default\n");
-    const custom = "_preset Low\r\nvid_mode 1280x720\r\n";
+    await context.syncEngineData(root, appDirectory, true);
+    assert.equal(files.get(config), root === "stream-cop" ? "_preset Default\ng_language pol\n" : "_preset Default\n");
+    const custom = "_preset Low\r\nvid_mode 1280x720\r\ng_language ukr\r\n";
     files.set(config, custom);
-    await context.onmessage({ data });
-    assert.equal(response.type, "done");
+    await context.syncEngineData(root, appDirectory, true);
     assert.equal(files.get(config), custom);
   }
   assert.equal(files.has("/zone-engine-preview-public/_appdata_/user.ltx"), false);
+
+  const config = "/stream-cop/_appdata_/user.ltx";
+  const save = "/stream-cop/_appdata_/savedgames/Quicksave.SCOP";
+  files.delete(config);
+  files.set(save, "legacy save");
+  await context.syncEngineData("stream-cop", undefined, true);
+  assert.equal(files.get(config), "_preset Default\n");
+  assert.equal(files.get(save), "legacy save");
+
+  files.delete(config);
+  files.delete(save);
+  context.navigator.languages = ["ja-JP", "zh-Hant"];
+  await context.syncEngineData("stream-cop", undefined, true);
+  assert.equal(files.get(config), "_preset Default\ng_language eng\n");
+
+  context.navigator.languages = [];
+  context.navigator.language = "uk-UA";
+  await context.syncEngineData("stream-cop", undefined, true);
+  assert.equal(files.get(config), "_preset Default\ng_language eng\n");
+
+  files.delete(config);
+  await context.syncEngineData("stream-cop", undefined, true);
+  assert.equal(files.get(config), "_preset Default\ng_language ukr\n");
 });

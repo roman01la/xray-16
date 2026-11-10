@@ -7,6 +7,7 @@ import {createInventoryPoll} from './inventory-abi.mjs';
 import {createCorpseSearchPoll} from './corpse-search-abi.mjs';
 import {createWorldItemsPoll} from './world-items-abi.mjs';
 import {MAX_DETONATIONS,MAX_GRENADES,MAX_GUNSHOTS} from './control.mjs';
+import {ENVIRONMENT_OPCODE,LOOP_SOUND_OPCODE} from './protocol.mjs';
 // Emscripten prewarms many pthreads. Ports remain dormant until the C++ frame
 // hook executes in the application pthread; pool workers cannot consume frames.
 export function createPthreadBridge(client,{epoch,contract=client.contract,onError=()=>{},onApplied=()=>{}}) {
@@ -38,25 +39,31 @@ export function createPthreadBridge(client,{epoch,contract=client.contract,onErr
     },close,
   };
 }
-export function installDormantEngineBridge(scope,port,{epoch,contract,content=null,getHeap}) {
+export function installDormantEngineBridge(scope,port,{epoch,contract,content=null,nativeMovement=false,getHeap}) {
   if(scope.zoneEnginePoll)throw new Error('Engine worker bridge already installed');
   let endpoint=null,poll=null,appearancePoll=null,inventoryPoll=null,worldItemsPoll=null,corpseSearchPoll=null,misfireLife=null;
   let detector=null,detectorLife=null,detectorUntil=0,detectorPending=false,detectorSelection=null,localClimbing=false;
   const onWorkerError=event=>endpoint?.send({type:'engine-error',message:String(event.error?.stack||event.message||'Engine worker failed').slice(0,4096)});
   scope.addEventListener?.('error',onWorkerError);
   let predictor=null,predictionFailed=false,lastSnapshot=null,lastHistory=[];
+  let nativeMedia=null;
   const assets={};
   const level=levelForWorld(contract.world);
   const verifier=createContentVerifier(content,getHeap,error=>{console.error(error.message);endpoint?.close(error.message);},(key,bytes)=>{
+    if(nativeMovement)return;
     assets[key]=bytes;
     if(assets.geometry&&assets.materials)void createWasmMotor(level,content,assets).then(motor=>{
-      predictor=new Reconciler(motor);if(lastSnapshot)predictor.snapshotReceived(lastSnapshot,endpoint?.vitals);predictor.inputsReceived(lastHistory);
+      predictor=new Reconciler(motor,undefined,contract.tickHz);
+      predictor.update(lastSnapshot,lastHistory,endpoint?.vitals);
       console.log('Zone prediction: shared Rust motor ready');
     }).catch(error=>{predictionFailed=true;console.error(error);}).finally(()=>{delete assets.geometry;delete assets.materials;});
   });
+  scope.zoneNativeInputSequence=()=>lastHistory.at(-1)?.sequence ?? lastSnapshot?.ack ?? 0;
+  scope.zoneNativeMotionFlags=()=>endpoint?.vitals?.[6] ?? 3;
+  scope.zoneNativeMotionScale=()=> (endpoint?.vitals?.[10] ?? 1000)/1000;
   scope.zoneEnginePrediction=pointer=>{
     if(!predictor||predictionFailed||endpoint?.closed)return 0;
-    const p=predictor.position();if(!p)return 0;
+    const p=predictor.renderPosition();if(!p)return 0;
     const heap=getHeap(),at=Number(pointer);new Float32Array(heap.buffer,heap.byteOffset+at,4).set([p.x,p.y,p.z,p.yaw]);return 1;
   };
   scope.zoneEngineWorldSpace=()=>level!==null;
@@ -65,12 +72,15 @@ export function installDormantEngineBridge(scope,port,{epoch,contract,content=nu
   scope.zoneEnginePoll=(pointer,capacity)=>{
     if(!endpoint){endpoint=new EngineBridgeEndpoint(port,{epoch,contract});poll=createEnginePoll(endpoint,getHeap);appearancePoll=createAppearancePoll(endpoint,getHeap);inventoryPoll=createInventoryPoll(endpoint,getHeap);worldItemsPoll=createWorldItemsPoll(endpoint,getHeap);corpseSearchPoll=createCorpseSearchPoll(endpoint,getHeap);}
     try {
-      if(endpoint.snapshot){
+      const hasSnapshot=!!endpoint.snapshot;
+      if(hasSnapshot){
         lastSnapshot=endpoint.snapshot.snapshot;
+        if(endpoint.snapshot.nativeMedia)nativeMedia=endpoint.snapshot.nativeMedia;
         localClimbing=!!(lastSnapshot.entities.find(entity=>entity.id===lastSnapshot.playerId)?.flags&16);
-        if(!predictionFailed)predictor?.snapshotReceived(lastSnapshot,endpoint.vitals);
       }
-      const history=endpoint.consumePredictionInputs();if(history){lastHistory=history;if(!predictionFailed)predictor?.inputsReceived(history);}
+      const history=endpoint.consumePredictionInputs();if(history)lastHistory=history;
+      if(!predictionFailed&&(hasSnapshot||history))
+        predictor?.update(hasSnapshot?lastSnapshot:null,history,endpoint.vitals);
     }catch(error){predictionFailed=true;console.error('Prediction disabled:',error.message);}
     return poll(pointer,capacity);
   };
@@ -114,6 +124,27 @@ export function installDormantEngineBridge(scope,port,{epoch,contract,content=nu
       heap[start+label.length]=0;
     }
     return true;
+  };
+  scope.zoneEngineNpcMediaPoll=(pointer,capacity)=>{
+    const media=nativeMedia;
+    nativeMedia=null;
+    if(!media)return 0;
+    const heap=getHeap(),start=Number(pointer);
+    const environment=media.environment?[media.environment]:[];
+    const loops=media.loops??[];
+    const size=media.poses.concat(media.sounds,environment,loops).reduce((sum,packet)=>sum+8+packet.length,0);
+    if(!Number.isSafeInteger(start)||start<0||size>capacity||start+size>heap.byteLength)return 0;
+    const view=new DataView(heap.buffer,heap.byteOffset+start,size);
+    let offset=0;
+    for(const [type,packets] of [[ENVIRONMENT_OPCODE,environment],[33,media.poses],[34,media.sounds],[LOOP_SOUND_OPCODE,loops]]){
+      for(const packet of packets){
+        view.setUint32(offset,type,true);
+        view.setUint32(offset+4,packet.length,true);
+        heap.set(packet,start+offset+8);
+        offset+=8+packet.length;
+      }
+    }
+    return size;
   };
   scope.zoneEngineAppearancePoll=(pointer,capacity)=>appearancePoll?appearancePoll(pointer,capacity):0;
   scope.zoneEngineDetonations=(pointer,capacity)=>{
@@ -226,9 +257,10 @@ export function installDormantEngineBridge(scope,port,{epoch,contract,content=nu
   scope.zoneEngineConsumeWeaponReload=()=>endpoint?.consumeWeaponReload()??null;
   scope.zoneEngineTriggerStop=()=>endpoint?.stopTrigger();
   scope.zoneEngineView=(firstPerson,crosshair)=>endpoint?.send({type:'view',firstPerson,crosshair});
-  scope.zoneEngineApplied=(tick,entities)=>endpoint?.send({type:'engine-applied',tick,entities,...(content?{prediction:{ready:!!predictor&&!predictionFailed,active:!!predictor&&!predictionFailed&&!!predictor.position(),replays:predictor?.replays||0}}:{})});
+  scope.zoneEngineApplied=(tick,entities)=>endpoint?.send({type:'engine-applied',tick,entities,...(content&&!nativeMovement?{prediction:{ready:!!predictor&&!predictionFailed,active:!!predictor&&!predictionFailed&&!!predictor.position(),replays:predictor?.replays||0}}:{})});
   return ()=>{
-    delete scope.zoneEngineGunshots;
+    delete scope.zoneEngineGunshots;delete scope.zoneEngineNpcMediaPoll;
+    delete scope.zoneNativeInputSequence;delete scope.zoneNativeMotionFlags;delete scope.zoneNativeMotionScale;
     scope.removeEventListener?.('error',onWorkerError);if(endpoint)endpoint.close();else port.close();delete scope.zoneEnginePoll;delete scope.zoneEngineAppearancePoll;delete scope.zoneEngineApplied;delete scope.zoneEngineInput;delete scope.zoneEngineWorldSpace;delete scope.zoneEngineVerifyAsset;delete scope.zoneEngineContentStatus;delete scope.zoneEnginePrediction;delete scope.zoneEngineFire;delete scope.zoneEngineGrenade;delete scope.zoneEngineKnife;delete scope.zoneEngineGrenadesPoll;delete scope.zoneEngineTriggerStop;delete scope.zoneEngineWeaponMisfire;delete scope.zoneEngineConsumeWeaponFire;delete scope.zoneEngineConsumeWeaponReload;delete scope.zoneEngineView;delete scope.zoneEngineReload;delete scope.zoneEngineUseTravel;delete scope.zoneEngineWeaponSlot;delete scope.zoneEnginePendingWeaponSlot;delete scope.zoneEngineSelectWeapon;delete scope.zoneEngineRespawn;delete scope.zoneEngineCorpseSearchPoll;delete scope.zoneEngineCorpseIntent;delete scope.zoneEngineInventoryPoll;delete scope.zoneEngineWorldItemsPoll;delete scope.zoneEngineInventoryMove;delete scope.zoneEngineVitals;delete scope.zoneEngineInventoryBatch;delete scope.zoneEngineInventoryApplied;delete scope.zoneEngineDetonations;delete scope.zoneEngineToggleDetector;delete scope.zoneEngineDetectorHint;delete scope.zoneEngineAimAllowed;
   };
 }

@@ -1,5 +1,9 @@
 // Protocol v3: little endian; keep in sync with server/src/protocol.rs.
 export const newer = (a, b) => ((a - b) | 0) > 0;
+export const NPC_POSE_MAX_BYTES = 8 + 32 + 64*10 + 10 + 127 + 14;
+export const ENVIRONMENT_OPCODE = 35;
+export const ENVIRONMENT_BYTES = 152;
+export const LOOP_SOUND_OPCODE = 36;
 export function encodeInput(sequence, {x = 0, z = 0, yaw = 0, pitch = 0, sprint = false, jump = false, crouch = false, walk = false, aiming = false} = {}, trigger = null) {
   const heading=trigger?trigger.yaw:yaw, elevation=trigger?trigger.pitch:pitch;
   if (![x,z,heading,elevation].every(Number.isFinite)) throw new TypeError('Non-finite input');

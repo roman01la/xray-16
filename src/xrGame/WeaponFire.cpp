@@ -139,7 +139,21 @@ void CWeapon::FireEnd()
 void CWeapon::StartFlameParticles2()
 {
     CShootingObject::StartParticles(m_pFlameParticles2, m_sFlameParticles2.c_str(), get_LastFP2());
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    recordZoneNpcShot(true);
+#endif
 }
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+void CWeapon::recordZoneNpcShot(bool launcher)
+{
+    if (!Device.IsHeadlessAlifeHost() || !H_Parent() || smart_cast<const CActor*>(H_Parent()))
+        return;
+    m_zoneNpcShot.muzzle = get_ParticlesXFORM();
+    m_zoneNpcShot.muzzle.c = launcher ? get_LastFP2() : get_LastFP();
+    m_zoneNpcShot.time = Device.dwTimeGlobal;
+    m_zoneNpcShot.launcher = launcher;
+}
+#endif
 void CWeapon::StopFlameParticles2() { CShootingObject::StopParticles(m_pFlameParticles2); }
 void CWeapon::UpdateFlameParticles2()
 {

@@ -4,6 +4,7 @@
 #include "CustomOutfit.h"
 #include "Inventory.h"
 #include "Wound.h"
+#include "CombatRules.h"
 #include "Level.h"
 #include "game_cl_base.h"
 #include "entity_alive.h"
@@ -294,7 +295,7 @@ void CEntityCondition::UpdateCondition()
 }
 
 float CEntityCondition::HitOutfitEffect(
-    float hit_power, ALife::EHitType hit_type, s16 element, float ap, bool& add_wound)
+    float hit_power, ALife::EHitType hit_type, s16 element, float ap, bool& add_wound, bool multiplayer)
 {
     CInventoryOwner* pInvOwner = smart_cast<CInventoryOwner*>(m_object);
     if (!pInvOwner)
@@ -307,16 +308,66 @@ float CEntityCondition::HitOutfitEffect(
 
     float new_hit_power = hit_power;
     if (pOutfit)
-        new_hit_power = pOutfit->HitThroughArmor(hit_power, element, ap, add_wound, hit_type);
+        new_hit_power = pOutfit->HitThroughArmor(hit_power, element, ap, add_wound, hit_type, multiplayer);
 
     if (pHelmet)
-        new_hit_power = pHelmet->HitThroughArmor(new_hit_power, element, ap, add_wound, hit_type);
+        new_hit_power = pHelmet->HitThroughArmor(new_hit_power, element, ap, add_wound, hit_type, multiplayer);
 
     if (bDebug)
         Msg("new_hit_power = %.3f  hit_type = %s  ap = %.3f", new_hit_power, ALife::g_cafHitType2String(hit_type), ap);
 
     return new_hit_power;
 }
+
+CEntityCondition::PhysicalHitDamage CEntityCondition::ResolvePhysicalHit(float& power, ALife::EHitType type)
+{
+    float boost = 0.f;
+    bool scaled = false;
+    switch (type)
+    {
+    case ALife::eHitTypeExplosion: boost = m_fBoostExplImmunity; break;
+    case ALife::eHitTypeStrike:
+    case ALife::eHitTypePhysicStrike: boost = m_fBoostStrikeImmunity; break;
+    case ALife::eHitTypeFireWound: boost = m_fBoostFireWoundImmunity; scaled = true; break;
+    case ALife::eHitTypeWound: boost = m_fBoostWoundImmunity; scaled = true; break;
+    default: R_ASSERT2(false, "not a physical condition hit"); break;
+    }
+    power *= GetHitImmunity(type) - boost;
+    float health = power * m_fHealthHitPart;
+    if (scaled) health *= m_fHitBoneScale;
+    return {health, power * m_fPowerHitPart};
+}
+
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+CEntityCondition::ZoneArmourHit CEntityCondition::PreviewZoneArmourHit(
+    float power, ALife::EHitType type, u16 bone, float penetration)
+{
+    bool addWound = type != ALife::eHitTypeStrike;
+    auto* owner = smart_cast<CInventoryOwner*>(m_object);
+    if (!owner)
+    {
+        float resolved = power;
+        const auto damage = ResolvePhysicalHit(resolved, type);
+        return {power, -1.f, -1.f, addWound, damage.health, damage.power};
+    }
+    auto* outfit = owner->inventory().ItemFromSlot(OUTFIT_SLOT);
+    auto* helmet = owner->inventory().ItemFromSlot(HELMET_SLOT);
+    const float previousOutfit = outfit ? outfit->GetCondition() : -1.f;
+    const float previousHelmet = helmet ? helmet->GetCondition() : -1.f;
+    const auto reduced = HitOutfitEffect(power, type, bone, penetration, addWound, true);
+    float resolved = reduced;
+    const auto damage = ResolvePhysicalHit(resolved, type);
+    const ZoneArmourHit result{reduced, outfit ? outfit->GetCondition() : -1.f,
+        helmet ? helmet->GetCondition() : -1.f, addWound, damage.health, damage.power};
+    // Stock outfit and helmet hits only change item condition. Restore the
+    // mirror before returning the proposed wear to the persistence authority.
+    if (outfit)
+        outfit->SetCondition(previousOutfit);
+    if (helmet)
+        helmet->SetCondition(previousHelmet);
+    return result;
+}
+#endif
 
 float CEntityCondition::HitPowerEffect(float power_loss)
 {
@@ -378,82 +429,65 @@ CWound* CEntityCondition::ConditionHit(SHit* pHDS)
 
     float hit_power_org = pHDS->damage();
     float hit_power = hit_power_org;
-    hit_power = HitOutfitEffect(hit_power_org, pHDS->hit_type, pHDS->boneID, pHDS->armor_piercing, bAddWound);
+    hit_power = HitOutfitEffect(hit_power_org, pHDS->hit_type, pHDS->boneID, pHDS->armor_piercing,
+        bAddWound, !IsGameTypeSingle() || m_zoneConditionProposal);
 
     switch (pHDS->hit_type)
     {
     case ALife::eHitTypeTelepatic:
-        hit_power -= m_fBoostTelepaticProtection;
-        if (hit_power < 0.f)
-            hit_power = 0.f;
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostTelepaticImmunity;
-        ChangePsyHealth(-hit_power);
-        m_fHealthLost = hit_power * m_fHealthHitPart;
-        m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
-        bAddWound = false;
-        break;
     case ALife::eHitTypeLightBurn:
     case ALife::eHitTypeBurn:
-        hit_power *= GetHitImmunity(ALife::eHitTypeBurn) - m_fBoostBurnImmunity;
-        m_fHealthLost = hit_power * m_fHealthHitPart * m_fHitBoneScale;
-        m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
-        //		bAddWound		=  is_special_hit_2_self;
-        bAddWound = false;
-        break;
     case ALife::eHitTypeChemicalBurn:
-        hit_power -= m_fBoostChemicalBurnProtection;
-        if (hit_power < 0.f)
-            hit_power = 0.f;
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostChemicalBurnImmunity;
-        m_fHealthLost = hit_power * m_fHealthHitPart;
-        m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
-        bAddWound = false;
-        break;
     case ALife::eHitTypeShock:
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostShockImmunity;
-        m_fHealthLost = hit_power * m_fHealthHitPart;
-        m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
-        bAddWound = false;
-        break;
     case ALife::eHitTypeRadiation:
-        hit_power -= m_fBoostRadiationProtection;
-        if (hit_power < 0.f)
-            hit_power = 0.f;
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostRadiationImmunity;
-        m_fDeltaRadiation += hit_power;
+    {
+        using xray::combat::FieldHit;
+        FieldHit kind = FieldHit::Shock;
+        float protection = 0.f;
+        float boost = m_fBoostShockImmunity;
+        auto immunityType = pHDS->hit_type;
+        switch (pHDS->hit_type)
+        {
+        case ALife::eHitTypeTelepatic:
+            kind = FieldHit::Psy; protection = m_fBoostTelepaticProtection; boost = m_fBoostTelepaticImmunity; break;
+        case ALife::eHitTypeLightBurn:
+        case ALife::eHitTypeBurn:
+            kind = FieldHit::Heat; boost = m_fBoostBurnImmunity; immunityType = ALife::eHitTypeBurn; break;
+        case ALife::eHitTypeChemicalBurn:
+            kind = FieldHit::Chemical; protection = m_fBoostChemicalBurnProtection; boost = m_fBoostChemicalBurnImmunity; break;
+        case ALife::eHitTypeRadiation:
+            kind = FieldHit::Radiation; protection = m_fBoostRadiationProtection; boost = m_fBoostRadiationImmunity; break;
+        default: break;
+        }
+        const auto damage = xray::combat::fieldDamage(kind, hit_power, protection,
+            GetHitImmunity(immunityType), boost, m_fHealthHitPart, m_fPowerHitPart, m_fHitBoneScale);
         bAddWound = false;
-        return NULL;
-        break;
-    case ALife::eHitTypeExplosion:
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostExplImmunity;
-        m_fHealthLost = hit_power * m_fHealthHitPart;
+        if (kind == FieldHit::Radiation)
+        {
+            m_fDeltaRadiation += damage.radiation;
+            return NULL;
+        }
+        if (kind == FieldHit::Psy)
+            ChangePsyHealth(-damage.psy);
+        m_fHealthLost = damage.health;
         m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
+        m_fDeltaPower -= damage.power;
         break;
+    }
+    case ALife::eHitTypeExplosion:
     case ALife::eHitTypeStrike:
     case ALife::eHitTypePhysicStrike:
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostStrikeImmunity;
-        m_fHealthLost = hit_power * m_fHealthHitPart;
-        m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
-        bAddWound = false;
-        break;
     case ALife::eHitTypeFireWound:
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostFireWoundImmunity;
-        m_fHealthLost = hit_power * m_fHealthHitPart * m_fHitBoneScale;
-        m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
-        break;
     case ALife::eHitTypeWound:
-        hit_power *= GetHitImmunity(pHDS->hit_type) - m_fBoostWoundImmunity;
-        m_fHealthLost = hit_power * m_fHealthHitPart * m_fHitBoneScale;
+    {
+        const auto damage = ResolvePhysicalHit(hit_power, pHDS->hit_type);
+        m_fHealthLost = damage.health;
         m_fDeltaHealth -= CanBeHarmed() ? m_fHealthLost : 0;
-        m_fDeltaPower -= hit_power * m_fPowerHitPart;
+        m_fDeltaPower -= damage.power;
+        if (pHDS->hit_type == ALife::eHitTypeStrike || pHDS->hit_type == ALife::eHitTypePhysicStrike)
+            bAddWound = false;
         break;
+    }
     default: { R_ASSERT2(0, "unknown hit type");
     }
     break;
@@ -594,6 +628,22 @@ void CEntityCondition::remove_links(const IGameObject* object)
 
     m_pWho = m_object;
     m_iWhoID = m_object->ID();
+}
+
+void CEntityCondition::ApplyConsumableEffects(const shared_str& section)
+{
+    SMedicineInfluenceValues medicine;
+    medicine.Load(section);
+    ApplyInfluence(medicine, section);
+    for (u8 i = 0; i < (u8)eBoostMaxCount; ++i)
+    {
+        if (pSettings->line_exist(section.c_str(), ef_boosters_section_names[i]))
+        {
+            SBooster booster;
+            booster.Load(section, (EBoostParams)i);
+            ApplyBooster(booster, section);
+        }
+    }
 }
 
 bool CEntityCondition::ApplyInfluence(const SMedicineInfluenceValues& V, const shared_str& sect)

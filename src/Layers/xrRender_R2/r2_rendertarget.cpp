@@ -554,7 +554,13 @@ CRenderTarget::CRenderTarget()
     }
 
     // Check if SSAO Ultra is allowed
-    if (ps_r_ssao_mode != ssao_mode_hdao || !options.ssao_ultra)
+    // The browser executes Ultra through the original 48-valley pixel shader;
+    // ssao_ultra describes the separate desktop compute implementation.
+    if (ps_r_ssao_mode != ssao_mode_hdao
+#ifndef XR_PLATFORM_WEB
+        || !options.ssao_ultra
+#endif
+    )
         ps_r_ssao = _min(ps_r_ssao, 3);
 
     // HBAO

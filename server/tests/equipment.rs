@@ -21,6 +21,11 @@ fn catalog() -> Arc<Catalog> {
 }
 fn fixture_catalog(ballistics: bool) -> Arc<Catalog> {
     let definitions = [
+        ("wpn_knife",vec![("class","WP_KNIFE"),("slot","0"),("inv_weight","0.3"),
+            ("hit_type","wound"),("hit_type_2","wound"),("hit_power","0.4"),("hit_power_2","0.6"),
+            ("splash1_dist","1"),("splash2_dist","1"),("splash2_radius","1"),
+            ("splash1_direction","0,0,1"),("splash2_direction","0,0,1"),("splash2_hits_count","3"),
+            ("splash1_pervictim_hcount","1"),("splash_hit_divide_factor","0.75")]),
         ("hand_f1", vec![("class", "G_F1_S"), ("slot", "3"), ("inv_weight", "0.6"),
             ("force_min", "10"), ("force_const", "25"), ("force_max", "30"), ("force_grow_speed", "20"),
             ("destroy_time", "2500"), ("blast", "3"), ("blast_r", "5"), ("hit_type_blast", "explosion")]),
@@ -33,7 +38,7 @@ fn fixture_catalog(ballistics: bool) -> Arc<Catalog> {
             ("burn_immunity", "1"), ("telepatic_immunity", "1")]),
         ("inventory_box", vec![("class", "S_INVBOX")]),
         ("treatment", vec![("class", "S_FOOD"), ("inv_weight", "0.1"),
-            ("eat_portions_num", "2"), ("max_uses", "2"), ("use_condition", "true"), ("empty_weight", "0.02"), ("eat_health", "0.1"),
+            ("eat_portions_num", "2"), ("max_uses", "2"), ("use_condition", "true"), ("empty_weight", "0.02"), ("eat_health", "0.1"), ("eat_power", "0"), ("eat_satiety", "0"), ("eat_radiation", "0"), ("wounds_heal_perc", "0"),
             ("boost_time", "5"), ("boost_bleeding_restore", "0.02")]),
         (
             "inventory",
@@ -254,7 +259,7 @@ async fn buckshot_debits_once_and_rolls_back_every_victim_on_failure() {
         yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 };
     let group = |principal: &str, x, health, count: usize| {
         let target = ShotTarget { character: CharacterKey { principal: principal.into(), life: 0 },
-            bone: "bip01_spine2", distance: 8.0, speed_factor: 1.0, penetration: None };
+            bone: "bip01_spine2".into(), distance: 8.0, speed_factor: 1.0, penetration: None };
         let mut state = State::default();
         state.health = health;
         let authority = ShotVictim {
@@ -262,7 +267,7 @@ async fn buckshot_debits_once_and_rolls_back_every_victim_on_failure() {
             before: Record { revision: 0, state },
             location: at([x as f32, 0.0, 8.0]), shooter_location: at([0.0; 3]), combat_lock_ms: 60_000,
         };
-        FireVictim { authority, additional: vec![target; count - 1] }
+        FireVictim { authority, native: None, additional: vec![target; count - 1] }
     };
     let joined = store.inventory_request(context.clone(), Operation::LoadCondition).unwrap().await.unwrap().unwrap();
     let profile: RoundProfile = serde_json::from_value(joined["loadout"]["ballistics"].clone()).unwrap();
@@ -302,6 +307,164 @@ async fn buckshot_debits_once_and_rolls_back_every_victim_on_failure() {
     assert!((weapon.condition - 0.9955).abs() < 0.000_001);
     assert!(matches!(weapon.payload, ItemPayload::Weapon { cartridges, .. } if cartridges == ["ammo"]));
     drop(sql);
+    store.flush().await.unwrap();
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[tokio::test]
+async fn native_buckshot_commits_full_state_and_ammo_atomically() {
+    use zone_server::{combat::ShotTarget, survival::{FireVictim, Location, Record, ShotVictim, State}, world::CharacterKey};
+    let root = std::env::temp_dir().join(format!("zone-native-buckshot-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("zone.sqlite");
+    let catalog = fixture_catalog(true);
+    let mut db = Database::open(&path).unwrap();
+    db.set_catalog(catalog.clone());
+    let [(shooter, carry), (victim_a, carry_a), (victim_b, carry_b)] = ['a', 'b', 'c'].map(|key| {
+        let principal = db.execute(&key.to_string().repeat(64), Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
+        let carried = db.initialize_inventory(&principal).unwrap()["carried"].as_str().unwrap().to_owned();
+        (principal, carried)
+    });
+    let mut loaded = catalog.initial_state("shotgun").unwrap();
+    let ItemPayload::Weapon { cartridges, .. } = &mut loaded.payload else { unreachable!() };
+    cartridges.extend(["ammo".into(), "buck".into()]);
+    let gun = db.provision_inventory_item(&carry, "shotgun", &loaded, "slot:3").unwrap();
+    let knife=db.provision_inventory_item(&carry,"wpn_knife",&catalog.initial_state("wpn_knife").unwrap(),"slot:1").unwrap();
+    let carried_to_corpse = item(&mut db, &catalog, &carry_a, "ammo");
+    let outfit = db.provision_inventory_item(&carry_b, "outfit", &catalog.initial_state("outfit").unwrap(), "slot:7").unwrap();
+    drop(db);
+
+    let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
+    let context = Context { principal: shooter, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(),
+        position: [0.0; 3], eye_height: 1.55, interaction_radius: 2.0, collision: None,
+        expires: Instant::now() + Duration::from_secs(30) };
+    let at = |position| Location { world: context.world.clone(), content_revision: "fixture".into(), position,
+        yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 };
+    let checkpoint = |health:f32| {
+        let mut bytes=b"ZCS1".to_vec(); let mut values=[0.0f32;52];
+        values[0]=health;values[1]=0.63;values[5]=1.0;values[18]=1.0;values[19]=50.0;values[20]=60.0;
+        for value in values {bytes.extend_from_slice(&value.to_le_bytes());}
+        for value in [0u32,16,0,0] {bytes.extend_from_slice(&value.to_le_bytes());}
+        zone_server::native_condition::Checkpoint::parse(bytes).unwrap()
+    };
+    let native_state = |health| {
+        let mut raw=serde_json::to_value(State::default()).unwrap();
+        raw["health"]=json!(health);raw["power"]=json!(0.63);
+        raw["native_checkpoint"]=serde_json::to_value(checkpoint(health)).unwrap();
+        serde_json::from_value::<State>(raw).unwrap()
+    };
+    let seed=rusqlite::Connection::open(&path).unwrap();
+    for (id,health) in [(&victim_a,0.2),(&victim_b,1.0)] {
+        seed.execute("UPDATE inventory_characters SET condition=?1 WHERE principal=?2",
+            rusqlite::params![serde_json::to_string(&native_state(health)).unwrap(),id]).unwrap();
+    }
+    let joined = store.inventory_request(context.clone(), Operation::LoadCondition).unwrap().await.unwrap().unwrap();
+    let profile: RoundProfile = serde_json::from_value(joined["loadout"]["ballistics"].clone()).unwrap();
+    let group = |principal: &str, x, health, count: usize| {
+        let target = ShotTarget { character: CharacterKey { principal: principal.into(), life: 0 },
+            bone: "bip01_spine2".into(), distance: 8.0, speed_factor: 1.0, penetration: None };
+        let state = native_state(health);
+        let authority = ShotVictim {
+            target: target.clone(), context: Context { principal: principal.into(), position: [x, 0.0, 8.0], ..context.clone() },
+            before: Record { revision: 0, state },
+            location: at([x as f32, 0.0, 8.0]), shooter_location: at([0.0; 3]), combat_lock_ms: 60_000,
+        };
+        let equipment=seed.query_row("SELECT generation FROM inventory_characters WHERE principal=?1",[principal],|r|r.get::<_,i64>(0)).unwrap() as u64;
+        FireVictim { authority, native: Some(zone_server::native_condition::Shot {
+            attack:zone_server::native_condition::Attack::Firearm(profile),equipment,result:zone_server::native_condition::ResultState {
+                checkpoint:checkpoint(if principal==victim_a {0.0} else {0.44}),
+                wear:Some([if principal==victim_b {Some(0.37)} else {None},None]) }}),
+            additional: vec![target; count - 1] }
+    };
+    let joined = store.inventory_request(context.clone(), Operation::LoadCondition).unwrap().await.unwrap().unwrap();
+    let profile: RoundProfile = serde_json::from_value(joined["loadout"]["ballistics"].clone()).unwrap();
+    assert_eq!(profile.pellets, 15);
+    assert!(profile.spread.first > 3.0_f32.to_radians());
+    let fire = || store.inventory_request(context.clone(), Operation::FireWeapon(gun.clone(),
+        vec![group(&victim_a, -0.4, 0.2, 3), group(&victim_b, 0.4, 1.0, 2)],
+        FireState { traced: Some(profile), ..Default::default() })).unwrap();
+
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute_batch(&format!("CREATE TRIGGER reject_second_victim BEFORE UPDATE OF condition ON inventory_characters
+        WHEN OLD.principal='{victim_b}' BEGIN SELECT RAISE(ABORT,'second victim failed'); END;")).unwrap();
+    let item_revision = |id: &str| sql.query_row("SELECT revision FROM inventory_items WHERE id=?1", [id], |row| row.get::<_, u32>(0)).unwrap();
+    let char_state = |id: &str| sql.query_row("SELECT alive,condition_revision,corpse FROM inventory_characters WHERE principal=?1", [id],
+        |row| Ok((row.get::<_, bool>(0)?, row.get::<_, u32>(1)?, row.get::<_, Option<String>>(2)?))).unwrap();
+    assert!(fire().await.unwrap().is_err());
+    assert_eq!(item_revision(&gun), 0);
+    assert_eq!(item_revision(&outfit), 0);
+    assert_eq!(char_state(&victim_a), (true, 0, None));
+    assert_eq!(char_state(&victim_b), (true, 0, None));
+    sql.execute_batch("DROP TRIGGER reject_second_victim").unwrap();
+
+    let mut stale_round=group(&victim_b,0.4,1.0,2);
+    stale_round.native.as_mut().unwrap().attack=zone_server::native_condition::Attack::Firearm(RoundProfile{revision:profile.revision+1,..profile});
+    let rejected=store.inventory_request(context.clone(),Operation::FireWeapon(gun.clone(),vec![stale_round],
+        FireState{traced:Some(profile),..Default::default()})).unwrap().await.unwrap().unwrap();
+    assert_eq!(rejected["reason"],"stale_native_ballistics");
+    for mode in 0..3 {
+        let mut victim=group(&victim_b,0.4,1.0,2);
+        match mode {
+            0=>victim.native.as_mut().unwrap().equipment+=1,
+            1=>victim.authority.before.revision+=1,
+            _=>victim.native=None,
+        }
+        assert!(store.inventory_request(context.clone(),Operation::FireWeapon(gun.clone(),vec![victim],
+            FireState{traced:Some(profile),..Default::default()})).unwrap().await.unwrap().is_err());
+        assert_eq!(item_revision(&gun),0);
+        assert_eq!(item_revision(&outfit),0);
+        assert_eq!(char_state(&victim_b),(true,0,None));
+    }
+
+    let outcome = fire().await.unwrap().unwrap();
+    assert_eq!(outcome["shot"]["ammo"], 1);
+    assert_eq!(outcome["ballistics"]["pellets"], 1);
+    assert_eq!(outcome["volley"][0]["applied_pellets"], 3);
+    assert_eq!(outcome["volley"][1]["applied_pellets"], 2);
+    assert_eq!(item_revision(&gun), 1);
+    assert_eq!(item_revision(&outfit), 1);
+    let state:State=serde_json::from_value(outcome["volley"][1]["native_state"].clone()).unwrap();
+    assert_eq!(state.native_checkpoint(),Some(&checkpoint(0.44)));
+    assert_eq!(state.health,0.44);assert_eq!(state.power,0.63);
+    assert_eq!(char_state(&victim_b), (true, 1, None));
+    let (alive, revision, corpse) = char_state(&victim_a);
+    assert_eq!((alive, revision), (false, 1));
+    let corpse_item_container: String = sql.query_row("SELECT container FROM inventory_items WHERE id=?1", [&carried_to_corpse], |row| row.get(0)).unwrap();
+    assert_eq!(corpse, Some(corpse_item_container));
+    let raw: String = sql.query_row("SELECT state FROM inventory_items WHERE id=?1", [&gun], |row| row.get(0)).unwrap();
+    let weapon: ItemState = serde_json::from_str(&raw).unwrap();
+    assert!((weapon.condition - 0.9955).abs() < 0.000_001);
+    assert!(matches!(weapon.payload, ItemPayload::Weapon { cartridges, .. } if cartridges == ["ammo"]));
+    // The same native condition path handles melee without synthesizing
+    // health or wounds in Rust. Mode and splash selection bind the proposal.
+    store.inventory_request(context.clone(),Operation::SelectWeapon{life:0,slot:1}).unwrap().await.unwrap().unwrap();
+    let melee=|| {
+        let mut victim=group(&victim_b,0.4,0.44,1);
+        victim.authority.before.revision=1;
+        victim.authority.target.distance=0.8;
+        let native=victim.native.as_mut().unwrap();
+        native.attack=zone_server::native_condition::Attack::Knife{mode:zone_server::knife::Mode::Stab,splash:true};
+        native.result.checkpoint=checkpoint(0.31);
+        native.result.wear=Some([Some(0.29),None]);
+        victim
+    };
+    assert!(store.inventory_request(context.clone(),Operation::StrikeKnife(knife.clone(),zone_server::knife::Mode::Slash,
+        Some(Box::new(melee())),true)).unwrap().await.unwrap().is_err());
+    assert_eq!(char_state(&victim_b),(true,1,None));assert_eq!(item_revision(&outfit),1);
+    sql.execute_batch("CREATE TRIGGER reject_melee BEFORE UPDATE OF condition ON inventory_characters
+        BEGIN SELECT RAISE(ABORT,'native melee failure'); END;").unwrap();
+    assert!(store.inventory_request(context.clone(),Operation::StrikeKnife(knife.clone(),zone_server::knife::Mode::Stab,
+        Some(Box::new(melee())),true)).unwrap().await.unwrap().is_err());
+    assert_eq!(char_state(&victim_b),(true,1,None));assert_eq!(item_revision(&outfit),1);
+    sql.execute_batch("DROP TRIGGER reject_melee").unwrap();
+    let hit=store.inventory_request(context.clone(),Operation::StrikeKnife(knife,zone_server::knife::Mode::Stab,
+        Some(Box::new(melee())),true)).unwrap().await.unwrap().unwrap();
+    let state:State=serde_json::from_value(hit["volley"][0]["native_state"].clone()).unwrap();
+    assert_eq!(state.native_checkpoint(),Some(&checkpoint(0.31)));
+    assert_eq!(char_state(&victim_b),(true,2,None));assert_eq!(item_revision(&outfit),2);
+    assert_eq!(item_revision(&gun),1);
+    drop(sql);
+    drop(seed);
     store.flush().await.unwrap();
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
@@ -1147,7 +1310,7 @@ async fn owned_fire_charges_last_cartridge_and_wear_only_in_live_equipped_invent
     assert_eq!(drawn["loadout"]["active_weapon_slot"], 3);
     let profile: RoundProfile = serde_json::from_value(drawn["loadout"]["ballistics"].clone()).unwrap();
     let surface = SurfaceProfile { penetration: 0.75, ricochet: true, magnetic: false, energy_min: 0.8, energy_max: 0.5 };
-    assert_eq!(profile, RoundProfile { revision: 0, range: 160.0, speed: 600.0, drag: 1.5, gravity: 9.81, pellets: 1, spread: Default::default(), surface });
+    assert_eq!(profile, RoundProfile { revision: 0, key: profile.key, range: 160.0, speed: 600.0, drag: 1.5, gravity: 9.81, pellets: 1, spread: Default::default(), surface });
     let fire = |traced| store.inventory_request(context.clone(), Operation::FireWeapon(
         rifle.clone(), Vec::new(), FireState { traced: Some(traced), ..Default::default() },
     )).unwrap();
@@ -1155,7 +1318,8 @@ async fn owned_fire_charges_last_cartridge_and_wear_only_in_live_equipped_invent
     assert_eq!(stale["reason"], "stale_ballistics");
     let result = fire(profile).await.unwrap().unwrap();
     let next: RoundProfile = serde_json::from_value(result["ballistics"].clone()).unwrap();
-    assert_eq!(next, RoundProfile { revision: 1, range: 200.0, drag: 1.0, surface: SurfaceProfile { penetration: 0.35, ..surface }, ..profile });
+    assert!(next.key.is_some() && next.key != profile.key);
+    assert_eq!(next, RoundProfile { revision: 1, key: next.key, range: 200.0, drag: 1.0, surface: SurfaceProfile { penetration: 0.35, ..surface }, ..profile });
     assert_eq!(result["shot"], json!({
         "ammo": 1,
         "range": 160.0,
@@ -1298,7 +1462,19 @@ async fn owned_misfire_preserves_cartridge_and_wear_and_requires_reload_after_re
     store.flush().await.unwrap();
     drop(store);
 
-    let store = Persistence::start_with_catalog(&path, Some(catalog)).unwrap();
+    // Dropping the last sender wakes the persistence worker asynchronously.
+    // The restart should wait until that worker releases its database lock.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let store = loop {
+        match Persistence::start_with_catalog(&path, Some(catalog.clone())) {
+            Err(error) if Instant::now() < deadline && error.downcast_ref::<std::io::Error>()
+                .is_some_and(|cause| cause.kind() == std::io::ErrorKind::WouldBlock) =>
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            result => break result.unwrap(),
+        }
+    };
     assert_eq!(fire(&store).await.unwrap().unwrap()["reason"], "jammed");
     let query = || Operation::ListInventory(String::new(), None);
     let view = store.inventory_request(context.clone(), query()).unwrap().await.unwrap().unwrap();
@@ -1410,7 +1586,8 @@ fn private_storage_checks_owner_reach_revision_and_life_then_survives_death() {
 fn blast_command(power: f32, revision: u32, state: zone_server::survival::State) -> Operation {
     use zone_server::survival::{Impact, ImpactKind, Location, Record};
     Operation::ResolveImpact(Impact {
-        kind: ImpactKind::Blast, power, before: Record { revision, state },
+        kind: ImpactKind::Blast { bone: String::new() }, power, before: Record { revision, state },
+        native_armour: None,
         location: Location { world: "zaton".into(), content_revision: "fixture".into(),
             position: [0.0; 3], yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 },
         combat_lock_ms: 60_000,
@@ -1494,6 +1671,149 @@ async fn blast_absorption_and_armour_wear_are_life_scoped_and_atomic() {
     assert_eq!(read(&belt).0, 0);
     assert_eq!(read(&belt).1.condition, 0.25);
     assert_eq!(read(&spare).0, 0);
+    drop(sql);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_armour_wear_and_vitals_share_a_generation_checked_transaction() {
+    use zone_server::survival::{NativeArmourImpact, State};
+    let root = std::env::temp_dir().join(format!("zone-native-armour-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("zone.sqlite");
+    let catalog = catalog();
+    let mut db = Database::open(&path).unwrap();
+    db.set_catalog(catalog.clone());
+    let principal = db.execute(&"a".repeat(64), Operation::Register).unwrap()["principalId"]
+        .as_str().unwrap().to_owned();
+    let carried = db.initialize_inventory(&principal).unwrap()["carried"].as_str().unwrap().to_owned();
+    let mut gear = |section, slot, condition| {
+        let mut state = catalog.initial_state(section).unwrap();
+        state.condition = condition;
+        db.provision_inventory_item(&carried, section, &state, slot).unwrap()
+    };
+    let outfit = gear("outfit", "slot:7", 0.8);
+    let helmet = gear("helmet", "slot:12", 0.5);
+    drop(db);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let store = Persistence::start_with_catalog(&path, Some(catalog.clone())).unwrap();
+    let context = Context { principal, life: 0, visit: 0, auth_epoch: 0, world: "zaton".into(),
+        position: [0.0; 3], eye_height: 1.55, interaction_radius: 2.0, collision: None,
+        expires: Instant::now() + Duration::from_secs(30) };
+    let read = |id: &str| -> f32 {
+        sql.query_row("SELECT state FROM inventory_items WHERE id=?1", [id],
+            |row| Ok(serde_json::from_str::<ItemState>(&row.get::<_, String>(0)?).unwrap().condition)).unwrap()
+    };
+    let proposal = NativeArmourImpact { generation: 2, power: 0.14, health: 0.23, power_loss: 0.17, outfit: Some(0.7), helmet: Some(0.4), wound: true };
+    let resolve = |revision, state, sample| {
+        let Operation::ResolveImpact(mut impact) = blast_command(0.9, revision, state) else { unreachable!() };
+        impact.native_armour = Some(sample);
+        store.inventory_request(context.clone(), Operation::ResolveImpact(impact)).unwrap()
+    };
+    sql.execute_batch("CREATE TRIGGER reject_native_helmet BEFORE UPDATE OF state ON inventory_items
+        WHEN OLD.section='helmet' BEGIN SELECT RAISE(ABORT,'fixture rejected native wear'); END;").unwrap();
+    assert!(resolve(0, State::default(), proposal).await.unwrap().is_err());
+    assert_eq!((read(&outfit), read(&helmet)), (0.8, 0.5));
+    sql.execute_batch("DROP TRIGGER reject_native_helmet").unwrap();
+    let result = resolve(0, State::default(), proposal).await.unwrap().unwrap();
+    assert_eq!(result["revision"], 1);
+    assert_eq!((read(&outfit), read(&helmet)), (0.7, 0.4));
+    let state = sql.query_row("SELECT condition FROM inventory_characters WHERE principal=?1", [&context.principal],
+        |row| Ok(serde_json::from_str::<State>(&row.get::<_, String>(0)?).unwrap())).unwrap();
+    assert!((state.health - 0.77).abs() < 1e-6);
+    assert!((state.power - 0.83).abs() < 1e-6);
+    let stale = NativeArmourImpact { power: 0.0, outfit: Some(0.0), helmet: Some(0.0), ..proposal };
+    let fallback = resolve(1, state, stale).await.unwrap().unwrap();
+    assert_eq!(fallback["revision"], 2);
+    assert!(read(&outfit) > 0.0 && read(&helmet) > 0.0);
+    let state = sql.query_row("SELECT condition FROM inventory_characters WHERE principal=?1", [&context.principal],
+        |row| Ok(serde_json::from_str::<State>(&row.get::<_, String>(0)?).unwrap())).unwrap();
+    let generation: i64 = sql.query_row("SELECT generation FROM inventory_characters WHERE principal=?1",
+        [&context.principal], |row| row.get(0)).unwrap();
+    let mut bytes = b"ZCS1".to_vec();
+    let mut values = [0.0f32; 23+8+12+9];
+    values[0]=0.61; values[1]=0.73; values[5]=1.0;
+    values[18]=1.0; values[19]=50.0; values[20]=60.0;
+    for value in values { bytes.extend_from_slice(&value.to_le_bytes()); }
+    for value in [0u32,16,0,0] { bytes.extend_from_slice(&value.to_le_bytes()); }
+    let checkpoint = zone_server::native_condition::Checkpoint::parse(bytes).unwrap();
+    let Operation::ResolveImpact(impact) = blast_command(0.0, 2, state) else { unreachable!() };
+    let proposal = zone_server::native_condition::Commit { before: impact.before,
+        location: impact.location, equipment: generation.try_into().unwrap(), checkpoint: checkpoint.clone() };
+    let mut stale = proposal.clone(); stale.equipment += 1;
+    let result = store.inventory_request(context.clone(), Operation::CommitNativeCondition(stale)).unwrap().await.unwrap().unwrap();
+    assert_eq!(result["status"], "stale");
+    let result = store.inventory_request(context.clone(), Operation::CommitNativeCondition(proposal.clone())).unwrap().await.unwrap().unwrap();
+    assert_eq!(result["status"], "committed"); assert_eq!(result["revision"], 3);
+    let retry = store.inventory_request(context.clone(), Operation::CommitNativeCondition(proposal)).unwrap().await.unwrap().unwrap();
+    assert_eq!(retry,result);
+    let (revision, raw): (u32,String) = sql.query_row("SELECT condition_revision,condition FROM inventory_characters WHERE principal=?1",
+        [&context.principal], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+    let restored: State = serde_json::from_str(&raw).unwrap();
+    assert_eq!(revision,3);
+    assert_eq!((restored.health,restored.power),(0.61,0.73));
+    assert_eq!(restored.native_checkpoint(),Some(&checkpoint));
+    // A legacy request must not mutate native-owned condition or equipped gear.
+    let wear_before=(read(&outfit),read(&helmet));
+    assert!(store.inventory_request(context.clone(),blast_command(0.9,3,restored.clone()))
+        .unwrap().await.unwrap().is_err());
+    let Operation::ResolveImpact(field_input)=blast_command(0.0,3,restored.clone()) else {unreachable!()};
+    let fields=zone_server::environment::Exposure {
+        before:field_input.before,location:field_input.location,
+        pulses:vec![zone_server::environment::Pulse{kind:zone_server::environment::Kind::Heat,power:0.9}].into(),
+    };
+    assert!(store.inventory_request(context.clone(),Operation::ResolveFields(fields))
+        .unwrap().await.unwrap().is_err());
+    let unchanged:(u32,String)=sql.query_row(
+        "SELECT condition_revision,condition FROM inventory_characters WHERE principal=?1",
+        [&context.principal],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(unchanged,(revision,raw));
+    assert_eq!((read(&outfit),read(&helmet)),wear_before);
+    // Full native hit checkpoints and wear share the same transaction/death path.
+    let outfit_before=read(&outfit); let helmet_before=read(&helmet);
+    let generation:i64=sql.query_row("SELECT generation FROM inventory_characters WHERE principal=?1",
+        [&context.principal],|r|r.get(0)).unwrap();
+    let mut hit_bytes=checkpoint.bytes().to_vec(); hit_bytes[4..8].copy_from_slice(&0.42f32.to_le_bytes());
+    let hit_checkpoint=zone_server::native_condition::Checkpoint::parse(hit_bytes).unwrap();
+    let Operation::ResolveImpact(input)=blast_command(0.0,3,restored.clone()) else {unreachable!()};
+    let native_hit=zone_server::native_condition::Impact {
+        condition:zone_server::native_condition::Commit { before:input.before,location:input.location,
+            equipment:generation as u64,checkpoint:hit_checkpoint.clone() },
+        wear:[Some(outfit_before*0.5),Some(helmet_before*0.5)],combat_until_ms:12345,
+    };
+    let mut wrong=native_hit.clone(); wrong.wear[1]=None;
+    let denied=store.inventory_request(context.clone(),Operation::CommitNativeImpact(wrong)).unwrap().await.unwrap().unwrap();
+    assert_eq!(denied["status"],"stale"); assert_eq!(read(&outfit),outfit_before);
+    sql.execute_batch("CREATE TRIGGER fail_native_hit BEFORE UPDATE OF condition_revision ON inventory_characters BEGIN SELECT RAISE(ABORT,'injected native hit failure'); END").unwrap();
+    assert!(store.inventory_request(context.clone(),Operation::CommitNativeImpact(native_hit.clone())).unwrap().await.unwrap().is_err());
+    assert_eq!((read(&outfit),read(&helmet)),(outfit_before,helmet_before));
+    sql.execute_batch("DROP TRIGGER fail_native_hit").unwrap();
+    let committed=store.inventory_request(context.clone(),Operation::CommitNativeImpact(native_hit.clone())).unwrap().await.unwrap().unwrap();
+    assert_eq!(committed["status"],"committed"); assert_eq!(committed["revision"],4); assert_eq!(committed["alive"],true);
+    let state:State=serde_json::from_value(committed["state"].clone()).unwrap();
+    assert_eq!(state.health,0.42); assert_eq!(state.native_checkpoint(),Some(&hit_checkpoint));
+    assert_eq!((read(&outfit),read(&helmet)),(outfit_before*0.5,helmet_before*0.5));
+    assert_eq!(store.inventory_request(context.clone(),Operation::CommitNativeImpact(native_hit.clone())).unwrap().await.unwrap().unwrap(),committed);
+    let mut changed=native_hit.clone(); changed.wear[0]=Some(0.0);
+    assert_eq!(store.inventory_request(context.clone(),Operation::CommitNativeImpact(changed)).unwrap().await.unwrap().unwrap()["status"],"stale");
+    let mut lethal=native_hit;
+    lethal.condition.before=zone_server::survival::Record{revision:4,state};
+    lethal.condition.equipment=sql.query_row("SELECT generation FROM inventory_characters WHERE principal=?1",[&context.principal],|r|r.get::<_,i64>(0)).unwrap() as u64;
+    let mut dead_bytes=hit_checkpoint.bytes().to_vec(); dead_bytes[4..8].copy_from_slice(&0.0f32.to_le_bytes());
+    lethal.condition.checkpoint=zone_server::native_condition::Checkpoint::parse(dead_bytes).unwrap();
+    let death=store.inventory_request(context.clone(),Operation::CommitNativeImpact(lethal.clone())).unwrap().await.unwrap().unwrap();
+    assert_eq!(death["alive"],false); assert_eq!(death["revision"],5);
+    let corpse:String=sql.query_row("SELECT corpse FROM inventory_characters WHERE principal=?1",[&context.principal],|r|r.get(0)).unwrap();
+    let item_container:String=sql.query_row("SELECT container FROM inventory_items WHERE id=?1",[&outfit],|r|r.get(0)).unwrap();
+    assert_eq!(item_container,corpse);
+    assert_eq!(store.inventory_request(context.clone(),Operation::CommitNativeImpact(lethal.clone())).unwrap().await.unwrap().unwrap(),death);
+    store.flush().await.unwrap(); drop(store);
+    let store=Persistence::start_with_catalog(&path,Some(catalog)).unwrap();
+    assert_eq!(store.inventory_request(context.clone(),Operation::CommitNativeImpact(lethal)).unwrap().await.unwrap().unwrap(),death);
+    assert_eq!(sql.query_row("SELECT count(*) FROM native_condition_receipts",[],|r|r.get::<_,u32>(0)).unwrap(),1);
+    assert_eq!(sql.query_row("SELECT count(*) FROM item_containers WHERE kind='corpse'",[],|r|r.get::<_,u32>(0)).unwrap(),1);
+    store.flush().await.unwrap();
+    drop(store);
     drop(sql);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -1718,8 +2038,8 @@ async fn owned_shots_commit_ammunition_and_condition_of_the_correct_armour_toget
             Ok((row.get(0)?, serde_json::from_str(&row.get::<_, String>(1)?).unwrap()))
         }).unwrap()
     };
-    let shoot = |bone, distance, life| {
-        let target = ShotTarget { character: CharacterKey { principal: victim.clone(), life }, bone, distance, speed_factor: 1.0, penetration: None };
+    let shoot = |bone: &str, distance, life| {
+        let target = ShotTarget { character: CharacterKey { principal: victim.clone(), life }, bone: bone.into(), distance, speed_factor: 1.0, penetration: None };
         let (revision, state) = condition();
         let shooter_location = Location { world: context.world.clone(), content_revision: "fixture".into(), position: [0.; 3],
             yaw: 0.0, crouched: false, combat_until_ms: 0, logout_until_ms: 0 };
@@ -1728,7 +2048,7 @@ async fn owned_shots_commit_ammunition_and_condition_of_the_correct_armour_toget
             location: Location { position: [0., 0., 8.], ..shooter_location.clone() }, shooter_location,
             combat_lock_ms: 60_000,
         };
-        store.inventory_request(context.clone(), Operation::FireWeapon(gun.clone(), vec![zone_server::survival::FireVictim { authority: victim, additional: Vec::new() }], Default::default())).unwrap()
+        store.inventory_request(context.clone(), Operation::FireWeapon(gun.clone(), vec![zone_server::survival::FireVictim { authority: victim, native: None, additional: Vec::new() }], Default::default())).unwrap()
     };
     let read = |id: &str| -> (u32, ItemState) {
         sql.query_row("SELECT revision,state FROM inventory_items WHERE id=?1", [id], |r| {
@@ -1775,6 +2095,9 @@ async fn owned_shots_commit_ammunition_and_condition_of_the_correct_armour_toget
     let (revision, mut state) = condition();
     assert_eq!(revision, 3);
     assert!((state.health - 0.7525).abs() < 1e-6 && (state.bleeding - 0.1125).abs() < 1e-6);
+    let wounds = serde_json::to_value(&state).unwrap();
+    assert!(wounds["wounds"]["bip01_head"].is_null());
+    assert!((wounds["wounds"]["bip01_spine2"][6].as_f64().unwrap() - 0.1125).abs() < 1e-6);
     let deadline = |id: &str| sql.query_row::<i64, _, _>(
         "SELECT json_extract(location,'$.combat_until_ms') FROM inventory_characters WHERE principal=?1", [id], |r| r.get(0),
     ).unwrap();
@@ -1881,4 +2204,119 @@ async fn consumption_spends_one_portion_with_effect_and_replays_across_restart()
     assert_eq!(remaining["state"]["payload"]["uses"], 1);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_consumption_commits_checkpoint_and_portion_once() {
+    use zone_server::{native_condition::{Checkpoint, Consumption}, survival::{Record, State}, survival_rules::SurvivalRules};
+    let root = std::env::temp_dir().join(format!("zone-native-consume-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("zone.sqlite");
+    let catalog = catalog();
+    let secret = "b".repeat(64);
+    let mut db = Database::open(&path).unwrap();
+    db.set_catalog(catalog.clone());
+    let principal = db.execute(&secret, Operation::Register).unwrap()["principalId"].as_str().unwrap().to_owned();
+    let carry = db.initialize_inventory(&principal).unwrap()["carried"].as_str().unwrap().to_owned();
+    let dose = item(&mut db, &catalog, &carry, "treatment");
+    drop(db);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let generation: i64 = sql.query_row("SELECT generation FROM inventory_characters WHERE principal=?1", [&principal], |r| r.get(0)).unwrap();
+    let context = Context { principal, life:0, visit:0, auth_epoch:0, world:"zaton".into(), position:[0.0;3],
+        interaction_radius:2.0, eye_height:1.55, collision:None, expires:Instant::now()+Duration::from_secs(30) };
+    let rules = Arc::new(SurvivalRules { starter_kit:vec![], ..SurvivalRules::default() });
+    let store = Persistence::start_with_rules(&path, Some(catalog), Some(rules)).unwrap();
+    let mut bytes = b"ZCS1".to_vec();
+    let mut values = [0.0f32;23+8+12+9];
+    values[0]=0.812345; values[1]=0.67; values[5]=1.0; values[18]=1.0; values[19]=50.0; values[20]=60.0;
+    for value in values { bytes.extend_from_slice(&value.to_le_bytes()); }
+    for value in [0u32,16,0,0] { bytes.extend_from_slice(&value.to_le_bytes()); }
+    let checkpoint = Checkpoint::parse(bytes).unwrap();
+    let proposal = Consumption { before:Record{revision:0,state:State::default()}, equipment:generation as u64,
+        section:"treatment".into(),checkpoint:checkpoint.clone() };
+    let command = |id:&str| Move { request_id:id.into(),life:0,item:dose.clone(),revision:0,action:MoveAction::Consume };
+    let read = || sql.query_row("SELECT condition_revision,(SELECT state FROM inventory_items WHERE id=?2) FROM inventory_characters WHERE principal=?1",
+        rusqlite::params![context.principal,dose], |r| Ok((r.get::<_,u32>(0)?,r.get::<_,String>(1)?))).unwrap();
+    let original = read();
+    let prepared=store.inventory_request(context.clone(),Operation::PrepareNativeConsume(command("native-dose"))).unwrap().await.unwrap().unwrap();
+    assert_eq!(prepared["status"],"prepared"); assert_eq!(prepared["section"],"treatment");
+    assert_eq!(prepared["generation"],generation); assert_eq!(read(),original);
+    let mut stale_command=command("prepare-stale"); stale_command.revision=99;
+    assert_eq!(store.inventory_request(context.clone(),Operation::PrepareNativeConsume(stale_command)).unwrap().await.unwrap().unwrap()["status"],"conflict");
+    let mut other=context.clone(); other.principal="f".repeat(32);
+    assert_ne!(store.inventory_request(other,Operation::PrepareNativeConsume(command("not-owned"))).unwrap().await.unwrap().unwrap()["status"],"prepared");
+    for (id, bad) in [
+        ("wrong-generation", Consumption { equipment:proposal.equipment+1,..proposal.clone() }),
+        ("wrong-section", Consumption { section:"bandage".into(),..proposal.clone() }),
+        ("wrong-condition", Consumption { before:Record{revision:1,state:State::default()},..proposal.clone() }),
+    ] {
+        let response = store.inventory_request(context.clone(),Operation::ConsumeNative(command(id),bad)).unwrap().await.unwrap().unwrap();
+        assert_ne!(response["status"],"committed"); assert_eq!(read(),original);
+    }
+    let operation = || Operation::ConsumeNative(command("native-dose"),proposal.clone());
+    sql.execute_batch("CREATE TRIGGER fail_native_portion BEFORE UPDATE ON inventory_items BEGIN SELECT RAISE(ABORT,'injected portion failure'); END").unwrap();
+    assert!(store.inventory_request(context.clone(), operation()).unwrap().await.unwrap().is_err());
+    assert_eq!(read(), original); // condition update rolls back with failed item debit
+    sql.execute_batch("DROP TRIGGER fail_native_portion").unwrap();
+    let result = store.inventory_request(context.clone(),operation()).unwrap().await.unwrap().unwrap();
+    assert_eq!(result["status"],"committed"); assert_eq!(result["remaining"],1);
+    let replay=store.inventory_request(context.clone(),Operation::PrepareNativeConsume(command("native-dose"))).unwrap().await.unwrap().unwrap();
+    assert_eq!(replay["status"],"committed"); assert_eq!(replay["condition"],result["condition"]);
+
+    let treated:Record = serde_json::from_value(result["condition"].clone()).unwrap();
+    assert_eq!(treated.revision,1); assert_eq!(treated.state.health,0.812345);
+    assert_eq!(treated.state.native_checkpoint(),Some(&checkpoint));
+    assert_eq!(store.inventory_request(context.clone(),operation()).unwrap().await.unwrap().unwrap(),result);
+    assert_eq!(read().0,1);
+    let remaining:ItemState=serde_json::from_str(&read().1).unwrap();
+    assert!(matches!(remaining.payload,ItemPayload::Consumable{uses:1}));
+    store.flush().await.unwrap(); drop(store); drop(sql);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_reload_commits_box_graph_atomically_and_replays_after_restart() {
+    use zone_server::native_weapon_action::{Reply,Phase,Fence,WeaponResult,AmmoResult};
+    let root=std::env::temp_dir().join(format!("zone-native-reload-{}",std::process::id()));
+    std::fs::create_dir(&root).unwrap();let path=root.join("zone.sqlite");
+    let(mut db,catalog,ctx,carry)=setup_at(&path);
+    let initial=catalog.initial_state("rifle").unwrap();
+    let ItemPayload::Weapon{selected_ammunition,fire_mode,launcher_mode,..}=&initial.payload else{unreachable!()};
+    let gun=db.provision_inventory_item(&carry,"rifle",&initial,"slot:3").unwrap();
+    let ammo=item(&mut db,&catalog,&carry,"ammo");
+    let view=list(&mut db);let generation=view["generation"].as_u64().unwrap();
+    let reply=Reply{fence:Fence{epoch:1,boot:2,player:3,life:0,sequence:1,generation,
+        item:u128::from_str_radix(&gun,16).unwrap(),revision:0},phase:Phase::Complete,state:Some(WeaponResult{
+        condition:initial.condition,mode:*fire_mode,jammed:false,launcher:*launcher_mode,selected:selected_ammunition.clone(),
+        cartridges:vec!["ammo".into();10],grenades:vec![],reserve:vec![
+            AmmoResult{item:u128::from_str_radix(&ammo,16).unwrap(),revision:0,native:10,rounds:8,section:"ammo".into()},
+            AmmoResult{item:0,revision:0,native:11,rounds:2,section:"ammo".into()}]})};
+    drop(db);let store=Persistence::start_with_catalog(&path,Some(catalog.clone())).unwrap();
+    let sql=rusqlite::Connection::open(&path).unwrap();
+    let mut minted=reply.clone();minted.state.as_mut().unwrap().cartridges.push("ammo".into());
+    assert!(store.inventory_request(ctx.clone(),Operation::CommitNativeReload(minted)).unwrap().await.unwrap().is_err());
+    assert_eq!(sql.query_row("SELECT revision FROM inventory_items WHERE id=?1",[&gun],|r|r.get::<_,u32>(0)).unwrap(),0);
+    let mut missing=reply.clone();missing.state.as_mut().unwrap().reserve.remove(0);
+    assert!(store.inventory_request(ctx.clone(),Operation::CommitNativeReload(missing)).unwrap().await.unwrap().is_err());
+    let mut stale=reply.clone();stale.fence.generation+=1;
+    assert_eq!(store.inventory_request(ctx.clone(),Operation::CommitNativeReload(stale)).unwrap().await.unwrap().unwrap()["status"],"stale");
+    // Fail the final weapon update after ammo changes: the entire transaction,
+    // including the newly allocated box, must roll back.
+    sql.execute_batch("CREATE TRIGGER reject_native_reload BEFORE UPDATE ON inventory_items WHEN NEW.place='slot:3' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(store.inventory_request(ctx.clone(),Operation::CommitNativeReload(reply.clone())).unwrap().await.unwrap().is_err());
+    assert_eq!(sql.query_row("SELECT count(*) FROM inventory_items WHERE container=?1",[&carry],|r|r.get::<_,i64>(0)).unwrap(),2);
+    assert_eq!(sql.query_row("SELECT revision FROM inventory_items WHERE id=?1",[&ammo],|r|r.get::<_,u32>(0)).unwrap(),0);
+    sql.execute_batch("DROP TRIGGER reject_native_reload;").unwrap();
+    let committed=store.inventory_request(ctx.clone(),Operation::CommitNativeReload(reply.clone())).unwrap().await.unwrap().unwrap();
+    assert_eq!(committed["status"],"committed");assert_eq!(committed["created"].as_array().unwrap().len(),1);
+    let count:i64=sql.query_row("SELECT count(*) FROM inventory_items WHERE container=?1",[&carry],|r|r.get(0)).unwrap();assert_eq!(count,3);
+    let raw:String=sql.query_row("SELECT state FROM inventory_items WHERE id=?1",[&gun],|r|r.get(0)).unwrap();
+    let state:ItemState=serde_json::from_str(&raw).unwrap();assert!(matches!(state.payload,ItemPayload::Weapon{cartridges,..} if cartridges.len()==10));
+    let repeated=store.inventory_request(ctx.clone(),Operation::CommitNativeReload(reply.clone())).unwrap().await.unwrap().unwrap();assert_eq!(repeated,committed);
+    let mut changed=reply.clone();changed.state.as_mut().unwrap().reserve[0].rounds=7;
+    assert!(store.inventory_request(ctx.clone(),Operation::CommitNativeReload(changed)).unwrap().await.unwrap().is_err());
+    store.flush().await.unwrap();drop(store);
+    let store=Persistence::start_with_catalog(&path,Some(catalog)).unwrap();
+    assert_eq!(store.inventory_request(ctx,Operation::CommitNativeReload(reply)).unwrap().await.unwrap().unwrap(),committed);
+    store.flush().await.unwrap();drop(store);drop(sql);std::fs::remove_dir_all(root).unwrap();
 }

@@ -136,7 +136,7 @@ const mb=bytes=>(bytes/1048576).toFixed(1)+' MB';
 const indeterminate=()=>meter.removeAttribute('value');
 const startingEngine=()=>{message.textContent='Starting the engine…';indeterminate();};
 const confirmLeavingGame=event=>event.preventDefault();
-window.addEventListener('xray-browser-mode-change',()=>{
+window.addEventListener('xray-browser-navigation',()=>{
  window.removeEventListener('beforeunload',confirmLeavingGame);
 });
 const enterGame=()=>{
@@ -154,8 +154,9 @@ const gameReady=()=>{
  message.textContent='Ready to play.';
  updateStart();
 };
-start?.addEventListener('click',()=>{
+start?.addEventListener('click',event=>{
  if(start.disabled||enteredGame)return;
+ if(event.isTrusted)window.dispatchEvent(new Event('xray-game-start-pressed'));
  enterGame();
  // The Start Game click also supplies the browser gesture for mouse capture.
  canvas.requestPointerLock?.()?.catch(()=>{});

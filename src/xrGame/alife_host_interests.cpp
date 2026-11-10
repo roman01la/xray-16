@@ -1,8 +1,15 @@
 #include "StdAfx.h"
+#include "ZonePendingSnapshots.h"
 #include "alife_host_interests.h"
 
 #if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+#include "CombatRules.h"
+#include "ZoneHitDelivery.h"
+#include "WeaponAmmo.h"
+#include "WeaponMagazined.h"
 #include <algorithm>
+#include "multiplayer/NpcPresentation.h"
+#include "xrSound/SoundPlaybackObserver.h"
 #include <cerrno>
 #include <cmath>
 #include <cstddef>
@@ -13,14 +20,72 @@
 #include <filesystem>
 #include "xrServerEntities/alife_space.h"
 #include <random>
+#include <mutex>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <unordered_map>
 
 namespace
 {
+struct ObservedSound
+{
+    std::string name;
+    Fvector position;
+    float volume, frequency, range;
+    std::uint32_t loop = 0;
+};
+struct ObservedLoop
+{
+    ObservedSound sound;
+    std::chrono::steady_clock::time_point updated;
+};
+std::mutex observedSoundsMutex;
+std::deque<ObservedSound> observedSounds;
+std::unordered_map<const void*, ObservedLoop> observedLoops;
+std::uint32_t loopSequence = static_cast<std::uint32_t>(
+    std::chrono::steady_clock::now().time_since_epoch().count());
+
+void observeSound(const char* name, const CSound_params& params, const void* emitter)
+{
+    if (!name || !_valid(params.position) || !std::isfinite(params.volume) || !std::isfinite(params.freq) ||
+        !std::isfinite(params.max_distance) || params.max_distance <= 0.f)
+        return;
+    const std::string_view path(name);
+    if (path.empty() || path.size() > 127 ||
+        path.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-\\/ ") != path.npos)
+        return;
+    std::lock_guard lock(observedSoundsMutex);
+    if (emitter)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        auto found = observedLoops.find(emitter);
+        if (found == observedLoops.end())
+        {
+            if (observedLoops.size() >= 128) return;
+            found = observedLoops.try_emplace(emitter).first;
+        }
+        auto& loop = found->second;
+        if (loop.sound.name != path)
+        {
+            loop.sound.name = path;
+            if (++loopSequence == 0) ++loopSequence;
+            loop.sound.loop = loopSequence;
+        }
+        loop.sound.position = params.position;
+        loop.sound.volume = params.volume;
+        loop.sound.frequency = params.freq;
+        loop.sound.range = params.max_distance;
+        loop.updated = now;
+        return;
+    }
+    if (observedSounds.size() >= 128)
+        observedSounds.pop_front();
+    observedSounds.push_back({std::string(path), params.position, params.volume, params.freq, params.max_distance});
+}
+
 constexpr std::size_t CorpseHeader = 41;
 constexpr std::size_t MaxCorpseBytes = 8192;
 constexpr std::size_t MaxCorpses = 64;
@@ -168,6 +233,12 @@ bool removeStaleSocket(const std::string& endpoint, const sockaddr_un& address)
 
 AlifeHostInterests::~AlifeHostInterests()
 {
+    set_sound_playback_observer(nullptr);
+    {
+        std::lock_guard lock(observedSoundsMutex);
+        observedSounds.clear();
+        observedLoops.clear();
+    }
     if (m_worldWrite.valid())
         m_worldWrite.wait();
     if (m_socket >= 0)
@@ -218,7 +289,7 @@ bool AlifeHostInterests::open(const char* path, const char* outbox)
 
     m_socket = ::socket(AF_UNIX, SOCK_DGRAM, 0);
     const int receiveBuffer = 64 * 1024;
-    const int sendBuffer = 16 * 1024;
+    const int sendBuffer = 128 * 1024; // Native weapon results can reach 64 KiB.
     if (m_socket < 0 || ::fcntl(m_socket, F_SETFD, FD_CLOEXEC) != 0 ||
         ::setsockopt(m_socket, SOL_SOCKET, SO_RCVBUF, &receiveBuffer, sizeof(receiveBuffer)) != 0 ||
         ::setsockopt(m_socket, SOL_SOCKET, SO_SNDBUF, &sendBuffer, sizeof(sendBuffer)) != 0)
@@ -242,7 +313,9 @@ bool AlifeHostInterests::open(const char* path, const char* outbox)
     while (!m_hostEpoch);
     m_socketDevice = state.st_dev;
     m_socketInode = state.st_ino;
-    return ::chmod(path, 0600) == 0;
+    if (::chmod(path, 0600) != 0) return false;
+    set_sound_playback_observer(observeSound);
+    return true;
 }
 
 bool AlifeHostInterests::openOutbox(const char* path)
@@ -496,11 +569,16 @@ void AlifeHostInterests::offerWorld(std::uint64_t epoch, std::uint64_t round)
         m_admissionEpoch = epoch;
         m_approvedGeneration.reset();
         m_haveSnapshot = false;
+        m_campaignClock.reset();
         if (m_count)
             ++m_poseRevision;
         m_count = 0;
         m_hits.clear();
         m_attacks.clear();
+        m_conditions.clear();
+        m_weaponActions.clear();
+        m_armour.clear();
+        m_weapons.clear();
     }
 
     std::array<unsigned char, 66> offer{};
@@ -523,21 +601,26 @@ void AlifeHostInterests::refresh(std::string_view level)
     const auto now = Clock::now();
     if (m_level != level || now >= m_expires)
     {
+        clearPendingLoadouts();
         if (m_count)
             ++m_poseRevision;
         m_count = 0;
-        m_hits.clear();
+        // A snapshot lease stops new simulation inputs, not delivery of hits
+        // already produced for this epoch/life. Retain them for acknowledgement.
         m_attacks.clear();
+        m_conditions.clear();
+        m_weaponActions.clear();
     }
     if (m_level != level)
     {
+        m_hits.clear(); // Map/epoch changes still retire their old delivery scope.
         m_haveSnapshot = false;
         m_approvedGeneration.reset();
     }
     m_level = level;
-    constexpr std::size_t LevelEnd = 32, Header = 40, PlayerBytes = 28;
+    constexpr std::size_t LevelEnd = 32, Header = 40, ActorBytes = 56;
     // One spare byte makes oversized datagrams fail the exact length check.
-    std::array<unsigned char, Header + PlayerBytes * MaxPlayers + 1> bytes;
+    std::array<unsigned char, std::max<std::size_t>(Header + ActorBytes * MaxPlayers, 32060) + 1> bytes;
     std::array<Player, MaxPlayers> players;
     for (unsigned attempt = 0; attempt < 128; ++attempt)
     {
@@ -566,9 +649,55 @@ void AlifeHostInterests::refresh(std::string_view level)
             }
             continue;
         }
+        if (length == 28 && std::memcmp(bytes.data(), "ZHA1", 4) == 0)
+        {
+            const auto sequence = readWide(bytes.data() + 20);
+            if (m_approvedGeneration && readWide(bytes.data() + 4) == m_epoch &&
+                readWide(bytes.data() + 12) == m_hostEpoch && sequence <= m_hitSequence)
+                while (!m_hits.empty() && m_hits.front().sequence <= sequence)
+                    m_hits.pop_front();
+            continue;
+        }
         if (!m_approvedGeneration)
             continue;
-        if (length == 96 && std::memcmp(bytes.data(), "ZAS1", 4) == 0)
+        if (length >= 60 && (std::memcmp(bytes.data(), "ZCT1", 4) == 0 || std::memcmp(bytes.data(), "ZCI1", 4) == 0 || std::memcmp(bytes.data(), "ZCM1", 4) == 0 || std::memcmp(bytes.data(), "ZCH1", 4) == 0 || std::memcmp(bytes.data(), "ZCF1", 4) == 0 || std::memcmp(bytes.data(), "ZCB1", 4) == 0))
+        {
+            if (m_conditions.size() < MaxPlayers)
+                if (auto request = xray::zone_condition::request(bytes.data(), length);
+                    request && request->epoch == m_admissionEpoch && request->boot == m_hostEpoch)
+                    m_conditions.push_back(std::move(*request));
+            continue;
+        }
+        if (length == xray::zone_weapon_action::Header && std::memcmp(bytes.data(), "ZWQ1", 4) == 0)
+        {
+            if (auto request = xray::zone_weapon_action::decode(bytes.data(), length);
+                request && request->fence.epoch == m_admissionEpoch && request->fence.boot == m_hostEpoch)
+                m_weaponActions.push(*request, MaxPlayers);
+            continue;
+        }
+        if (length >= 29 && std::memcmp(bytes.data(), "ZAW3", 4) == 0)
+        {
+            receiveWeapon(bytes.data(), length);
+            continue;
+        }
+        if ((length >= 29 && std::memcmp(bytes.data(), "ZAG2", 4) == 0) ||
+            (length >= 37 && std::memcmp(bytes.data(), "ZAG3", 4) == 0))
+        {
+            receiveArmour(bytes.data(), length);
+            continue;
+        }
+        if (length == 32 && std::memcmp(bytes.data(), "ZAT1", 4) == 0)
+        {
+            const auto time = readWide(bytes.data() + 20);
+            const auto factor = readScalar(bytes.data() + 28);
+            if (readWide(bytes.data() + 4) == m_admissionEpoch &&
+                readWide(bytes.data() + 12) == m_hostEpoch && time < 1000000000000000ULL &&
+                factor >= 0.f && factor <= 1000.f)
+                m_campaignClock = WorldClock{time, factor};
+            continue;
+        }
+        if ((length == 96 && std::memcmp(bytes.data(), "ZAS1", 4) == 0) ||
+            (length == 124 && std::memcmp(bytes.data(), "ZAS2", 4) == 0))
         {
             receiveAttack(bytes.data(), length);
             continue;
@@ -579,11 +708,16 @@ void AlifeHostInterests::refresh(std::string_view level)
                 acknowledgeCorpse(readWide(bytes.data() + 12), readWide(bytes.data() + 20));
             continue;
         }
-        if (length < Header || std::memcmp(bytes.data(), "ZAI2", 4) != 0 || level.size() > LevelEnd - 10)
+        if (length < Header || level.size() > LevelEnd - 10)
             continue;
+        const bool nativeActor = std::memcmp(bytes.data(), "ZAI5", 4) == 0;
+        const bool nativeMovement = nativeActor || std::memcmp(bytes.data(), "ZAI3", 4) == 0;
+        if (!nativeMovement && std::memcmp(bytes.data(), "ZAI2", 4) != 0)
+            continue;
+        const auto playerBytes = nativeActor ? ActorBytes : (nativeMovement ? 40 : 28);
         const auto count = bytes[8] | (std::size_t(bytes[9]) << 8);
         const auto* name = reinterpret_cast<const char*>(bytes.data() + 10);
-        if (count > MaxPlayers || std::size_t(length) != Header + PlayerBytes * count ||
+        if (count > MaxPlayers || std::size_t(length) != Header + playerBytes * count ||
             std::string_view(name, level.size()) != level ||
             std::any_of(bytes.begin() + 10 + level.size(), bytes.begin() + LevelEnd, [](auto byte) { return byte != 0; }))
             continue;
@@ -595,12 +729,29 @@ void AlifeHostInterests::refresh(std::string_view level)
         bool valid = true;
         for (std::size_t i = 0; i < count; ++i)
         {
-            const auto* p = bytes.data() + Header + i * PlayerBytes;
+            const auto* p = bytes.data() + Header + i * playerBytes;
             const auto stance = readWord(p + 24);
             players[i] = {readWord(p), readWord(p + 4), readScalar(p + 8), readScalar(p + 12), readScalar(p + 16),
-                readScalar(p + 20), stance != 0};
+                readScalar(p + 20), stance != 0, 0, 0, 1.f, 0.f, 1.f, 1.f};
+            if (nativeMovement)
+            {
+                players[i].sequence = readWord(p + 28);
+                players[i].controls = readWord(p + 32);
+                players[i].speedScale = readScalar(p + 36);
+            }
+            if (nativeActor)
+            {
+                players[i].pitch = readScalar(p + 40);
+                players[i].health = readScalar(p + 44);
+                players[i].power = readScalar(p + 48);
+                if (readWord(p + 52) > 1) { valid = false; break; }
+                players[i].nativeCondition = readWord(p + 52) != 0;
+            }
             const auto& point = players[i];
-            if (!point.id || stance > 1 || !(point.yaw >= 0.f && point.yaw <= 6.283186f &&
+            if (!point.id || stance > 1 || point.controls > 255 ||
+                !(std::abs(point.pitch) <= 1.55f && point.health > 0.f && point.health <= 1.f &&
+                    point.power >= 0.f && point.power <= 1.f) ||
+                !(point.speedScale >= 0.f && point.speedScale <= 1.f) || !(point.yaw >= 0.f && point.yaw <= 6.283186f &&
                     std::abs(point.x) <= 100000.f && std::abs(point.y) <= 100000.f && std::abs(point.z) <= 100000.f))
             {
                 valid = false;
@@ -618,10 +769,15 @@ void AlifeHostInterests::refresh(std::string_view level)
         m_count = count;
         std::copy_n(players.begin(), count, m_players.begin());
         m_tick = tick;
+        if (nativeMovement && !m_nativeMovement)
+            Msg("* Zone X-Ray player movement enabled");
+        m_nativeMovement = nativeMovement;
         if (epoch != m_epoch)
         {
             m_hits.clear();
             m_npcTick.reset();
+            m_movementTick.reset();
+            m_environmentTick.reset();
             m_completed.fill({});
             m_attackHigh = 0;
         }
@@ -707,13 +863,246 @@ void AlifeHostInterests::flushCorpses()
     }
 }
 
+void AlifeHostInterests::receiveArmour(const unsigned char* data, std::size_t length)
+{
+    PlayerArmour armour{readWord(data + 20), readWord(data + 24), {}, {}};
+    std::size_t cursor = 28;
+    if (data[3] == '3')
+    {
+        armour.generation = readWide(data + cursor);
+        cursor += 8;
+        if (*armour.generation > 9007199254740991ULL)
+            return;
+    }
+    const auto count = data[cursor++];
+    if (readWide(data + 4) != m_admissionEpoch || readWide(data + 12) != m_hostEpoch ||
+        count > armour.items.size())
+        return;
+    const auto readName = [&](std::string& name) {
+        if (cursor == length)
+            return false;
+        const auto size = data[cursor++];
+        if (!size || size > 128 || length - cursor < size)
+            return false;
+        name.assign(reinterpret_cast<const char*>(data + cursor), size);
+        cursor += size;
+        return name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") == name.npos;
+    };
+    for (unsigned i = 0; i < count; ++i)
+    {
+        if (length - cursor < 6)
+            return;
+        const auto slot = data[cursor++];
+        const bool belt = slot >= PlayerArmour::BeltStart && slot < PlayerArmour::BeltStart + PlayerArmour::BeltCells;
+        if (slot != 7 && slot != 12 && !belt)
+            return;
+        auto& item = armour.items[belt ? 2 + slot - PlayerArmour::BeltStart : unsigned(slot == 12)];
+        item.condition = readScalar(data + cursor);
+        cursor += 4;
+        const auto upgrades = data[cursor++];
+        if (!item.section.empty() || !(item.condition >= 0.f && item.condition <= 1.f) ||
+            upgrades > 32 || (belt && upgrades) || !readName(item.section) || item.section.size() >= 64)
+            return;
+        item.upgrades.resize(upgrades);
+        for (auto& name : item.upgrades)
+            if (!readName(name))
+                return;
+    }
+    if (cursor == length)
+        xray::zone_pending_snapshots::retain(m_armour, std::move(armour), MaxPlayers);
+}
+
+void AlifeHostInterests::receiveWeapon(const unsigned char* data, std::size_t length)
+{
+    zone::inventory_detail::Reader read(data + 4, length - 4);
+    const auto epoch = read.wide(), boot = read.wide();
+    if (epoch != m_admissionEpoch || boot != m_hostEpoch)
+        return;
+    PlayerWeapon weapon;
+    weapon.id = read.integer();
+    weapon.life = read.integer();
+    auto& item = weapon.item;
+    item.index = read.byte();
+    if (!item.index)
+    {
+        if (read.ok && !read.left)
+            xray::zone_pending_snapshots::retain(m_weapons, std::move(weapon), MaxPlayers);
+        return;
+    }
+    if (item.index != 2 && item.index != 3)
+        return;
+    item.id = read.id(true);
+    item.revision = read.integer();
+    item.condition = read.real();
+    item.fireMode = read.byte();
+    const auto flags = read.byte();
+    weapon.addons = read.byte();
+    item.launcherMode = (flags & 1) != 0;
+    item.jammed = (flags & 2) != 0;
+    item.section = read.section();
+    item.selectedAmmunition = read.section();
+    const auto hasScope = read.byte();
+    if (hasScope)
+        weapon.scope = read.section();
+    const auto upgrades = read.byte();
+    if (!read.ok || item.id.empty() || item.section.size() >= 64 ||
+        !(item.condition >= 0.f && item.condition <= 1.f) || flags > 3 || weapon.addons > 7 ||
+        hasScope > 1 || upgrades > 32)
+        return;
+    for (unsigned i = 0; i < upgrades && read.ok; ++i)
+        item.upgrades.push_back(read.section());
+    const auto types = read.byte();
+    if (types > 64)
+        return;
+    std::vector<std::string> names;
+    names.reserve(types);
+    for (unsigned i = 0; i < types && read.ok; ++i)
+        names.push_back(read.section());
+    const auto bullets = read.shortValue();
+    const auto grenades = read.byte();
+    if (!read.ok || bullets > 512 || grenades > 1 || read.left < std::size_t(bullets) + grenades + 25)
+        return;
+    for (unsigned i = 0; i < unsigned(bullets) + grenades; ++i)
+    {
+        const auto type = read.byte();
+        if (type >= names.size())
+            return;
+        (i < bullets ? item.cartridges : item.launcherCartridges).push_back(names[type]);
+    }
+    for (auto& byte : weapon.fireConfig.emplace())
+        byte = read.byte();
+    weapon.generation = read.wide();
+    const auto boxes = read.byte();
+    if (!read.ok || boxes > 128 || weapon.generation > 9007199254740991ULL)
+        return;
+    for (unsigned i = 0; i < boxes; ++i)
+    {
+        ReserveAmmo ammo;
+        ammo.id = read.id(true);
+        ammo.revision = read.integer();
+        ammo.rounds = read.shortValue();
+        ammo.section = read.section();
+        if (!read.ok || ammo.id.empty() || !ammo.rounds || ammo.section.size() >= 64 ||
+            std::any_of(weapon.reserve.begin(), weapon.reserve.end(),
+                [&](const auto& previous) { return previous.id == ammo.id; }))
+            return;
+        weapon.reserve.push_back(std::move(ammo));
+    }
+    if (!read.ok || read.left)
+        return;
+    xray::zone_pending_snapshots::retain(m_weapons, std::move(weapon), MaxPlayers);
+}
+
+bool AlifeHostInterests::publishWeaponRules(const PlayerWeapon& weapon, CWeaponMagazined& native) const
+{
+    if (!freshMovement() || !weapon.fireConfig || weapon.item.id.size() != 32)
+        return false;
+    const auto capacity = native.GetAmmoMagSize();
+    const auto& ammo = native.m_ammoTypes;
+    if (capacity < 1 || capacity > 1024 || ammo.empty() || ammo.size() > 64)
+        return false;
+    std::vector<unsigned char> packet;
+    packet.reserve(194 + ammo.size() * 60);
+    packet.resize(194);
+    std::memcpy(packet.data(), "ZAF5", 4);
+    writeWord(packet.data() + 4, m_tick);
+    writeWide(packet.data() + 8, m_epoch);
+    writeWide(packet.data() + 16, m_hostEpoch);
+    writeWord(packet.data() + 24, weapon.id);
+    writeWord(packet.data() + 28, weapon.life);
+    std::copy(weapon.item.id.begin(), weapon.item.id.end(), packet.begin() + 32);
+    std::copy(weapon.fireConfig->begin(), weapon.fireConfig->end(), packet.begin() + 64);
+    const auto rules = native.NativeFireRules();
+    writeWord(packet.data() + 80, static_cast<std::uint32_t>(rules.mode));
+    writeWord(packet.data() + 84, rules.legacyMisfire);
+    const auto writeFloat = [&](std::size_t offset, float value) {
+        std::uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        writeWord(packet.data() + offset, bits);
+    };
+    const float values[] = {rules.openingInterval, rules.sustainedInterval, rules.firstWear, rules.followupWear,
+        rules.misfire[0], rules.misfire[1], rules.misfire[2], rules.misfire[3]};
+    for (std::size_t i = 0; i < std::size(values); ++i)
+        writeFloat(88 + i * 4, values[i]);
+    packet[120] = static_cast<unsigned char>(capacity);
+    packet[121] = static_cast<unsigned char>(capacity >> 8);
+    packet[122] = !weapon.item.launcherMode && native.IsTriStateReload();
+    packet[123] = static_cast<unsigned char>(ammo.size());
+    writeFloat(124, rules.hitPower);
+    writeFloat(128, rules.hitImpulse);
+    packet[132] = rules.suppressed;
+    packet[133] = static_cast<unsigned char>(rules.openingRounds);
+    writeFloat(134, rules.range);
+    writeFloat(138, rules.speed);
+    writeFloat(142, rules.openingSpeed);
+    writeFloat(146, rules.dragFactor);
+    for (std::size_t i = 0; i < std::size(rules.dispersion); ++i)
+        writeFloat(150 + i * 4, rules.dispersion[i]);
+    // Select the same settings as the engine's multiplayer bullet manager.
+    static const auto bulletManager = [] {
+        const char* section = pSettings->section_exist("mp_bullet_manager") ? "mp_bullet_manager" : "bullet_manager";
+        return std::array{pSettings->r_float(section, "gravity_const"),
+            pSettings->r_float(section, "collision_energy_min"), pSettings->r_float(section, "collision_energy_max")};
+    }();
+    for (std::size_t i = 0; i < bulletManager.size(); ++i)
+        writeFloat(182 + i * 4, bulletManager[i]);
+    // Ammo configuration is immutable for a headless host. Share the parsed
+    // cartridge parameters across all the mirrored weapons using each round.
+    struct CartridgeProfile
+    {
+        SCartridgeParam params;
+        unsigned char flags;
+    };
+    static std::unordered_map<std::string, std::optional<CartridgeProfile>> cartridges;
+    for (const auto& section : ammo)
+    {
+        const char* name = section.c_str();
+        const auto size = name ? std::strlen(name) : 0;
+        if (!size || size > 63)
+            return false;
+        packet.push_back(static_cast<unsigned char>(size));
+        packet.insert(packet.end(), name, name + size);
+        const auto [entry, inserted] = cartridges.try_emplace(name);
+        if (inserted && std::strcmp(pSettings->r_string(name, "class"), "AMMO_S") == 0)
+        {
+            CCartridge cartridge;
+            cartridge.Load(name, 0);
+            unsigned char flags = 0;
+            if (cartridge.m_flags.test(CCartridge::cfRicochet))
+                flags |= 1;
+            if (cartridge.m_flags.test(CCartridge::cfMagneticBeam))
+                flags |= 2;
+            entry->second = CartridgeProfile{cartridge.param_s, flags};
+        }
+        packet.push_back(entry->second.has_value());
+        if (entry->second)
+        {
+            const auto& round = *entry->second;
+            const auto& params = round.params;
+            const float factors[] = {params.kHit, params.kImpulse, params.impair,
+                params.kDist, params.kAirRes, params.kAP, params.kDisp};
+            const auto start = packet.size();
+            packet.resize(start + sizeof(factors));
+            for (std::size_t i = 0; i < std::size(factors); ++i)
+                writeFloat(start + i * 4, factors[i]);
+            packet.push_back(static_cast<unsigned char>(std::clamp(params.buckShot, 0, 255)));
+            packet.push_back(round.flags);
+        }
+    }
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, m_npcPath.c_str(), m_npcPath.size() + 1);
+    return ::sendto(m_socket, packet.data(), packet.size(), MSG_DONTWAIT,
+        reinterpret_cast<const sockaddr*>(&address), socketAddressLength(m_npcPath)) >= 0;
+}
+
 void AlifeHostInterests::receiveAttack(const unsigned char* data, std::size_t length)
 {
-    if (length != 96 || readWide(data + 16) != m_hostEpoch || m_attacks.size() >= 512)
+    if (readWide(data + 16) != m_hostEpoch || m_attacks.size() >= 512)
         return;
     Attack hit{readWide(data + 24), readWide(data + 8), readWord(data + 4), readWord(data + 32),
         readWord(data + 36), readWord(data + 40), readWord(data + 44), readWord(data + 48),
-        readScalar(data + 52), readScalar(data + 56), {}, {}, {}};
+        readScalar(data + 52), readScalar(data + 56), {}, {}, {}, {}};
     for (unsigned i = 0; i < 3; ++i)
     {
         hit.power[i] = readScalar(data + 60 + i * 4);
@@ -727,6 +1116,17 @@ void AlifeHostInterests::receiveAttack(const unsigned char* data, std::size_t le
         !(hit.power[0] > 0.f) || !std::all_of(hit.power.begin(), hit.power.end(), [](float v) { return v >= 0 && v <= 100; }) ||
         !std::all_of(hit.offset.begin(), hit.offset.end(), [](float v) { return std::abs(v) <= 50.f; }))
         return;
+    if (length == 124)
+    {
+        const Attack::Ray ray{{readScalar(data + 96), readScalar(data + 100), readScalar(data + 104)},
+            {readScalar(data + 108), readScalar(data + 112), readScalar(data + 116)}, readScalar(data + 120)};
+        const float squareLength = ray.direction.square_magnitude();
+        if (hit.kind != 0 || !(std::abs(ray.origin.x) <= 100000.f && std::abs(ray.origin.y) <= 100000.f &&
+            std::abs(ray.origin.z) <= 100000.f && squareLength >= .95f && squareLength <= 1.05f &&
+            ray.range > 0.f && ray.range <= 4096.f))
+            return;
+        hit.ray = ray;
+    }
     m_attacks.push_back(hit);
 }
 
@@ -754,6 +1154,41 @@ std::optional<AlifeHostInterests::Attack> AlifeHostInterests::nextAttack()
     return std::nullopt;
 }
 
+std::optional<xray::zone_condition::Request> AlifeHostInterests::nextCondition()
+{
+    if (m_conditions.empty()) return {};
+    auto request = std::move(m_conditions.front());
+    m_conditions.pop_front();
+    return request;
+}
+
+std::optional<xray::zone_weapon_action::Request> AlifeHostInterests::nextWeaponAction()
+{
+    return m_weaponActions.pop();
+}
+
+void AlifeHostInterests::sendWeaponAction(const std::vector<unsigned char>& packet) const
+{
+    const auto path = m_hitPath + ".weapon";
+    sockaddr_un address{};
+    if (packet.empty() || path.size() >= sizeof(address.sun_path)) return;
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, path.c_str(), path.size()+1);
+    ::sendto(m_socket, packet.data(), packet.size(), MSG_DONTWAIT,
+        reinterpret_cast<const sockaddr*>(&address), socketAddressLength(path));
+}
+
+void AlifeHostInterests::sendCondition(const std::vector<unsigned char>& packet) const
+{
+    const auto path = m_hitPath + ".condition";
+    sockaddr_un address{};
+    if (packet.empty() || path.size() >= sizeof(address.sun_path)) return;
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, path.c_str(), path.size()+1);
+    ::sendto(m_socket, packet.data(), packet.size(), MSG_DONTWAIT,
+        reinterpret_cast<const sockaddr*>(&address), socketAddressLength(path));
+}
+
 void AlifeHostInterests::completeAttack(const Attack& attack, std::optional<std::uint16_t> health)
 {
     m_attackHigh = std::max(m_attackHigh, attack.sequence);
@@ -778,20 +1213,23 @@ void AlifeHostInterests::sendAttackResult(std::uint64_t sequence, std::optional<
 }
 
 void AlifeHostInterests::queueHit(std::uint32_t id, std::uint32_t life, std::uint32_t kind, float power,
-    float penetration, std::string_view bone)
+    float penetration, std::string_view bone, std::optional<ArmourImpact> armour)
 {
     if (!m_haveSnapshot || Clock::now() >= m_expires || !(power > 0.f && power <= 10.f) ||
         !(penetration >= 0.f && penetration <= MaxPenetration) || bone.size() >= 32)
         return;
-    if (m_hits.size() == MaxPlayers)
+    if (!hasHitCapacity())
     {
         // A blocked worker must not make the native game thread wait or grow memory.
         Msg("! Zone A-Life hit queue is full");
         return;
     }
     m_hits.push_back({});
-    auto& packet = m_hits.back();
-    std::memcpy(packet.data(), "ZAH1", 4);
+    auto& hit = m_hits.back();
+    auto& packet = hit.bytes;
+    hit.size = armour ? 116 : 84;
+    hit.sequence = ++m_hitSequence;
+    std::memcpy(packet.data(), armour ? "ZAH5" : "ZAH2", 4);
     const auto word = [&](std::size_t offset, std::uint32_t value) {
         for (std::size_t i = 0; i < sizeof(value); ++i)
             packet[offset + i] = static_cast<unsigned char>(value >> (i * 8));
@@ -809,8 +1247,20 @@ void AlifeHostInterests::queueHit(std::uint32_t id, std::uint32_t life, std::uin
     word(24, kind);
     scalar(28, power);
     scalar(32, penetration);
-    std::copy(bone.begin(), bone.end(), packet.begin() + 36);
-    writeWide(packet.data() + 68, m_hostEpoch);
+    if (!bone.empty())
+        std::copy(bone.begin(), bone.end(), packet.begin() + 36);
+    if (armour)
+    {
+        writeWide(packet.data() + 68, armour->generation);
+        scalar(76, armour->power);
+        scalar(80, armour->outfit);
+        scalar(84, armour->helmet);
+        word(88, armour->wound);
+        scalar(92, armour->health);
+        scalar(96, armour->powerLoss);
+    }
+    writeWide(packet.data() + hit.size - 16, hit.sequence);
+    writeWide(packet.data() + hit.size - 8, m_hostEpoch);
 }
 
 void AlifeHostInterests::flushHits()
@@ -820,20 +1270,112 @@ void AlifeHostInterests::flushHits()
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     std::memcpy(address.sun_path, m_hitPath.c_str(), m_hitPath.size() + 1);
-    for (unsigned attempt = 0; attempt < 256 && !m_hits.empty(); ++attempt)
-    {
-        const auto& packet = m_hits.front();
-        const auto sent = ::sendto(m_socket, packet.data(), packet.size(), MSG_DONTWAIT,
+    const auto now = Clock::now();
+    if (now - m_hitSent < std::chrono::milliseconds(100))
+        return;
+    m_hitSent = now;
+    xray::zone_hit_delivery::transmit(m_hits, 256, [&](const HitPacket& packet) {
+        return ::sendto(m_socket, packet.bytes.data(), packet.size, MSG_DONTWAIT,
             reinterpret_cast<const sockaddr*>(&address), socketAddressLength(m_hitPath));
-        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == EINTR))
-            break;
-        m_hits.pop_front();
+    });
+}
+
+bool AlifeHostInterests::freshMovement() const
+{
+    return m_nativeMovement && m_haveSnapshot && Clock::now() < m_expires - std::chrono::milliseconds(1000);
+}
+
+bool AlifeHostInterests::wantsMovementFrame() const
+{
+    return freshMovement() && m_movementTick != m_tick;
+}
+
+void AlifeHostInterests::publishMovement(const std::vector<PlayerMovement>& poses)
+{
+    constexpr std::size_t Header = 24, Row = 40, Batch = 128;
+    m_movementTick = m_tick;
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, m_npcPath.c_str(), m_npcPath.size() + 1);
+    for (std::size_t start = 0; start < poses.size(); start += Batch)
+    {
+        const auto count = std::min(Batch, poses.size() - start);
+        std::array<unsigned char, Header + Batch * Row> bytes{};
+        std::memcpy(bytes.data(), "ZAM1", 4);
+        writeWord(bytes.data() + 4, m_tick);
+        writeWide(bytes.data() + 8, m_epoch);
+        writeWide(bytes.data() + 16, m_hostEpoch);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const auto& pose = poses[start + i];
+            auto* row = bytes.data() + Header + i * Row;
+            writeWord(row, pose.id);
+            writeWord(row + 4, pose.life);
+            writeWord(row + 8, pose.sequence);
+            const float axes[] = {pose.position.x, pose.position.y, pose.position.z,
+                pose.velocity.x, pose.velocity.y, pose.velocity.z};
+            for (unsigned j = 0; j < std::size(axes); ++j)
+            {
+                std::uint32_t bits;
+                std::memcpy(&bits, &axes[j], sizeof(bits));
+                writeWord(row + 12 + 4 * j, bits);
+            }
+            writeWord(row + 36, pose.flags);
+        }
+        ::sendto(m_socket, bytes.data(), Header + count * Row, MSG_DONTWAIT,
+            reinterpret_cast<const sockaddr*>(&address), socketAddressLength(m_npcPath));
     }
+}
+
+bool AlifeHostInterests::publishHitboxes(std::uint32_t id, std::uint32_t life,
+    std::vector<unsigned char>& packet, bool npc) const
+{
+    constexpr std::size_t Header = 44;
+    if (packet.size() <= Header)
+        return false;
+    std::memcpy(packet.data(), npc ? "ZBN1" : "ZAB1", 4);
+    writeWord(packet.data() + 4, m_tick);
+    writeWide(packet.data() + 8, m_epoch);
+    writeWide(packet.data() + 16, m_hostEpoch);
+    writeWord(packet.data() + 24, id);
+    writeWord(packet.data() + 28, life);
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, m_npcPath.c_str(), m_npcPath.size() + 1);
+    return ::sendto(m_socket, packet.data(), packet.size(), MSG_DONTWAIT,
+        reinterpret_cast<const sockaddr*>(&address), socketAddressLength(m_npcPath)) >= 0;
+}
+
+void AlifeHostInterests::publishEnvironment(std::uint64_t gameTime, float factor, std::string_view cycle,
+    std::string_view effect, float remaining)
+{
+    if (!m_haveSnapshot || Clock::now() >= m_expires ||
+        (m_environmentTick && m_tick - *m_environmentTick < 30) ||
+        cycle.empty() || cycle.size() >= 64 || effect.size() >= 64)
+        return;
+    // Host header, three float32 values, two stock section names and absolute game time.
+    std::array<unsigned char, 24 + 12 + 2 * 64 + 8> packet{};
+    std::memcpy(packet.data(), "ZAE1", 4);
+    writeWord(packet.data() + 4, m_tick);
+    writeWide(packet.data() + 8, m_epoch);
+    writeWide(packet.data() + 16, m_hostEpoch);
+    const float seconds = static_cast<float>(gameTime % 86400000u) * .001f;
+    const float values[] = {std::min(seconds, std::nextafter(86400.f, 0.f)), factor, remaining};
+    std::memcpy(packet.data() + 24, values, sizeof(values));
+    std::copy(cycle.begin(), cycle.end(), packet.begin() + 36);
+    std::copy(effect.begin(), effect.end(), packet.begin() + 100);
+    writeWide(packet.data() + 164, gameTime);
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, m_npcPath.c_str(), m_npcPath.size() + 1);
+    if (::sendto(m_socket, packet.data(), packet.size(), MSG_DONTWAIT,
+            reinterpret_cast<const sockaddr*>(&address), socketAddressLength(m_npcPath)) >= 0)
+        m_environmentTick = m_tick;
 }
 
 bool AlifeHostInterests::wantsNpcFrame() const
 {
-    return m_haveSnapshot && Clock::now() < m_expires && m_npcTick != m_tick;
+    return m_haveSnapshot && Clock::now() < m_expires && (!m_npcTick || m_tick - *m_npcTick >= 3);
 }
 
 void AlifeHostInterests::publishNpcs(const NpcPose* npcs, std::size_t count)
@@ -892,6 +1434,105 @@ void AlifeHostInterests::publishNpcs(const NpcPose* npcs, std::size_t count)
         if (sent < 0)
             return;
     }
+}
+
+bool AlifeHostInterests::publishNpcPose(std::uint16_t id, std::uint32_t spawn,
+    const unsigned char* pose, std::size_t size)
+{
+    constexpr std::size_t Header = 24, RowHeader = 12;
+    if (size > zone::npcPoseCapacity) return false;
+    if (m_poseFrame.size() + RowHeader + size > 8192 && !flushNpcPoses())
+        return false;
+    if (m_poseFrame.empty())
+    {
+        m_poseFrame.resize(Header);
+        std::memcpy(m_poseFrame.data(), "ZAP1", 4);
+        writeWord(m_poseFrame.data() + 4, m_tick);
+        writeWide(m_poseFrame.data() + 8, m_epoch);
+        writeWide(m_poseFrame.data() + 16, m_hostEpoch);
+    }
+    const auto start = m_poseFrame.size();
+    m_poseFrame.resize(start + RowHeader + size);
+    auto* row = m_poseFrame.data() + start;
+    writeWord(row, id);
+    writeWord(row + 4, spawn);
+    writeWord(row + 8, size);
+    std::copy_n(pose, size, row + RowHeader);
+    return true;
+}
+
+bool AlifeHostInterests::flushNpcPoses()
+{
+    if (m_poseFrame.empty()) return true;
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, m_npcPath.c_str(), m_npcPath.size() + 1);
+    const auto sent = ::sendto(m_socket, m_poseFrame.data(), m_poseFrame.size(), MSG_DONTWAIT,
+        reinterpret_cast<const sockaddr*>(&address), socketAddressLength(m_npcPath));
+    m_poseFrame.clear();
+    return sent >= 0;
+}
+
+void AlifeHostInterests::publishSounds()
+{
+    std::deque<ObservedSound> sounds;
+    std::vector<ObservedSound> loops;
+    {
+        std::lock_guard lock(observedSoundsMutex);
+        sounds.swap(observedSounds);
+        const auto now = std::chrono::steady_clock::now();
+        for (auto loop = observedLoops.begin(); loop != observedLoops.end();)
+        {
+            if (now - loop->second.updated > std::chrono::milliseconds(250))
+            {
+                loop = observedLoops.erase(loop);
+                continue;
+            }
+            const auto& sound = loop->second.sound;
+            if (near(sound.position.x, sound.position.y, sound.position.z, std::clamp(sound.range, 1.f, 100.f)))
+                loops.push_back(sound);
+            ++loop;
+        }
+    }
+    if (sounds.empty() && loops.empty()) return;
+    constexpr std::size_t Header = 24, Row = 160;
+    std::array<unsigned char, Header + Row * 32> bytes{};
+    writeWord(bytes.data() + 4, m_tick);
+    writeWide(bytes.data() + 8, m_epoch);
+    writeWide(bytes.data() + 16, m_hostEpoch);
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, m_npcPath.c_str(), m_npcPath.size() + 1);
+    const auto publish = [&](const char* kind, const auto& samples, bool looped)
+    {
+        std::memcpy(bytes.data(), kind, 4);
+        unsigned count = 0;
+        const auto flush = [&] {
+            return !count || ::sendto(m_socket, bytes.data(), Header + count * Row, MSG_DONTWAIT,
+                reinterpret_cast<const sockaddr*>(&address), socketAddressLength(m_npcPath)) >= 0;
+        };
+        for (const auto& sound : samples)
+        {
+            const auto& p = sound.position;
+            const auto range = std::clamp(sound.range, 1.f, 100.f);
+            if (!looped && !near(p.x, p.y, p.z, range)) continue;
+            auto* row = bytes.data() + Header + count * Row;
+            std::fill_n(row, Row, 0);
+            writeWord(row, looped ? sound.loop : ++m_soundSequence);
+            const float fields[] = {p.x, p.y, p.z, std::clamp(sound.volume, 0.f, 4.f),
+                std::clamp(sound.frequency, .1f, 4.f), range};
+            std::memcpy(row + 4, fields, sizeof(fields));
+            std::copy(sound.name.begin(), sound.name.end(), row + 28);
+            if (++count == 32)
+            {
+                if (!flush() || !looped) return;
+                count = 0;
+            }
+        }
+        flush();
+    };
+    publish("ZAU1", sounds, false);
+    publish("ZAV1", loops, true);
 }
 
 bool AlifeHostInterests::near(float x, float y, float z, float distance) const

@@ -112,7 +112,7 @@ if (typeof ServiceWorkerGlobalScope !== 'undefined' && globalThis instanceof Ser
     const url = new URL(event.request.url);
     if (event.request.method !== 'GET' || url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) return;
     const path = decodeURIComponent(url.pathname.slice(base.pathname.length));
-    if (['', 'index.html', 'game-ui.mjs', 'release-cache.mjs', 'opfs-store.mjs', 'release-files.json', 'favicon.ico'].includes(path)) return;
+    if (['', 'index.html', 'game-ui.mjs', 'release-cache.mjs', 'opfs-store.mjs', 'analytics-client.mjs', 'release-files.json', 'favicon.ico', 'startup-wallpaper.webp'].includes(path)) return;
     event.respondWith((async () => {
       const file = (await files()).get(path);
       if (!file) return new Response('Unknown game release file', {status: 404});

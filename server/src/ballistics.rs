@@ -1,6 +1,7 @@
 //! Free flight from the CoP multiplayer bullet manager. The simulation traces
 //! bounded chords against the same rewind frame as the firearm transaction.
 use crate::collision::BulletSurface;
+use crate::xray_combat_rules;
 use parry3d::math::Vector;
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +19,8 @@ pub(crate) const MAX_PENETRATION: f32 = 1000.0;
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RoundProfile {
     pub revision: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<RoundKey>,
     pub range: f32,
     pub speed: f32,
     pub drag: f32,
@@ -25,6 +28,13 @@ pub struct RoundProfile {
     pub pellets: u8,
     pub spread: Dispersion,
     pub surface: SurfaceProfile,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct RoundKey {
+    pub(crate) weapon: [u8; 16],
+    pub(crate) ammunition: [u8; 16],
+    pub(crate) condition: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -155,37 +165,38 @@ impl MaterialFlight {
         let mut speed = velocity.length();
         let direction = velocity.try_normalize()?;
         if let Some((entry, density)) = self.density_entry {
-            speed = (speed - point.distance(entry) * density).max(0.0);
+            speed = xray_combat_rules::density_speed(speed, point.distance(entry), density);
         }
         let incidence = direction.dot(hit.normal);
         self.density_entry = (incidence < 0.0 && hit.density > 0.0).then_some((point, hit.density));
         if speed < 1.0 {
             return None;
         }
-        if hit.shoot_factor <= SURFACE_EPSILON {
-            return Some(direction * speed);
-        }
-
-        let scale = if self.penetration > SURFACE_EPSILON {
-            ((self.penetration - hit.shoot_factor) / self.penetration).max(0.0)
-        } else {
-            0.0
-        };
-        if self.profile.magnetic && scale > SURFACE_EPSILON {
-            self.penetration = (self.penetration - hit.shoot_factor * drag).max(0.0);
-            return Some(direction * speed);
+        use xray_combat_rules::SurfaceAction;
+        let response = |outgoing_dot, threshold| xray_combat_rules::surface_response([
+            self.penetration, hit.shoot_factor, drag, incidence, outgoing_dot, threshold,
+            self.profile.energy_min, self.profile.energy_max, SURFACE_EPSILON,
+        ], self.profile.magnetic, self.profile.ricochet, hit.allows_ricochet);
+        let (action, mut scale, penetration) = response(0.0, 1.0);
+        match action {
+            SurfaceAction::Transparent => return Some(direction * speed),
+            SurfaceAction::Magnetic => {
+                self.penetration = penetration;
+                return Some(direction * speed);
+            }
+            _ => {}
         }
         if self.profile.ricochet && hit.allows_ricochet {
             let reflected = (direction - 2.0 * incidence * hit.normal).normalize();
             let outgoing = spread.direction(reflected, 10.0_f32.to_radians());
-            if direction.dot(outgoing) > 0.5 + 0.3 * spread.uniform() {
+            let (action, outgoing_scale, _) = response(direction.dot(outgoing), 0.5 + 0.3 * spread.uniform());
+            scale = outgoing_scale;
+            if action == SurfaceAction::Ricochet {
                 self.profile.ricochet = false;
-                let scale = (1.0 - incidence.abs() * self.profile.energy_min)
-                    .clamp(0.0, self.profile.energy_max);
                 return Some(outgoing * (speed * scale));
             }
         }
-        (scale > SURFACE_EPSILON).then(|| spread.penetrated_direction(direction) * (speed * scale))
+        (scale >= SURFACE_EPSILON).then(|| spread.penetrated_direction(direction) * (speed * scale))
     }
 }
 
@@ -194,6 +205,10 @@ pub(crate) struct Flight {
     velocity: Vector,
     gravity: Vector,
     drag: f32,
+    origin: Vector,
+    launch_velocity: Vector,
+    elapsed: f32,
+    path_velocity: Vector,
     drag_acceleration: Vector,
     drag_left: f32,
     time_left: f32,
@@ -207,6 +222,10 @@ pub(crate) struct Segment {
     velocity: Vector,
     acceleration: Vector,
     duration: f32,
+    launch_velocity: Vector,
+    elapsed: f32,
+    gravity: f32,
+    drag: f32,
 }
 
 impl Segment {
@@ -226,7 +245,8 @@ impl Segment {
     }
 
     pub(crate) fn impact_velocity(&self, distance: f32) -> Vector {
-        self.velocity + self.acceleration * self.contact_time(distance)
+        xray_combat_rules::trajectory(self.launch_velocity, self.gravity, self.drag,
+            self.elapsed + self.contact_time(distance)).1
     }
 }
 
@@ -237,6 +257,10 @@ impl Flight {
             velocity: direction * round.speed,
             gravity: -Vector::Y * round.gravity,
             drag: round.drag,
+            origin,
+            launch_velocity: direction * round.speed,
+            elapsed: 0.0,
+            path_velocity: direction * round.speed,
             drag_acceleration: Vector::ZERO,
             drag_left: 0.0,
             time_left: MAX_FLIGHT_SECONDS,
@@ -247,16 +271,20 @@ impl Flight {
     }
 
     fn reset_drag(&mut self) {
+        self.origin = self.position;
+        self.launch_velocity = self.velocity;
+        self.path_velocity = self.velocity;
+        self.elapsed = 0.0;
         // The original switches to gravity-only flight just before the initial
         // velocity term reaches zero. Near-vertical shots also skip drag.
         let drag =
-            if self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z <= 1.0e-6 {
+            if self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z < 1.0e-7 {
                 0.0
             } else {
                 self.drag
             };
         self.drag_acceleration = -self.velocity * drag;
-        self.drag_left = (drag.recip() - DRAG_CUTOFF_EPSILON).max(0.0);
+        self.drag_left = (self.drag.recip() - DRAG_CUTOFF_EPSILON).max(0.0);
     }
 
     pub(crate) fn resume(&mut self, segment: &Segment, distance: f32, velocity: Vector) -> f32 {
@@ -301,13 +329,18 @@ impl Iterator for Flight {
             .min(self.time_left)
             .min(phase_left);
         let start = self.position;
-        let velocity = self.velocity;
-        let displacement = (velocity + acceleration * (dt * 0.5)) * dt;
+        let velocity = self.path_velocity;
+        let elapsed = self.elapsed;
+        self.elapsed += dt;
+        let (offset, next_velocity) = xray_combat_rules::trajectory(
+            self.launch_velocity, -self.gravity.y, self.drag, self.elapsed);
+        let displacement = self.origin + offset - start;
+        self.path_velocity += acceleration * dt;
         let length = displacement.length();
         self.time_left -= dt;
         self.drag_left -= dt;
         self.position += displacement;
-        self.velocity += acceleration * dt;
+        self.velocity = next_velocity;
         if length <= f32::EPSILON {
             return None;
         }
@@ -320,6 +353,10 @@ impl Iterator for Flight {
             velocity,
             acceleration,
             duration: dt,
+            launch_velocity: self.launch_velocity,
+            elapsed,
+            gravity: -self.gravity.y,
+            drag: self.drag,
         })
     }
 }
@@ -371,6 +408,23 @@ mod tests {
             .unwrap();
         assert_eq!(outgoing, Vector::Z * 100.0);
         assert_eq!(beam.penetration, 0.875);
+    }
+
+    #[test]
+    fn native_surface_threshold_and_exhausted_magnetic_penetration() {
+        use xray_combat_rules::SurfaceAction;
+        let values = [0.0, SURFACE_EPSILON, 1.0, -1.0, 0.0, 1.0, 0.8, 0.5, SURFACE_EPSILON];
+        assert_eq!(xray_combat_rules::surface_response(values, false, false, false).0, SurfaceAction::Stop);
+        let mut transparent = values;
+        transparent[1] = SURFACE_EPSILON * 0.5;
+        assert_eq!(xray_combat_rules::surface_response(transparent, false, false, false).0, SurfaceAction::Transparent);
+        let grazing = [0.0, 1.0, 1.0, -0.1, 0.9, 0.6, 0.8, 0.5, SURFACE_EPSILON];
+        assert_eq!(xray_combat_rules::surface_response(grazing, false, true, true).0, SurfaceAction::Ricochet);
+        assert_eq!(xray_combat_rules::surface_response(grazing, false, true, false).0, SurfaceAction::Stop);
+        assert_eq!(xray_combat_rules::surface_response(grazing, false, false, true).0, SurfaceAction::Stop);
+        let magnetic = [0.5, 0.25, 4.0, -1.0, 0.9, 0.6, 0.8, 0.5, SURFACE_EPSILON];
+        assert_eq!(xray_combat_rules::surface_response(magnetic, true, true, true), (SurfaceAction::Magnetic, 1.0, -0.5));
+        assert_eq!(xray_combat_rules::density_speed(10.0, 2.0, 8.0), 0.0);
     }
 
     #[test]
@@ -436,9 +490,25 @@ mod tests {
     }
 
     #[test]
+    fn native_impact_velocity_uses_its_own_drag_transition() {
+        // Stock position transitions at 0.4 s, but velocity keeps losing
+        // horizontal speed until 0.5 s. Previously Rust retained 20 m/s.
+        let (position, velocity) = xray_combat_rules::trajectory(Vector::Z * 100.0, 10.0, 2.0, 0.6);
+        assert!(position.distance(Vector::new(0.0, -1.8, 28.0)) < 0.0001);
+        assert!(velocity.distance(Vector::new(0.0, -6.0, 0.0)) < 0.0001);
+        let (position, velocity) = xray_combat_rules::trajectory(Vector::Z * 100.0, 10.0, 0.0, 2.0);
+        assert!(position.distance(Vector::new(0.0, -20.0, 200.0)) < 0.0001);
+        assert!(velocity.distance(Vector::new(0.0, -20.0, 100.0)) < 0.0001);
+        let (position, velocity) = xray_combat_rules::trajectory(Vector::Y * 100.0, 10.0, 2.0, 0.2);
+        assert!(position.distance(Vector::Y * 19.8) < 0.0001);
+        assert!(velocity.distance(Vector::Y * 98.0) < 0.0001);
+    }
+
+    #[test]
     fn stock_drag_phase_ends_before_gravity_only_flight() {
         let round = RoundProfile {
             revision: 0,
+            key: None,
             range: 100.0,
             speed: 100.0,
             drag: 2.0,
@@ -465,6 +535,7 @@ mod tests {
     fn truncated_final_chord_uses_contact_speed_at_the_range_limit() {
         let round = RoundProfile {
             revision: 0,
+            key: None,
             range: 0.5,
             speed: 100.0,
             drag: 2.0,
@@ -485,6 +556,7 @@ mod tests {
     fn quest_gauss_muzzle_speed_still_traces_a_bounded_path() {
         let round = RoundProfile {
             revision: 0,
+            key: None,
             range: 2000.0,
             speed: 100_000.0,
             drag: 1.0,

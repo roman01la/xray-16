@@ -1910,7 +1910,7 @@ void CActor::MoveArtefactBelt(const CArtefact* artefact, bool on_belt)
 
 void CActor::UpdateArtefactsOnBeltAndOutfit()
 {
-    static float update_time = 0;
+    float& update_time = conditions().EquipmentUpdateTime();
 
     float f_update_time = 0;
 
@@ -2238,4 +2238,13 @@ void CActor::On_SetEntity()
         pOutfit->ApplySkinModel(this, true, true);
 }
 
-bool CActor::unlimited_ammo() { return !!psActorFlags.test(AF_UNLIMITEDAMMO); }
+bool CActor::unlimited_ammo()
+{
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+    // Network-owned inventory is finite even if the headless director's local
+    // developer settings enable unlimited ammunition.
+    if (m_zoneAlifeTarget)
+        return false;
+#endif
+    return !!psActorFlags.test(AF_UNLIMITEDAMMO);
+}

@@ -228,7 +228,7 @@ pub(crate) fn strike(
     power: f64,
     penetration: f64,
 ) -> Result<ArmourImpact> {
-    strike_for_bone(tx, catalog, &target.character, target.bone, power, penetration)
+    strike_for_bone(tx, catalog, &target.character, &target.bone, power, penetration)
 }
 
 fn strike_for_bone(
@@ -250,15 +250,11 @@ fn strike_for_bone(
             field_armour.add(catalog, &gear.section, &state, &gear.place)?;
             continue;
         }
-        let armour = profile.bone.armour * f64::from(state.condition);
         let received = power;
-        if penetration > armour {
-            let fraction = ((penetration - armour) / penetration).max(profile.hit_fraction);
-            power *= fraction * profile.bone.coefficient;
-        } else {
-            power *= profile.hit_fraction;
-            wound = false;
-        }
+        power = f64::from(crate::xray_combat_rules::bullet_armour_power(
+            power as f32, penetration as f32, profile.bone.armour as f32 * state.condition,
+            profile.hit_fraction as f32, profile.bone.coefficient as f32, &mut wound,
+        ));
         gear_changed |= wear(tx, &gear, &mut state, received, profile.wear)?;
         field_armour.add(catalog, &gear.section, &state, &gear.place)?;
     }
@@ -279,22 +275,80 @@ fn strike_for_bone(
 
 pub(crate) fn impact(
     tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey,
-    kind: ImpactKind, power: f64, health: f32,
+    kind: &ImpactKind, power: f64, health: f32,
 ) -> Result<(ArmourImpact, f32)> {
     let (impact, immunity, adds_wound) = match kind {
         // Preserve the existing grenade damage rules.
-        ImpactKind::Blast => return Ok((absorb_hit(tx, catalog, character, power,
+        ImpactKind::Blast { .. } => return Ok((absorb_hit(tx, catalog, character, power,
             ("explosion_protection", "explosion_immunity"))?, 0.0)),
-        ImpactKind::Wound => return wound(tx, catalog, character, &[power], health),
+        ImpactKind::Wound { .. } => return wound(tx, catalog, character, &[power], health),
         ImpactKind::Strike => (absorb_hit(tx, catalog, character, power,
             ("strike_protection", "strike_immunity"))?, "strike_immunity", false),
-        ImpactKind::Bullet { bone, penetration } => (strike_for_bone(tx, catalog, character, &bone,
-            power, f64::from(penetration))?, "fire_wound_immunity", true),
+        ImpactKind::Bullet { bone, penetration } => (strike_for_bone(tx, catalog, character, bone,
+            power, f64::from(*penetration))?, "fire_wound_immunity", true),
     };
     let ArmourImpact::Hit { power, wound, gear_changed, field_armour } = impact else { return Ok((impact, 0.0)); };
     let (health_factor, power_factor) = actor_hit_factors(catalog, immunity)?;
     Ok((ArmourImpact::Hit { power: power * health_factor, wound: wound && adds_wound, gear_changed, field_armour },
         power * power_factor))
+}
+
+pub(crate) fn apply_native_impact(
+    tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey, kind: &ImpactKind,
+    sample: crate::survival::NativeArmourImpact,
+) -> Result<Option<(ArmourImpact, f32)>> {
+    let wound = match kind {
+        ImpactKind::Strike => false,
+        _ => sample.wound,
+    };
+    if !(0.0..=10.0).contains(&sample.power)
+        || !(0.0..=1000.0).contains(&sample.health)
+        || !(0.0..=1000.0).contains(&sample.power_loss) {
+        return Ok(None);
+    }
+    let Some((gear_changed, field_armour)) = apply_native_wear(tx, catalog, character,
+        sample.generation, [sample.outfit, sample.helmet])? else { return Ok(None); };
+    Ok(Some((ArmourImpact::Hit { power:sample.health, wound, gear_changed, field_armour }, sample.power_loss)))
+}
+
+pub(crate) fn apply_native_wear(
+    tx: &Transaction<'_>, catalog: &Catalog, character: &CharacterKey,
+    generation_expected: u64, conditions: [Option<f32>;2],
+) -> Result<Option<(bool, Option<FieldArmour>)>> {
+    let generation: i64 = tx.query_row(
+        "SELECT generation FROM inventory_characters WHERE principal=?1",
+        [&character.principal], |row| row.get(0),
+    )?;
+    if u64::try_from(generation).ok() != Some(generation_expected) {
+        return Ok(None);
+    }
+    let rows = equipped(tx, character, false)?;
+    if rows.is_empty() { return Ok(None); }
+    let mut predicted = conditions;
+    let mut wear = Vec::new();
+    for gear in rows.into_iter().flatten() {
+        let Some(condition) = predicted[usize::from(gear.place == "slot:12")].take() else {
+            return Ok(None);
+        };
+        let state: ItemState = serde_json::from_str(&gear.raw)?;
+        if !(0.0..=state.condition).contains(&condition) {
+            return Ok(None);
+        }
+        wear.push((gear, state, condition));
+    }
+    if predicted.iter().any(Option::is_some) {
+        return Ok(None);
+    }
+    let mut gear_changed = false;
+    let mut field_armour = FieldArmour::default();
+    for (gear, mut state, condition) in wear {
+        gear_changed |= save_condition(tx, &gear, &mut state, condition)?;
+        field_armour.add(catalog, &gear.section, &state, &gear.place)?;
+    }
+    if gear_changed {
+        field_armour.stamp(tx, &character.principal)?;
+    }
+    Ok(Some((gear_changed, gear_changed.then_some(field_armour))))
 }
 
 fn actor_hit_factors(catalog: &Catalog, hit: &str) -> Result<(f32, f32)> {

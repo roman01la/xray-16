@@ -4,7 +4,12 @@ from pathlib import Path
 import shutil,tempfile
 repo=Path(__file__).resolve().parents[2]
 target=Path(tempfile.mkdtemp(prefix='zone-fly-build-'))
-files=[repo/'server/Cargo.toml',repo/'server/Cargo.lock',repo/'server/deploy/Dockerfile.fly',repo/'server/deploy/fly-entrypoint.sh']
+files=[repo/'server/Cargo.toml',repo/'server/Cargo.lock',repo/'server/build.rs',repo/'server/deploy/Dockerfile.fly',repo/'server/deploy/fly-entrypoint.sh']
+files+=[repo/'src/xrGame/CombatRules.h',repo/'server/src/xray_combat_rules.cpp']
+files.append(repo/'server/src/xray_collision.cpp')
+files += [repo/'server/src/xray_condition.cpp', repo/'src/xrGame/ZoneConditionState.h', repo/'src/xrGame/ZoneConditionProtocol.h', repo/'src/xrGame/ZoneConditionHit.h', repo/'src/xrGame/ZoneConditionImport.h']
+for directory in ['src/Common','src/xrCommon','src/xrCore','src/Include/xrAPI','src/utils/xrMiscMath']:
+    files += [p for p in (repo/directory).rglob('*') if p.is_file()]
 files.append(repo/'server/tools/migrate-cdn.py')
 files+=list((repo/'server/src').rglob('*.rs'))
 files+=list((repo/'server/config').glob('*.json'))

@@ -26,6 +26,8 @@ restore.addEventListener('click',async()=>{
  try{
   await importIdentity(slot,document.querySelector('#import-save-key').value);
   document.querySelector('#import-save-key').value='';
-  document.querySelector('#disconnect').click();location.reload();
+ document.querySelector('#disconnect').click();
+ window.dispatchEvent(new Event('xray-browser-navigation'));
+ location.reload();
  }catch(error){saveStatus.textContent=error.message;restore.disabled=false;copy.disabled=false;}
 });

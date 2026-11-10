@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-naga = { version = "=26.0.0", default-features = false, features = ["spv-in", "wgsl-out"] }
+naga = { path = "vendor/naga", version = "=26.0.0", default-features = false, features = ["spv-in", "wgsl-out"] }
 
 [profile.release]
 opt-level = "s"

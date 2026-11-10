@@ -27,6 +27,30 @@ using namespace ALife;
 
 extern string_path g_last_saved_game;
 
+#ifdef XR_PLATFORM_WEB
+namespace
+{
+enum class BrowserLoadSource { Unspecified, UserSave, LevelTravel };
+BrowserLoadSource browserLoadSource = BrowserLoadSource::Unspecified;
+string_path browserLoadName{};
+
+void RememberBrowserLoad(LPCSTR name, BrowserLoadSource source)
+{
+    xr_strcpy(browserLoadName, name);
+    browserLoadSource = source;
+}
+
+BrowserLoadSource TakeBrowserLoadSource(LPCSTR name)
+{
+    const auto source = xr_stricmp(browserLoadName, name) == 0
+        ? browserLoadSource : BrowserLoadSource::Unspecified;
+    browserLoadName[0] = '\0';
+    browserLoadSource = BrowserLoadSource::Unspecified;
+    return source;
+}
+} // namespace
+#endif
+
 class CSwitchPredicate
 {
 private:
@@ -215,6 +239,9 @@ bool CALifeUpdateManager::change_level(NET_Packet& net_packet)
     *m_server_command_line = strconcat(sizeof(temp), temp, autoave_name, temp0);
 
     save(autoave_name);
+#ifdef XR_PLATFORM_WEB
+    RememberBrowserLoad(autoave_name, BrowserLoadSource::LevelTravel);
+#endif
 
     graph().actor()->m_tGraphID = safe_graph_vertex_id;
     graph().actor()->m_tNodeID = safe_level_vertex_id;
@@ -270,6 +297,10 @@ void CALifeUpdateManager::new_game(LPCSTR save_name)
 
 void CALifeUpdateManager::load(LPCSTR game_name, bool no_assert, bool new_only)
 {
+#ifdef XR_PLATFORM_WEB
+    // Consume the request even if the load fails or is replaced by a new game.
+    const auto loadSource = TakeBrowserLoadSource(game_name);
+#endif
     g_pGamePersistent->LoadTitle("st_loading_alife_simulator");
 
 #ifdef DEBUG
@@ -279,7 +310,8 @@ void CALifeUpdateManager::load(LPCSTR game_name, bool no_assert, bool new_only)
 
     xr_strcpy(g_last_saved_game, game_name);
 
-    if (new_only || !CALifeStorageManager::load(game_name))
+    const bool loadedSave = !new_only && CALifeStorageManager::load(game_name);
+    if (!loadedSave)
     {
         R_ASSERT3(new_only || (no_assert && xr_strlen(game_name)), "Cannot find the specified saved game ", game_name);
         new_game(game_name);
@@ -287,6 +319,15 @@ void CALifeUpdateManager::load(LPCSTR game_name, bool no_assert, bool new_only)
 
     if (g_pGameLevel)
         Level().OnAlifeSimulatorLoaded();
+
+#ifdef XR_PLATFORM_WEB
+    if (new_only)
+        Log("XRAY_ANALYTICS new_campaign");
+    else if (loadedSave && loadSource != BrowserLoadSource::LevelTravel &&
+        (loadSource == BrowserLoadSource::UserSave ||
+            xr_strcmp(g_pGamePersistent->m_game_params.m_new_or_load, "load") == 0))
+        Log("XRAY_ANALYTICS load_save");
+#endif
 
 #ifdef DEBUG
     Msg("* Loading alife simulator is successfully completed (%7.3f Mb)",
@@ -327,6 +368,9 @@ bool CALifeUpdateManager::load_game(LPCSTR game_name, bool no_assert)
     pstr temp = strchr(S, '/');
     R_ASSERT2(temp, "Invalid server options!");
     strconcat(sizeof(S1), S1, game_name, temp);
+#ifdef XR_PLATFORM_WEB
+    RememberBrowserLoad(game_name, BrowserLoadSource::UserSave);
+#endif
     *m_server_command_line = S1;
     return (true);
 }

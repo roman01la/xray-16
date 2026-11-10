@@ -160,17 +160,45 @@ async function removeRetired(game, retired) {
   }
 }
 
-async function seedGraphicsDefaults(app) {
+// These are the complete text localizations in the hosted Call of Pripyat pack.
+const gameLanguages = new Map([
+  ["cs", "cze"], ["de", "ger"], ["en", "eng"], ["es", "spa"],
+  ["fr", "fra"], ["it", "ita"], ["pl", "pol"], ["ru", "rus"], ["uk", "ukr"],
+]);
+
+function browserGameLanguage() {
+  const preferences = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const locale of preferences) {
+    const language = gameLanguages.get(locale?.split("-")[0].toLowerCase());
+    if (language) return language;
+  }
+  return "eng";
+}
+
+async function seedUserConfig(app, useBrowserLanguage) {
   try {
     await app.getFileHandle("user.ltx");
     return;
   } catch (error) {
     if (error.name !== "NotFoundError") throw error;
   }
-  await writeBlob(app, "user.ltx", new Blob(["_preset Default\n"]));
+  let settings = "_preset Default\n";
+  if (useBrowserLanguage) {
+    // A legacy or restored profile can have saves without its old user.ltx.
+    const saves = await app.getDirectoryHandle("savedgames");
+    let hasSave = false;
+    for await (const [name, handle] of saves.entries()) {
+      if (handle.kind === "file" && /\.scop$/i.test(name)) {
+        hasSave = true;
+        break;
+      }
+    }
+    if (!hasSave) settings += `g_language ${browserGameLanguage()}\n`;
+  }
+  await writeBlob(app, "user.ltx", new Blob([settings]));
 }
 
-async function syncEngineData(root, appDirectory = '_appdata_') {
+async function syncEngineData(root, appDirectory = '_appdata_', hosted = false) {
   const game = await gameDir(root);
   const manifest = await fetch("./engine_data.json");
   if (!manifest.ok)
@@ -209,7 +237,7 @@ async function syncEngineData(root, appDirectory = '_appdata_') {
   const prepareConfig = async () => {
     const app = await ensureDir(game, appDirectory.split("/"));
     if (root === "stream-cop" || root.startsWith("zone-engine-preview-"))
-      await seedGraphicsDefaults(app);
+      await seedUserConfig(app, hosted && root === "stream-cop" && appDirectory === "_appdata_");
     try {
       await migrateStockBindings(app);
     } catch (error) {
@@ -264,7 +292,7 @@ onmessage = async (e) => {
         postMessage({ id, type: "done" });
         break;
       case "sync-engine-data": {
-        await syncEngineData(e.data.root, e.data.appDirectory);
+        await syncEngineData(e.data.root, e.data.appDirectory, Boolean(e.data.pack));
         let streaming;
         if (e.data.pack) {
           const { installStreaming } = await import("./streaming.js");

@@ -36,7 +36,8 @@ addToLibrary({
       if (context.state === 'suspended') context.resume().catch(error => console.warn('Could not resume browser audio:', error));
     };
     for (const event of ['pointerdown', 'keydown', 'touchstart'])
-      document.addEventListener(event, resume, {signal: input.signal, passive: true});
+      document.addEventListener(event, resume, {signal: input.signal, passive: true, capture: true});
+    if (navigator.userActivation?.hasBeenActive) resume();
 
     // The fixed mixer allocation predates this view. Growing shared Wasm
     // memory later keeps this range backed by the same shared bytes.

@@ -71,6 +71,9 @@ public:
     R_xforms xforms;
     R_hemi hemi;
     R_tree tree;
+#ifdef XR_PLATFORM_WEB
+    float webTessellationLOD = 1.f;
+#endif
 #ifdef USE_DX11
     R_LOD LOD;
 #endif
@@ -542,6 +545,9 @@ public:
     }
 
     // Rendering
+#ifdef XR_PLATFORM_WEB
+    ICF void RenderDetails(u32 instanceBuffer, u32 instances, u32 baseV, u32 countV, u32 startI, u32 PC);
+#endif
     ICF void Render(D3DPRIMITIVETYPE T, u32 baseV, u32 startV, u32 countV, u32 startI, u32 PC);
     ICF void Render(D3DPRIMITIVETYPE T, u32 startV, u32 PC);
 

@@ -5,6 +5,7 @@
 #include "StdAfx.h"
 #include "Level.h"
 #include "Level_Bullet_Manager.h"
+#include "CombatRules.h"
 #include "game_cl_base.h"
 #include "Actor.h"
 #include "GamePersistent.h"
@@ -231,48 +232,15 @@ void CBulletManager::UpdateWorkload()
     }
 }
 
-static Fvector parabolic_velocity(
-    Fvector const& start_velocity, Fvector const& gravity, float const air_resistance, float const time)
-{
-    return (Fvector(start_velocity).mul(_max(0.f, 1.f - air_resistance * time)).mad(gravity, time));
-}
-
 static Fvector trajectory_velocity(
     Fvector const& start_velocity, Fvector const& gravity, float const air_resistance, float const time)
 {
-    float const parabolic_time = _max(0.f, 2.f / air_resistance - air_resistance_epsilon);
-    float const fall_down_time = time - parabolic_time;
-    //	float const fake_velocity	= start_velocity*2.f;
-    if (fall_down_time < 0.f)
-    {
-        Fvector const xz_velocity = Fvector().set(start_velocity.x, 0.f, start_velocity.z);
-        // this could be since we could fire in different directions
-        // for example, vertically into the ground
-        if (!fis_zero(xz_velocity.square_magnitude()))
-        {
-            return (parabolic_velocity(start_velocity, gravity, air_resistance, time));
-        }
-
-        // this fake since our formula doesn't take into account
-        // directions correctly
-        return (Fvector(start_velocity).mad(gravity, time));
-    }
-
-    Fvector parabolic_velocity = ::parabolic_velocity(start_velocity, gravity, air_resistance, parabolic_time);
-
-    VERIFY(
-        !fis_zero(air_resistance_epsilon) || fis_zero(_sqr(parabolic_velocity.x) + _sqr(parabolic_velocity.z), EPS_L));
-    return (parabolic_velocity.mad(gravity, fall_down_time));
-}
-
-static Fvector parabolic_position(Fvector const& start_position, Fvector const& start_velocity, Fvector const& gravity,
-    float const air_resistance, float const time)
-{
-    float const sqr_t_div_2 = _sqr(time) * .5f;
-    return (Fvector()
-                .mad(start_position, start_velocity, time)
-                .mad(Fvector(start_velocity).mul(-air_resistance), sqr_t_div_2)
-                .mad(gravity, sqr_t_div_2));
+    const bool vertical = fis_zero(_sqr(start_velocity.x) + _sqr(start_velocity.z));
+    return {
+        xray::combat::trajectoryVelocity(start_velocity.x, gravity.x, air_resistance, time, vertical, air_resistance_epsilon),
+        xray::combat::trajectoryVelocity(start_velocity.y, gravity.y, air_resistance, time, vertical, air_resistance_epsilon),
+        xray::combat::trajectoryVelocity(start_velocity.z, gravity.z, air_resistance, time, vertical, air_resistance_epsilon),
+    };
 }
 
 // BOOL g_use_new_ballistics	= 0;
@@ -283,30 +251,12 @@ float dbg_bullet_time_factor = 1.f;
 static Fvector trajectory_position(Fvector const& start_position, Fvector const& base_start_velocity,
     Fvector const& base_gravity, float base_air_resistance, float const base_time)
 {
-    Fvector const& gravity =
-        base_gravity; // g_use_new_ballistics ? Fvector(base_gravity).mul(_sqr(factor)) : base_gravity;
-    float const& air_resistance =
-        base_air_resistance; // g_use_new_ballistics ? base_air_resistance*factor : base_air_resistance;
-    Fvector const& start_velocity =
-        base_start_velocity; // g_use_new_ballistics ? Fvector(base_start_velocity).mul( factor ) : base_start_velocity;
-    float const time = base_time;
-
-    float const parabolic_time = _max(0.f, 1.f / air_resistance - air_resistance_epsilon);
-    float const fall_down_time = time - parabolic_time;
-    if (fall_down_time < 0.f)
-    {
-        Fvector const xz_velocity = Fvector().set(start_velocity.x, 0.f, start_velocity.z);
-        if (!fis_zero(xz_velocity.square_magnitude()))
-            return (parabolic_position(start_position, start_velocity, gravity, air_resistance, time));
-
-        return (Fvector(start_position).mad(start_velocity, time).mad(gravity, _sqr(time) * .5f));
-    }
-
-    Fvector const parabolic_position =
-        ::parabolic_position(start_position, start_velocity, gravity, air_resistance, parabolic_time);
-    Fvector const parabolic_velocity = ::parabolic_velocity(start_velocity, gravity, air_resistance, parabolic_time);
-    return (
-        Fvector(parabolic_position).mad(parabolic_velocity, fall_down_time).mad(gravity, _sqr(fall_down_time) * .5f));
+    const bool vertical = fis_zero(_sqr(base_start_velocity.x) + _sqr(base_start_velocity.z));
+    return {
+        xray::combat::trajectoryPosition(start_position.x, base_start_velocity.x, base_gravity.x, base_air_resistance, base_time, vertical, air_resistance_epsilon),
+        xray::combat::trajectoryPosition(start_position.y, base_start_velocity.y, base_gravity.y, base_air_resistance, base_time, vertical, air_resistance_epsilon),
+        xray::combat::trajectoryPosition(start_position.z, base_start_velocity.z, base_gravity.z, base_air_resistance, base_time, vertical, air_resistance_epsilon),
+    };
 }
 
 float trajectory_max_error_time(float const t0, float const t1)

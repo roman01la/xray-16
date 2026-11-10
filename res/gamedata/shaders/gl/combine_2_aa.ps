@@ -1,5 +1,6 @@
 #include "common.h"
 #include "mblur.h"
+#include "dof.h"
 #include "iostructs\p_aa_AA_combine.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -87,8 +88,14 @@ float4 _main ( v_aa_AA I )
 
 #ifdef 	USE_DISTORT
 	float4 	distort	= tex2D		(s_distort, I.Tex0);
-	float2	doffs	= (distort.xy-0.5)*def_distort;
+	float2	doffs	= (distort.xy-(127.0/255.0))*def_distort;
 	float2	center	= I.Tex0 + doffs;
+#ifdef GBUFFER_OPTIMIZATION
+    gbuffer_data gbdx = gbuffer_load_data_offset(I.Tex0, center, pos2d);
+#else
+    gbuffer_data gbdx = gbuffer_load_data_offset(I.Tex0, center);
+#endif
+    if ((gbdx.P.z + 0.001) < gbd0.P.z) center = I.Tex0;
 #else
 	float2	center 	= I.Tex0;
 #endif
@@ -96,13 +103,18 @@ float4 _main ( v_aa_AA I )
   // Smoothed color
   // (a-c)*w + c = a*w + c(1-w)
 
-	float2	offset 	=  center * (1.0-w);
+	// Shift every edge tap by the complete distortion displacement.
+	float2	offset 	= center - I.Tex0*w;
 	float4 	s0 	=  tex2D	(s_image, offset + I.Tex1*w);
 	float4 	s1 	=  tex2D	(s_image, offset + I.Tex2*w);
 	float4 	s2 	=  tex2D	(s_image, offset + I.Tex3*w);
 	float4 	s3 	=  tex2D	(s_image, offset + I.Tex4*w);
 
-	float3 	final	=  mblur( center, dc.xyz, (s0+s1+s2+s3).xyz/4.0 );
-
-	return combine_bloom(final,tex2D	(s_bloom, I.Tex0));
+	float3 img = dof((s0+s1+s2+s3).xyz/4.0, center);
+    float4 bloom = tex2D(s_bloom, center);
+    img = mblur(center, dc.xyz, img);
+#ifdef USE_DISTORT
+    img = lerp(img, bloom.rgb*def_hdr, distort.z);
+#endif
+    return combine_bloom(img, bloom);
 }

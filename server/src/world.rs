@@ -70,6 +70,10 @@ pub struct Entity {
     pub armour_revision: u32,
     pub travelling: bool,
     pub(crate) incarnation: u32,
+    pub(crate) hitboxes: Option<(u32, std::sync::Arc<crate::alife_hitboxes::Hitboxes>)>,
+    native_move_tick: Option<u32>,
+    native_move_ack: u32,
+    native_jump_pending: bool,
     input: Option<Input>,
     input_tick: u32,
     look: Vector,
@@ -84,6 +88,7 @@ pub struct CharacterKey {
     pub life: u32,
 }
 impl Entity {
+    pub fn incarnation(&self) -> u32 { self.incarnation }
     pub fn set_condition(&mut self, condition: crate::survival::State) {
         self.health = condition.health_points();
         self.condition = Some(condition);
@@ -92,8 +97,11 @@ impl Entity {
         self.apply_hit(f32::from(points) / 100.0, fire_wound);
     }
     pub(crate) fn apply_hit(&mut self, power: f32, fire_wound: bool) {
+        self.apply_hit_at(power, fire_wound.then_some((crate::survival::WoundKind::Bullet, "")));
+    }
+    pub(crate) fn apply_hit_at(&mut self, power: f32, wound: Option<(crate::survival::WoundKind, &str)>) {
         if let Some(condition) = &mut self.condition {
-            condition.apply_hit(power, fire_wound);
+            condition.apply_hit_at(power, wound);
             self.health = condition.health_points();
         } else {
             self.health = self.health.saturating_sub((power * 100.0).round() as u16);
@@ -187,6 +195,7 @@ pub struct World {
     collision: Option<Arc<CollisionMap>>,
     characters: HashMap<u32, Character>,
     pub movement_errors: u64,
+    pub native_player_movement: bool,
     pub survival_tuning: Option<crate::survival::Tuning>,
     pub environment_fields: Option<crate::environment::Fields>,
     pub environment_hits: Vec<(u32, Vec<crate::environment::Pulse>)>,
@@ -245,6 +254,10 @@ impl World {
                 armour_revision: 0,
                 travelling: false,
                 incarnation: 0,
+                hitboxes: None,
+                native_move_tick: None,
+                native_move_ack: 0,
+                native_jump_pending: false,
                 input: None,
                 look: Vector::Z,
                 turn_speed: 0.0,
@@ -320,6 +333,10 @@ impl World {
             player.set_condition(crate::survival::State::default());
         }
         player.incarnation = player.incarnation.wrapping_add(1);
+        player.hitboxes = None;
+        player.native_move_tick = None;
+        player.native_move_ack = 0;
+        player.native_jump_pending = false;
         player.input = dead.input.map(|old| Input {
             sequence: old.sequence,
             x: 0.,
@@ -395,6 +412,54 @@ impl World {
             && self.tick.wrapping_sub(actor.input_tick) <= INPUT_TIMEOUT_TICKS)?;
         Some((input.yaw, input.pitch))
     }
+    pub fn movement_ack(&self, id: u32) -> u32 {
+        self.entities.get(&id).map_or(0, |e| {
+            if self.native_player_movement { e.native_move_ack } else { e.last_input() }
+        })
+    }
+    pub(crate) fn native_movement_input(&self, actor: &Entity) -> (u32, u32, f32, f32) {
+        let crouch = self.characters.get(&actor.id).is_some_and(|body| body.crouched);
+        let Some(input) = actor.input.filter(|_| self.tick.wrapping_sub(actor.input_tick) <= INPUT_TIMEOUT_TICKS)
+        else { return (actor.last_input(), u32::from(crouch) << 4, 1.0, actor.look.y.clamp(-1.0, 1.0).asin()) };
+        let aim = actor.active_aim(self.tick).is_some();
+        let motion = actor.condition.as_ref().zip(self.survival_tuning.as_ref())
+            .map(|(state, tuning)| state.motion(tuning, actor.loadout));
+        let walk = input.walk || (aim && !input.crouch);
+        let mut flags = (u32::from(input.crouch) << 4) | (u32::from(walk) << 7);
+        let can_move = motion.as_ref().is_none_or(|m| m.walk);
+        if can_move {
+            let (sin, cos) = input.yaw.sin_cos();
+            let side = input.x * cos - input.z * sin;
+            let front = input.x * sin + input.z * cos;
+            flags |= u32::from(front > 0.1) | (u32::from(front < -0.1) << 1)
+                | (u32::from(side < -0.1) << 2) | (u32::from(side > 0.1) << 3)
+                | (u32::from(input.jump && !aim) << 5)
+                | (u32::from(input.sprint && !walk && !aim && motion.as_ref().is_none_or(|m| m.sprint)) << 6);
+        }
+        (input.sequence, flags, motion.map_or(1.0, |m| m.limp_scale), input.pitch)
+    }
+    pub(crate) fn apply_native_movement(
+        &mut self, id: u32, incarnation: u32, tick: u32, ack: u32,
+        position: Vec3, velocity: Vec3, flags: u32,
+    ) {
+        let Some(e) = self.entities.get_mut(&id) else { return };
+        if e.kind != Kind::Player || e.health == 0 || e.travelling || e.incarnation != incarnation
+            || e.character_key.is_none() || newer(ack, e.last_input())
+            || e.native_move_tick.is_some_and(|last| !newer(tick, last))
+        { return; }
+        let Some(character) = self.characters.get_mut(&id) else { return };
+        e.native_move_tick = Some(tick);
+        e.native_move_ack = ack;
+        e.native_jump_pending |= flags & 32 != 0;
+        e.position = position;
+        e.velocity = velocity;
+        character.feet = Vector::new(position.x, position.y, position.z);
+        character.vertical_speed = velocity.y;
+        character.grounded = flags & 2 != 0;
+        character.crouched = flags & 4 != 0;
+        character.jump_held = flags & 8 != 0;
+        character.climbing = flags & 16 != 0;
+    }
     pub fn step(&mut self) {
         self.environment_hits.clear();
         let mut field_pulses = Vec::new();
@@ -405,7 +470,12 @@ impl World {
                 self.grid.entry(cell(e.position)).or_default().push(e.id);
                 continue;
             }
-            e.velocity = Vec3::default();
+            let native_player = self.native_player_movement && e.kind == Kind::Player;
+            if !native_player || e.health == 0 || e.travelling ||
+                e.native_move_tick.is_none_or(|tick| self.tick.wrapping_sub(tick) > TICK_HZ / 4)
+            {
+                e.velocity = Vec3::default();
+            }
             if e.travelling {
                 self.grid.entry(cell(e.position)).or_default().push(e.id);
                 continue;
@@ -441,7 +511,13 @@ impl World {
             let mut jumped = false;
             let mut crouched = crouch;
             let mut climbing = false;
-            if let (Some(map), Some(character)) = (&self.collision, character) {
+            if native_player {
+                if let Some(character) = character {
+                    crouched = character.crouched;
+                    climbing = character.climbing;
+                }
+                jumped = std::mem::take(&mut e.native_jump_pending);
+            } else if let (Some(map), Some(character)) = (&self.collision, character) {
                 if e.health == 0 { character.climbing = false; }
                 match character.step_command(map, x, z, sprint, jump, crouch, walk) {
                     Ok(started_jump) => {
@@ -483,26 +559,36 @@ impl World {
                 };
                 let protected = !combat_locked && self.safe_zones.iter().any(|zone| zone.contains(e.position));
                 // Stagger the original 100 ms pulses across the 30 Hz ticks.
-                if !protected && e.health > 0 && self.tick.wrapping_add(e.id).is_multiple_of(TICK_HZ / 10)
+                let native_environment=self.native_player_movement && condition.native_checkpoint().is_some();
+                if !native_environment && !protected && e.health > 0 && self.tick.wrapping_add(e.id).is_multiple_of(TICK_HZ / 10)
                     && let Some(fields) = &self.environment_fields
                 {
                     let feet = Vector::new(e.position.x, e.position.y, e.position.z);
                     field_pulses.extend(fields.sample(feet, if crouched { 1.2 } else { 1.8 }));
                     if !field_pulses.is_empty() {
-                        let mut protection = e.loadout.fields;
-                        let mut exposed = condition.clone();
-                        fields.factors.apply_all(&mut exposed, &mut protection, &field_pulses);
-                        let durable = e.character_key.is_some() && (exposed.health == 0.0
-                            || field_pulses.iter().any(|hit| e.loadout.fields.armour.needs_wear(hit.kind)));
-                        if durable {
+                        if condition.native_checkpoint().is_some() {
+                            // The host owns these effects. Even a disposable
+                            // Rust preview would duplicate stock condition and
+                            // artefact logic and clone the complete checkpoint.
                             self.environment_hits.push((e.id, std::mem::take(&mut field_pulses)));
                         } else {
-                            *condition = exposed;
-                            field_pulses.clear();
+                            let mut protection = e.loadout.fields;
+                            let mut exposed = condition.clone();
+                            fields.factors.apply_all(&mut exposed, &mut protection, &field_pulses);
+                            let durable = e.character_key.is_some() && (exposed.health == 0.0
+                                || field_pulses.iter().any(|hit| e.loadout.fields.armour.needs_wear(hit.kind)));
+                            if durable {
+                                self.environment_hits.push((e.id, std::mem::take(&mut field_pulses)));
+                            } else {
+                                *condition = exposed;
+                                field_pulses.clear();
+                            }
                         }
                     }
                 }
-                condition.step(tuning, e.loadout, 1.0 / TICK_HZ as f32, activity, jumped, protected);
+                if condition.native_checkpoint().is_none() {
+                    condition.step(tuning, e.loadout, 1.0 / TICK_HZ as f32, activity, jumped, protected);
+                }
                 e.health = condition.health_points();
             }
             self.grid.entry(cell(e.position)).or_default().push(e.id);
@@ -524,6 +610,10 @@ impl World {
         fields.step_electras(self, bolts, effects, &mut hits);
         self.environment_fields = Some(fields);
         for (id, hit) in hits {
+            if self.native_player_movement && self.entities.get(&id).and_then(|actor|actor.condition.as_ref())
+                .is_some_and(|state|state.native_checkpoint().is_some()) {
+                continue; // Native CustomZone hits are delivered by the host.
+            }
             if self.entities.get(&id).is_some_and(|actor| actor.character_key.is_some()) {
                 self.environment_hits.push((id, vec![hit]));
             } else {

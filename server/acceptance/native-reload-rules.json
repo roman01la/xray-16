@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-09",
+  "setup": "Optimized macOS ARM64 headless X-Ray and Rust, stock Zaton, isolated WebRTC client and disposable SQLite saves. The native host loaded stock weapon settings. Only the fixture's Rust catalog was changed.",
+  "rifle": {
+    "weapon": "wpn_ak74",
+    "rustCatalogCapacity": 40,
+    "before": 27,
+    "after": 30,
+    "reserveRoundsSpent": 3,
+    "committedRevisions": 1,
+    "cues": ["magazine"]
+  },
+  "timedTube": {
+    "weapon": "wpn_spas12",
+    "rustCatalogCapacity": 10,
+    "before": 6,
+    "after": 8,
+    "reserveRoundsSpent": 2,
+    "committedRevisions": 2,
+    "cues": ["open", "insert", "insert", "close"]
+  },
+  "untimedTube": {
+    "weapon": "wpn_spas12",
+    "rustCatalogShellByShell": false,
+    "before": 6,
+    "after": 7,
+    "reserveRoundsSpent": 1,
+    "committedRevisions": 1
+  },
+  "launcher": {
+    "weapon": "wpn_groza",
+    "rifleRoundsBeforeAndAfter": 11,
+    "loadedGrenade": "ammo_vog-25",
+    "reserveRoundsSpent": 1,
+    "committedRevisions": 1,
+    "cues": ["launcher"]
+  },
+  "open": ["Rendered reloads using the native host", "Native execution of reload and animation phases", "Broader ammunition and upgrade coverage"]
+}

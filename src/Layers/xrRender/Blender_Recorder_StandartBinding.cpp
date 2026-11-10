@@ -365,9 +365,24 @@ class cl_entity_data : public R_constant_setup //--#SM+#--
 };
 static cl_entity_data binder_entity_data;
 
+#ifdef XR_PLATFORM_WEB
+// WebGPU samplers do not expose a LOD bias; fragment sampling applies it.
+class cl_webgpu_mip_bias : public R_constant_setup
+{
+    void setup(CBackend& cmd_list, R_constant* C) override
+    {
+        cmd_list.set_c(C, ps_r__tf_Mipbias, 0.f, 0.f, 0.f);
+    }
+};
+static cl_webgpu_mip_bias binder_webgpu_mip_bias;
+#endif
+
 // Standart constant-binding
 void CBlender_Compile::SetMapping()
 {
+#ifdef XR_PLATFORM_WEB
+    r_Constant("xr_webgpu_mip_bias", &binder_webgpu_mip_bias);
+#endif
     // misc
     r_Constant("m_hud_params", &binder_hud_params); //--#SM+#--
     r_Constant("m_script_params", &binder_script_params); //--#SM+#--

@@ -139,4 +139,6 @@ float2 	calc_xz_wave 	(float2 dir2D, float frac)
 	return  lerp	(ctrl_A, ctrl_B, frac);			//!This calculates tree wave. No changes made
 }
 
+#include "webgpu_mipbias.h"
+
 #endif

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #ifdef XR_PLATFORM_WEB
+#include "BrowserVideoModes.h"
 #include <emscripten.h>
 #endif
 #include "IGame_Level.h"
@@ -363,10 +364,8 @@ class CCC_VidMode : public CCC_Token
 {
     u32 _dummy = 0;
 #ifdef XR_PLATFORM_WEB
-    static constexpr int m_webHeights[] = {480, 540, 720, 900, 1080, 1440, 2160};
-    // Reserve slots for the display maximum, a saved custom mode and a sentinel.
-    xr_token m_webModes[std::size(m_webHeights) + 3]{};
-    TStatus m_webLabels[std::size(m_webHeights) + 2]{};
+    xr_token m_webModes[BrowserVideoModes::maxPresets + 3]{};
+    TStatus m_webLabels[BrowserVideoModes::maxPresets + 2]{};
 #endif
 
 public:
@@ -377,7 +376,7 @@ public:
         u32 w, h, r = 0;
         const int cnt = sscanf(args, "%ux%u (%uHz)", &w, &h, &r);
 #ifdef XR_PLATFORM_WEB
-        if (cnt >= 2 && (w < 640 || h < 480 || w > 4096 || h > 4096))
+        if (cnt >= 2 && !BrowserVideoModes::IsSupported({w, h}))
         {
             Msg("! Unsupported browser render resolution [%s]", args);
             return;
@@ -406,28 +405,18 @@ public:
     {
 #ifdef XR_PLATFORM_WEB
         const auto display = GetBrowserDisplaySize();
-        int count = 0;
-        const auto add = [&](u32 width, u32 height)
+        const auto modes = BrowserVideoModes::ForDisplay({u32(display.x), u32(display.y)},
+            {psDeviceMode.Width, psDeviceMode.Height});
+        for (std::size_t i = 0; i < modes.count; ++i)
         {
-            if (width < 640 || height < 480)
-                return;
-            auto& label = m_webLabels[count];
+            const auto [width, height] = modes.sizes[i];
+            auto& label = m_webLabels[i];
             xr_sprintf(label, "%ux%u", width, height);
-            if (std::any_of(m_webModes, m_webModes + count, [&](const xr_token& mode)
-                { return xr_strcmp(mode.name, label) == 0; }))
-                return;
             // IDs identify sizes rather than positions: changing the current
             // custom entry must not change the meaning of another selection.
-            m_webModes[count++] = {label, int((width << 13) | height)};
-        };
-        for (const int height : m_webHeights)
-        {
-            if (height < display.y)
-                add(u32(std::lround(double(display.x) * height / display.y)), height);
+            m_webModes[i] = {label, int((width << 13) | height)};
         }
-        add(display.x, display.y);
-        add(psDeviceMode.Width, psDeviceMode.Height);
-        m_webModes[count] = {};
+        m_webModes[modes.count] = {};
         return m_webModes;
 #else
         return vid_mode_token[psDeviceMode.Monitor].data();

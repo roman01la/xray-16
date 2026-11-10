@@ -155,6 +155,7 @@ pub(crate) fn change_weapon(
     catalog: &Catalog,
     next_revision: u32,
     can_take_addon: impl Fn(&str) -> Result<bool>,
+    reload: Option<&crate::alife_weapon::ReloadRules>,
 ) -> Result<Option<&'static str>> {
     let (section, raw, place): (String, String, String) = tx.query_row(
         "SELECT section,state,place FROM inventory_items WHERE id=?1 AND container=?2",
@@ -206,30 +207,24 @@ pub(crate) fn change_weapon(
         save_weapon(tx, &command.item, command.revision, next_revision, &state)?;
         return Ok(None);
     }
-    let ammo_key = if launcher {
-        "grenade_class"
-    } else {
-        "ammo_class"
-    };
-    let ammunition = catalog.effective_list(&section, &state, ammo_key)?;
     if launcher && !catalog.launcher_available(&section, &state)? {
         return Ok(Some("no_launcher"));
     }
-    let capacity = if launcher {
-        1
+    let catalog_ammunition;
+    let (ammunition, capacity, incremental) = if let Some(native) = reload {
+        tracing::trace!(item = command.item, native.capacity, native.incremental, "using X-Ray reload rules");
+        (native.ammunition.as_ref(), native.capacity, native.incremental)
     } else {
-        let size = catalog.effective_number(&section, &state, "ammo_mag_size", 0.0)?;
-        ensure!(
-            size.fract() == 0.0 && (1.0..=1024.0).contains(&size),
-            "invalid magazine capacity"
-        );
-        size as usize
+        let ammo_key = if launcher { "grenade_class" } else { "ammo_class" };
+        catalog_ammunition = catalog.effective_list(&section, &state, ammo_key)?;
+        let capacity = if launcher { 1 } else {
+            let size = catalog.effective_number(&section, &state, "ammo_mag_size", 0.0)?;
+            ensure!(size.fract() == 0.0 && (1.0..=1024.0).contains(&size), "invalid magazine capacity");
+            size as usize
+        };
+        let incremental = !launcher && catalog.item(&section)?.0.boolean("tri_state_reload", false)?;
+        (catalog_ammunition.as_slice(), capacity, incremental)
     };
-    let incremental = !launcher
-        && catalog
-            .item(&section)?
-            .0
-            .boolean("tri_state_reload", false)?;
     let ItemPayload::Weapon {
         cartridges,
         launcher_cartridges,
@@ -266,42 +261,23 @@ pub(crate) fn change_weapon(
                 return Ok(Some("magazine_full"));
             }
             None
-        } else if next_type {
-            // CWeapon::SwitchAmmoType only cycles through types with a box.
-            let at = ammunition
-                .iter()
-                .position(|value| Some(value.as_str()) == current)
-                .context("weapon ammunition selection unavailable")?;
-            let mut found = None;
-            for offset in 1..ammunition.len() {
-                let candidate = &ammunition[(at + offset) % ammunition.len()];
-                if has_rounds(tx, carried, candidate)? {
-                    found = Some(candidate.as_str());
-                    break;
-                }
-            }
-            found
         } else {
-            let mut found = None;
-            for candidate in current
-                .into_iter()
-                .chain(ammunition.iter().map(String::as_str))
-            {
-                if has_rounds(tx, carried, candidate)? {
-                    found = Some(candidate);
-                    break;
-                }
-            }
-            found
+            let at = ammunition.iter().position(|value| Some(value.as_str()) == current);
+            let at = if next_type { at.context("weapon ammunition selection unavailable")? } else { at.unwrap_or(0) };
+            let available = ammunition.iter().map(|candidate| has_rounds(tx, carried, candidate).map(u8::from))
+                .collect::<Result<Vec<_>>>()?;
+            crate::xray_combat_rules::select_reload_ammo(&available, at, next_type, false)
+                .map(|index| ammunition[index].as_str())
         };
         if let Some(selected) = selected.map(str::to_owned) {
-            if !incremental && magazine.last().is_some_and(|loaded| *loaded != selected) {
+            if crate::xray_combat_rules::reload_changes_type(incremental, !magazine.is_empty(), true,
+                magazine.last().is_some_and(|loaded| *loaded == selected)) {
                 return_rounds(tx, carried, catalog, magazine)?;
             }
             let needed = if incremental {
                 1
             } else {
-                capacity - magazine.len()
+                capacity.saturating_sub(magazine.len())
             };
             if needed == 0 {
                 return Ok(Some("magazine_full"));
@@ -447,30 +423,17 @@ fn misfire_probability(catalog: &Catalog, section: &str, state: &ItemState) -> R
     let probability = if keys.iter().any(|key| definition.values.contains_key(*key)) {
         let [start, end, start_probability, end_probability] = keys;
         let required = |key| effective(key, definition.number(key)?);
-        let start = required(start)?;
-        if condition > start {
-            return Ok(0.0);
-        }
-        let end = required(end)?;
-        let end_probability = required(end_probability)?;
-        if condition < end {
-            return Ok(f64::from(end_probability));
-        }
-        let start_probability = required(start_probability)?;
-        let denominator = if start == end { start } else { start - end };
-        if denominator == 0.0 {
-            return Ok(0.0);
-        }
-        start_probability + (start - condition) * (end_probability - start_probability) / denominator
+        crate::xray_combat_rules::misfire(condition, required(start)?, required(end)?,
+            required(start_probability)?, required(end_probability)?)
     } else {
-        if condition > 0.95 || !definition.values.contains_key("misfire_probability") {
+        if !definition.values.contains_key("misfire_probability") {
             return Ok(0.0);
         }
-        effective("misfire_probability", 0.0)?
-            + (1.0 - condition).powi(3) * effective("misfire_condition_k", 1.0)?
+        crate::xray_combat_rules::legacy_misfire(condition,
+            effective("misfire_probability", 0.0)?, effective("misfire_condition_k", 1.0)?)
     };
     ensure!(probability.is_finite(), "invalid weapon misfire probability");
-    Ok(f64::from(probability.clamp(0.0, 0.99)))
+    Ok(f64::from(probability))
 }
 
 fn launch_spec(catalog: &Catalog, section: &str, state: &ItemState, round: &str) -> Result<LaunchSpec> {
@@ -536,6 +499,34 @@ fn shot_wear(catalog: &Catalog, section: &str, state: &ItemState, round: &Sectio
     } * round.number("impair")?;
     ensure!(wear.is_finite() && wear >= 0.0, "invalid shot wear");
     Ok(wear)
+}
+
+fn catalog_shot_impact(
+    catalog: &Catalog, section: &str, state: &ItemState, round: &Section, attachments: &[String],
+    index: u32, native: Option<&crate::combat::NativeWeaponRules>,
+) -> Result<crate::alife_weapon::ShotImpact> {
+    // The multiplayer weapon uses the first (Master) hit-power value.
+    let hit_power = catalog.effective_text(section, state, "hit_power")?.context("missing hit power")?;
+    let master: f64 = hit_power.split(',').next().unwrap_or_default().trim().trim_end_matches(['f', 'F']).parse()?;
+    let mut power = master * round.number("k_hit")?;
+    let impulse_factor = if round.values.contains_key("k_impulse") { round.number("k_impulse")? } else { 1.0 };
+    let mut impulse = catalog.effective_number(section, state, "hit_impulse", 0.0)? * impulse_factor;
+    let (suppressed, silencer) = silencer(catalog, section, state, attachments)?;
+    if let Some(silencer) = silencer {
+        let definition = catalog.item(&silencer)?.0;
+        if definition.values.contains_key("bullet_hit_power_k") {
+            power *= definition.number("bullet_hit_power_k")?.clamp(0.0, 1.0);
+        }
+        if definition.values.contains_key("bullet_hit_impulse_k") {
+            impulse *= definition.number("bullet_hit_impulse_k")?.clamp(0.0, 1.0);
+        }
+    }
+    let wear = if let Some(rules) = native {
+        rules.wear(index) * round.number("impair")?
+    } else {
+        shot_wear(catalog, section, state, round, index == 0)?
+    };
+    Ok(crate::alife_weapon::ShotImpact { power, impulse, wear, suppressed })
 }
 
 fn dispersion(catalog: &Catalog, section: &str, state: &ItemState, round: &Section, addon: Option<&Section>) -> Result<Dispersion> {
@@ -609,7 +600,9 @@ pub(crate) fn round_profile(catalog: &Catalog, section: &str, state: &ItemState,
     ensure!((1.0..=100_000.0).contains(&speed) && (0.0..=10.0).contains(&drag)
         && (0.0..=100.0).contains(&gravity) && range > 0.0 && range <= f64::from(MAX_OWNED_RANGE),
         "invalid ballistic profile for {section}/{cartridge}");
-    Ok(Some(RoundProfile { revision, range: range as f32, speed: speed as f32, drag: drag as f32, gravity: gravity as f32, pellets, spread, surface }))
+    let key = crate::alife_weapon::round_key(section, state, cartridge);
+    Ok(Some(RoundProfile { revision, key, range: range as f32, speed: speed as f32, drag: drag as f32,
+        gravity: gravity as f32, pellets, spread, surface }))
 }
 
 /// A reliable, sequenced trigger is submitted once by the live session. This
@@ -620,7 +613,7 @@ pub(crate) fn debit_shot(
     item: &str,
     catalog: &Catalog,
     targets: Vec<crate::survival::FireVictim>,
-    FireState { queue_index, traced }: FireState,
+    FireState { queue_index, traced, native_rules }: FireState,
     rules: Option<&crate::survival_rules::SurvivalRules>,
 ) -> Result<Value> {
     let principal = &shooter.principal;
@@ -644,8 +637,15 @@ pub(crate) fn debit_shot(
         _ => return reject("weapon_not_drawn"),
     }
     let mut state: ItemState = serde_json::from_str(&raw)?;
-    if traced != round_profile(catalog, &section, &state, revision)? {
+    let native_rules = native_rules.as_ref().filter(|rules| rules.matches_config(item, &section, &state));
+    let index = queue_index.unwrap_or(0);
+    let expected = round_profile(catalog, &section, &state, revision)?.map(|profile|
+        native_rules.and_then(|rules| rules.launch_profile(profile, index)).unwrap_or(profile));
+    if traced != expected {
         return reject("stale_ballistics");
+    }
+    if targets.iter().any(|victim| victim.native.as_ref().is_some_and(|native| Some(native.attack) != expected.map(crate::native_condition::Attack::Firearm))) {
+        return reject("stale_native_ballistics");
     }
     let ItemPayload::Weapon {
         cartridges,
@@ -688,10 +688,13 @@ pub(crate) fn debit_shot(
         return reject("empty");
     };
     catalog.validate_state(&section, &state)?;
-    let modes = catalog.fire_modes(&section, &state)?;
-    let mode = modes.get(mode_index(*fire_mode, modes.len())).copied().unwrap_or(1);
+    let mode = if let Some(rules) = native_rules {
+        rules.mode
+    } else {
+        let modes = catalog.fire_modes(&section, &state)?;
+        i32::from(modes.get(mode_index(*fire_mode, modes.len())).copied().unwrap_or(1))
+    };
     let limit = u8::try_from(mode).ok();
-    let index = queue_index.unwrap_or(0);
     if limit.is_some_and(|limit| index >= u32::from(limit)) {
         return reject("queue_complete");
     }
@@ -700,7 +703,12 @@ pub(crate) fn debit_shot(
         return reject("projectile_unavailable");
     }
     let next = revision.checked_add(1).context("weapon revision exhausted")?;
-    let probability = misfire_probability(catalog, &section, &state)?;
+    let probability = if let Some(rules) = native_rules {
+        tracing::trace!(item, revision, index, mode, "using X-Ray weapon action rules");
+        rules.misfire_probability(state.condition)
+    } else {
+        misfire_probability(catalog, &section, &state)?
+    };
     if probability > 0.0
         && tx.query_row("SELECT (random() & 4294967295) / 4294967296.0", [], |row| row.get::<_, f64>(0))? < probability
     {
@@ -712,49 +720,41 @@ pub(crate) fn debit_shot(
         return Ok(json!({"status":"rejected","reason":"misfire","ballistics":null}));
     }
     let mass_spent = catalog.round_weight(cartridge)?;
-    let (definition, _) = catalog.item(&section)?;
-    let alternate_rate = mode == 2 || (index < 2 && definition.boolean("cycle_down", false)?);
-    let rpm = if alternate_rate {
-        if definition.values.contains_key("rpm_mode_2") {
-            definition.number("rpm_mode_2")?
-        } else {
-            definition.number("rpm")?
-        }
+    let rate = f64::from(crate::world::TICK_HZ);
+    let ticks = if let Some(rules) = native_rules {
+        // X-Ray stores seconds as float32. Drop its last-bit rounding error
+        // so 600 RPM still schedules a three-tick shot at 30 Hz.
+        (rules.seconds(index) * rate * 1_000_000.0).round() / 1_000_000.0
     } else {
-        catalog.effective_number(&section, &state, "rpm", 0.0)?
+        let (definition, _) = catalog.item(&section)?;
+        let alternate_rate = mode == 2 || (index < 2 && definition.boolean("cycle_down", false)?);
+        let rpm = if alternate_rate {
+            if definition.values.contains_key("rpm_mode_2") {
+                definition.number("rpm_mode_2")?
+            } else {
+                definition.number("rpm")?
+            }
+        } else {
+            catalog.effective_number(&section, &state, "rpm", 0.0)?
+        };
+        rate * 60.0 / rpm
     };
-    let range = catalog.effective_number(&section, &state, "fire_distance", 0.0)?
-        * round.number("k_dist")?;
-    // Native multiplayer uses the first (Master) hit-power value.
-    let hit_power = catalog
-        .effective_text(&section, &state, "hit_power")?
-        .context("missing hit power")?;
-    let master: f64 = hit_power
-        .split(',')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .trim_end_matches(['f', 'F'])
-        .parse()?;
-    let mut power = master * round.number("k_hit")?;
-    let multiplier = |key: &str| -> Result<f64> {
-        if round.values.contains_key(key) { round.number(key) } else { Ok(1.0) }
+    let (range, penetration) = match traced {
+        Some(profile) => (f64::from(profile.range), f64::from(profile.surface.penetration)),
+        None => (
+            catalog.effective_number(&section, &state, "fire_distance", 0.0)? * round.number("k_dist")?,
+            round.values.get("k_ap").map(|_| round.number("k_ap")).transpose()?.unwrap_or_default(),
+        ),
     };
-    let mut impulse = catalog.effective_number(&section, &state, "hit_impulse", 0.0)? * multiplier("k_impulse")?;
-    let penetration = round.values.get("k_ap").map(|_| round.number("k_ap")).transpose()?.unwrap_or_default();
     ensure!((0.0..=f64::from(MAX_PENETRATION)).contains(&penetration), "invalid cartridge penetration");
-    let (suppressed, attached_silencer) = silencer(catalog, &section, &state, attachments)?;
-    if let Some(silencer) = attached_silencer {
-        let definition = catalog.item(&silencer)?.0;
-        if definition.values.contains_key("bullet_hit_power_k") {
-            power *= definition.number("bullet_hit_power_k")?.clamp(0.0, 1.0);
-        }
-        if definition.values.contains_key("bullet_hit_impulse_k") {
-            impulse *= definition.number("bullet_hit_impulse_k")?.clamp(0.0, 1.0);
-        }
-    }
-    let wear = shot_wear(catalog, &section, &state, round, index == 0)?;
-    let ticks = f64::from(crate::world::TICK_HZ) * 60.0 / rpm;
+    let impact = if let Some(native) = native_rules.and_then(|rules| rules.shot_impact(cartridge, index)) {
+        tracing::trace!(item, cartridge, native.power, native.impulse, native.wear, native.suppressed,
+            "using X-Ray cartridge impact");
+        native
+    } else {
+        catalog_shot_impact(catalog, &section, &state, round, attachments, index, native_rules)?
+    };
+    let crate::alife_weapon::ShotImpact { power, impulse, wear, suppressed } = impact;
     let interval = ticks.ceil();
     ensure!(
         (1.0..=f64::from(u32::MAX)).contains(&interval),
@@ -776,7 +776,7 @@ pub(crate) fn debit_shot(
     state.condition = (f64::from(state.condition) - wear).clamp(0.0, 1.0) as f32;
     save_weapon(tx, item, revision, next, &state)?;
     let mut volley = None;
-    let (armour, target_commit) = if traced.is_some_and(|profile| profile.pellets > 1) {
+    let (armour, target_commit) = if traced.is_some_and(|profile| profile.pellets > 1) || targets.iter().any(|target|target.native.is_some()) {
         let mut impacts = Vec::with_capacity(targets.len());
         for target in targets {
             impacts.push(commit_volley(tx, catalog, shooter, target, rules, (power, penetration, range as f32))?);
@@ -784,7 +784,7 @@ pub(crate) fn debit_shot(
         volley = Some(impacts);
         (None, None)
     } else if let Some(victim) = targets.into_iter().next().map(|v| v.authority).filter(|v| v.target.distance <= range as f32) {
-        let (impact, commit, _) = commit_shot_hit(tx, shooter, victim, rules,
+        let (impact, commit, _) = commit_shot_hit(tx, shooter, victim, rules, crate::survival::WoundKind::Bullet,
             |target, _| Ok((crate::armour::strike(tx, catalog, target,
                 power * f64::from(target.speed_factor), target.penetration.map_or(penetration, f64::from))?, 0.0)))?;
         (Some(impact), commit)
@@ -806,15 +806,44 @@ pub(crate) fn debit_shot(
     }}))
 }
 
-fn commit_volley(tx: &Transaction<'_>, catalog: &Catalog, shooter: &inventory::Context, volley: crate::survival::FireVictim,
+pub(crate) fn commit_volley(tx: &Transaction<'_>, catalog: &Catalog, shooter: &inventory::Context, volley: crate::survival::FireVictim,
     rules: Option<&crate::survival_rules::SurvivalRules>, (power, penetration, range): (f64, f64, f32)) -> Result<Option<VolleyImpact>>
 {
     use crate::survival::{self, ShotVictim};
-    if !shot_current(tx, shooter, &volley.authority)? { return Ok(None); }
+    if !shot_current(tx, shooter, &volley.authority)? {
+        ensure!(volley.native.is_none(), "native volley condition changed");
+        return Ok(None);
+    }
+    if let Some(native) = volley.native {
+        let applied_pellets=std::iter::once(&volley.authority.target).chain(&volley.additional)
+            .filter(|pellet|pellet.distance<=range).count();
+        ensure!(applied_pellets>0 && applied_pellets<=64
+            && applied_pellets==1+volley.additional.len(), "native volley range changed");
+        let ShotVictim { context, before, location, shooter_location, combat_lock_ms, .. }=volley.authority;
+        ensure!(before.state.native_checkpoint().is_some(), "native volley requires owned condition");
+        let projection=native.result.checkpoint.projection().context("invalid native victim checkpoint")?;
+        let damaged=projection.health<before.state.health || projection.power<before.state.power;
+        let deadline=survival::impact_deadline(if damaged {1.0} else {0.0},combat_lock_ms)?;
+        let value=crate::native_condition::commit_impact(tx,&context,catalog,rules,
+            crate::native_condition::Impact {
+                condition:crate::native_condition::Commit{before,equipment:native.equipment,
+                    checkpoint:native.result.checkpoint,location},
+                wear:native.result.wear.context("native volley omitted equipment wear")?,combat_until_ms:deadline})?;
+        // A stale victim must roll back the already debited round as well.
+        ensure!(value["status"]=="committed", "native volley authority changed");
+        let state:survival::State=serde_json::from_value(value["state"].clone())?;
+        let commit=serde_json::from_value(value.clone())?;
+        let field_armour=serde_json::from_value(value["field_armour"].clone())?;
+        save_shooter_lock(tx,shooter,shooter_location,deadline)?;
+        return Ok(Some(VolleyImpact{applied_pellets:applied_pellets as u8,damaged,health:state.health,
+            wounds:Vec::new(),native_state:Some(state),field_armour,commit}));
+    }
+    ensure!(volley.authority.before.state.native_checkpoint().is_none(), "native volley proposal required");
     let ShotVictim { target, context, mut before, mut location, shooter_location, combat_lock_ms } = volley.authority;
     let mut applied_pellets = 0;
     let mut damaged = false;
     let mut field_armour = None;
+    let mut wounds = Vec::new();
     for pellet in std::iter::once(target).chain(volley.additional).filter(|pellet| pellet.distance <= range) {
         let impact = crate::armour::strike(tx, catalog, &pellet, power * f64::from(pellet.speed_factor),
             pellet.penetration.map_or(penetration, f64::from))?;
@@ -822,7 +851,10 @@ fn commit_volley(tx: &Transaction<'_>, catalog: &Catalog, shooter: &inventory::C
             anyhow::bail!("volley victim changed inside its transaction");
         };
         if updated.is_some() { field_armour = updated; }
-        before.state.apply_hit(power, wound);
+        before.state.apply_hit_at(power, wound.then_some((survival::WoundKind::Bullet, &pellet.bone)));
+        if wound && power > 0.0 && before.state.health > 0.0 {
+            wounds.push((pellet.bone.to_string(), power));
+        }
         applied_pellets += 1;
         damaged |= power > 0.0;
         if before.state.health == 0.0 { break; }
@@ -830,10 +862,10 @@ fn commit_volley(tx: &Transaction<'_>, catalog: &Catalog, shooter: &inventory::C
     if applied_pellets == 0 { return Ok(None); }
     let deadline = survival::impact_deadline(if damaged { 1.0 } else { 0.0 }, combat_lock_ms)?;
     location.combat_until_ms = location.combat_until_ms.max(deadline);
-    let (health, bleeding) = (before.state.health, before.state.bleeding);
+    let health = before.state.health;
     let commit = survival::commit_condition_change(tx, &context, rules, before, location)?;
     save_shooter_lock(tx, shooter, shooter_location, deadline)?;
-    Ok(Some(VolleyImpact { applied_pellets, damaged, health, bleeding, field_armour, commit }))
+    Ok(Some(VolleyImpact { applied_pellets, damaged, health, wounds, native_state: None, field_armour, commit }))
 }
 
 fn shot_current(tx: &Transaction<'_>, shooter: &inventory::Context, victim: &crate::survival::ShotVictim) -> Result<bool> {
@@ -863,18 +895,21 @@ pub(crate) fn commit_shot_hit(
     tx: &Transaction<'_>, shooter: &inventory::Context,
     victim: crate::survival::ShotVictim,
     rules: Option<&crate::survival_rules::SurvivalRules>,
+    kind: crate::survival::WoundKind,
     resolve: impl FnOnce(&crate::combat::ShotTarget, &crate::survival::State) -> Result<(ArmourImpact, f32)>,
 ) -> Result<(ArmourImpact, Option<crate::survival::ImpactCommit>, f32)> {
     use crate::survival::{self, ShotVictim};
     if !shot_current(tx, shooter, &victim)? {
         return Ok((ArmourImpact::Stale, None, 0.0));
     }
+    ensure!(victim.before.state.native_checkpoint().is_none(), "native hit proposal required");
     let ShotVictim { target, context, mut before, location, shooter_location, combat_lock_ms } = victim;
     let (impact, power_loss) = resolve(&target, &before.state)?;
     let ArmourImpact::Hit { power, wound, .. } = impact else { return Ok((impact, None, 0.0)); };
     let deadline = survival::impact_deadline(power, combat_lock_ms)?;
     before.state.power = (before.state.power - power_loss).max(0.0);
-    let commit = survival::commit_impact(tx, &context, rules, before, location, (power, wound), deadline)?;
+    let commit = survival::commit_impact(tx, &context, rules, before, location,
+        (power, wound.then_some((kind, &target.bone))), deadline)?;
     save_shooter_lock(tx, shooter, shooter_location, deadline)?;
     Ok((impact, Some(commit), power_loss))
 }

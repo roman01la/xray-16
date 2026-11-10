@@ -280,7 +280,7 @@ bool CEnvironment::SetWeatherFX(shared_str name)
 
 bool CEnvironment::StartWeatherFXFromTime(shared_str name, float time)
 {
-    if (!SetWeatherFX(name))
+    if (WeatherFXs.find(name) == WeatherFXs.end() || !SetWeatherFX(name))
         return false;
 
     for (auto& env : *CurrentWeather)

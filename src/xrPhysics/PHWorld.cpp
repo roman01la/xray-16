@@ -216,6 +216,8 @@ void CPHWorld::SetGravity(float g)
 void CPHWorld::OnFrame()
 {
     ZoneScoped;
+    if (Device.IsHeadlessAlifeHost() && Device.Paused())
+        return;
     stats.FrameStart();
 // Msg									("------------- physics: %d / %d",u32(Device.dwFrame),u32(m_steps_num));
 //calculate the flight of bullets

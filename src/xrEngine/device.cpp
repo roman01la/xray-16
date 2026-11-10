@@ -622,7 +622,7 @@ void CRenderDevice::FrameMove()
         fTimeDeltaReal = EPS_S + EPS_S;
     Timer.Start(); // previous frame
 
-    if (psDeviceFlags.test(rsConstantFPS))
+    if (psDeviceFlags.test(rsConstantFPS) && !(IsHeadlessAlifeHost() && Paused()))
     {
         // 20ms = 50fps
         // fTimeDelta = 0.020f;
@@ -676,7 +676,11 @@ ENGINE_API bool bShowPauseString = true;
 void CRenderDevice::Pause(bool bOn, bool bTimer, bool bSound, [[maybe_unused]] pcstr reason)
 {
     static int snd_emitters_ = -1;
-    if (g_bBenchmark || GEnv.isDedicatedServer || IsHeadlessAlifeHost())
+    // Ordinary UI/script pauses remain disabled for headless hosts. Only the
+    // private delivery gate may freeze their simulation timers.
+    const bool hostDeliveryPause = IsHeadlessAlifeHost() && reason &&
+        xr_strcmp(reason, "zone hit delivery") == 0;
+    if ((g_bBenchmark || GEnv.isDedicatedServer || IsHeadlessAlifeHost()) && !hostDeliveryPause)
         return;
 
     if (bOn)
@@ -692,7 +696,7 @@ void CRenderDevice::Pause(bool bOn, bool bTimer, bool bSound, [[maybe_unused]] p
             else
                 bShowPauseString = true;
         }
-        if (bTimer && (!g_pGamePersistent || g_pGamePersistent->CanBePaused()))
+        if (bTimer && (hostDeliveryPause || !g_pGamePersistent || g_pGamePersistent->CanBePaused()))
         {
             g_pauseMngr().Pause(true);
 #ifdef DEBUG

@@ -7,8 +7,13 @@
 #include "xrEngine/IGame_Persistent.h"
 #include "xrCore/stream_reader.h"
 
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(XR_PLATFORM_WEB)
 #include "Layers/xrRender/FHierrarhyVisual.h"
+#endif
+#ifdef XR_PLATFORM_WEB
+#include "Layers/xrRenderGL/WebGPUFluidVolume.h"
+#endif
+#if defined(USE_DX11)
 #include "Layers/xrRenderDX11/3DFluid/dx113DFluidVolume.h"
 #endif
 
@@ -89,7 +94,7 @@ void CRender::level_Load(IReader* fs)
     g_pGamePersistent->LoadTitle("st_loading_sectors_portals");
     LoadSectors(fs);
 
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(XR_PLATFORM_WEB)
     // 3D Fluid
     Load3DFluid();
 #endif
@@ -117,6 +122,9 @@ void CRender::level_Unload()
     if (!b_loaded)
         return;
 
+#ifdef XR_PLATFORM_WEB
+    UnloadWebFluidVolumes();
+#endif
     // HOM
     HOM.Unload();
 
@@ -477,7 +485,7 @@ void CRender::LoadSWIs(CStreamReader* base_fs)
     }
 }
 
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(XR_PLATFORM_WEB)
 void CRender::Load3DFluid()
 {
     ZoneScoped;
@@ -495,9 +503,16 @@ void CRender::Load3DFluid()
         if (version == 3)
         {
             u32 cnt = F->r_u32();
+#ifdef XR_PLATFORM_WEB
+            Msg("* WebGPU fluid volumes: %u",cnt);
+#endif
             for (u32 i = 0; i < cnt; ++i)
             {
-                dx113DFluidVolume* pVolume = xr_new<dx113DFluidVolume>();
+#ifdef XR_PLATFORM_WEB
+                auto* pVolume = xr_new<WebGPUFluidVolume>();
+#else
+                auto* pVolume = xr_new<dx113DFluidVolume>();
+#endif
                 pVolume->Load("", F, 0);
 
                 auto& dsgraph = get_imm_context();
@@ -514,6 +529,9 @@ void CRender::Load3DFluid()
                 VERIFY(pRoot->getType() == MT_HIERRARHY);
 
                 ((FHierrarhyVisual*)pRoot)->children.push_back(pVolume);
+#ifdef XR_PLATFORM_WEB
+                RegisterWebFluidVolume(static_cast<FHierrarhyVisual*>(pRoot),pVolume);
+#endif
             }
         }
 

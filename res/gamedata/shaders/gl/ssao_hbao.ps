@@ -11,6 +11,8 @@ float4 calc_hbao(float z, float3 N, float2 tc0, float4 pos2d)
 //{
 
 uniform	float4		screen_res;
+uniform float ssao_kernel_size;
+uniform float ssao_noise_tile_factor;
 
 #define g_Resolution screen_res.xy
 #define g_InvResolution screen_res.zw
@@ -74,30 +76,22 @@ float3 min_diff(float3 P, float3 Pr, float3 Pl)
 //----------------------------------------------------------------------------------
 // there's a hack in r3 that forbides enable SSAO_OPT_DATA if hbao is enabled automatically
 // fix that later
+float3 hbao_uv_to_eye(float2 uv, float eye_z)
+{
+    uv = (uv * float2(2.0, 2.0) - float2(1.0, 1.0));
+    return float3(uv * pos_decompression_params.xy * eye_z, eye_z);
+}
+
 float3 fetch_eye_pos(float2 uv)
 {
-////#define SSAO_OPT_DATA
-#ifndef SSAO_OPT_DATA
-#ifdef USE_MSAA
-#ifdef GBUFFER_OPTIMIZATION
-		gbuffer_data gbd = gbuffer_load_data_offset( tc, tap, pos2d, iSample ); // this is wrong - need to correct this
+#ifdef SSAO_OPT_DATA
+    float z = textureLod(s_half_depth, uv, 0.0).z;
+#elif defined(USE_MSAA)
+    float z = texelFetch(s_position, int2(uv * g_Resolution), 0).z;
 #else
-		gbuffer_data gbd = gbuffer_load_data( tap, iSample );
+    float z = textureLod(s_position, uv, 0.0).z;
 #endif
-#else
-#ifdef GBUFFER_OPTIMIZATION
-		gbuffer_data gbd = gbuffer_load_data_offset( tc, tap, pos2d ); // this is wrong - need to correct this
-#else
-		gbuffer_data gbd = gbuffer_load_data( tap );
-#endif
-#endif
-
-		//float3	tap_pos	= s_position.Sample(smp_nofilter,tap);
-		float3	tap_pos	= gbd.P;
-#else // SSAO_OPT_DATA
-    float z = textureLod( s_half_depth, uv, 0.0 ).z;
-    return uv_to_eye(uv, z);
-#endif // SSAO_OPT_DATA
+    return hbao_uv_to_eye(uv, z);
 }
 
 //----------------------------------------------------------------------------------
@@ -316,13 +310,13 @@ float horizon_occlusion2_4way(float2 deltaUV0,
         float4 fo   = float4( falloff( r.x ), falloff( r.y ),
                               falloff( r.z ), falloff( r.w ) );
 
-        float4 flag = (d2_3 < g_sqr_R.xxxx) ? float4(1.0).xxxx : float4(0.0).xxxx;
+        float4 flag = mix(float4(0.0), float4(1.0), lessThan(d2_3, float4(g_sqr_R)));
         
-        flag *= (tanS3 > tanH3) ? float4(1.0).xxxx : float4(0.0).xxxx;
+        flag *= mix(float4(0.0), float4(1.0), greaterThan(tanS3, tanH3));
         
         ao3  += dot( flag, fo * ( sinS - sinH3 ) );
-        tanH3 = ( flag > float4(0.0).xxxx ? tanS3 : tanH3 );
-        sinH3 = ( flag > float4(0.0).xxxx ? sinS : sinH3 );
+        tanH3 = mix(tanH3, tanS3, greaterThan(flag, float4(0.0)));
+        sinH3 = mix(sinH3, sinS, greaterThan(flag, float4(0.0)));
         }
 
     return ao3;
@@ -330,7 +324,7 @@ float horizon_occlusion2_4way(float2 deltaUV0,
 
 float4 calc_hbao(float z, float3 N, float2 tc0, float4 pos2d)
 {
-    float3 P = uv_to_eye(tc0, z);
+    float3 P = hbao_uv_to_eye(tc0, z);
 
 	float2 	step_size	= float2	(0.5 / 1024.0, 0.5 / 768.0)*ssao_kernel_size/max(z,1.3);
   	float numSteps = min ( g_NumSteps, min(step_size.x * g_Resolution.x, step_size.y * g_Resolution.y));

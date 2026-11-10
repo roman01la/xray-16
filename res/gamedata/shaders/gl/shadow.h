@@ -468,6 +468,37 @@ float shadow_extreme_quality_fused( float3 tc )
 }
 #endif
 
+// WebGPU comparison gathers use the already bound shadow map/comparison sampler.
+// Each call has a literal offset, as required by WGSL. Tap ordering matches
+// GLSL textureGather: lower-left, lower-right, upper-right, upper-left.
+#ifdef XR_WEBGPU_GATHER
+float webgpu_hw_hq_7x7(float3 tc)
+{
+    float2 stc = float(SMAP_size)*tc.xy + float2(0.5);
+    float2 base = floor(stc);
+    float2 fc = stc-base;
+    tc.xy = base/float(SMAP_size);
+    float s = 0.0;
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-3, -3)), float4((1.0-fc.x)*1.0, 1.0*1.0, 1.0*(1.0-fc.y), (1.0-fc.x)*(1.0-fc.y)));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-1, -3)), float4(1.0*1.0, 1.0*1.0, 1.0*(1.0-fc.y), 1.0*(1.0-fc.y)));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(1, -3)), float4(1.0*1.0, 1.0*1.0, 1.0*(1.0-fc.y), 1.0*(1.0-fc.y)));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(3, -3)), float4(1.0*1.0, fc.x*1.0, fc.x*(1.0-fc.y), 1.0*(1.0-fc.y)));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-3, -1)), float4((1.0-fc.x)*1.0, 1.0*1.0, 1.0*1.0, (1.0-fc.x)*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-1, -1)), float4(1.0*1.0, 1.0*1.0, 1.0*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(1, -1)), float4(1.0*1.0, 1.0*1.0, 1.0*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(3, -1)), float4(1.0*1.0, fc.x*1.0, fc.x*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-3, 1)), float4((1.0-fc.x)*1.0, 1.0*1.0, 1.0*1.0, (1.0-fc.x)*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-1, 1)), float4(1.0*1.0, 1.0*1.0, 1.0*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(1, 1)), float4(1.0*1.0, 1.0*1.0, 1.0*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(3, 1)), float4(1.0*1.0, fc.x*1.0, fc.x*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-3, 3)), float4((1.0-fc.x)*fc.y, 1.0*fc.y, 1.0*1.0, (1.0-fc.x)*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(-1, 3)), float4(1.0*fc.y, 1.0*fc.y, 1.0*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(1, 3)), float4(1.0*fc.y, 1.0*fc.y, 1.0*1.0, 1.0*1.0));
+    s += dot(textureGatherOffset(s_smap, tc.xy, tc.z, int2(3, 3)), float4(1.0*fc.y, fc.x*fc.y, fc.x*1.0, 1.0*1.0));
+    return s/49.0;
+}
+#endif
+
 #ifdef SM_4_1
 
 float dx10_1_hw_hq_7x7( float3 tc )
@@ -625,7 +656,9 @@ float shadow_hw_hq( float4 tc )
 #if SUN_QUALITY>=4 // extreme quality
       return shadow_extreme_quality( tc.xyz / tc.w );
 #else // SUN_QUALITY<4
-#ifdef SM_4_1
+#ifdef XR_WEBGPU_GATHER
+      return webgpu_hw_hq_7x7(tc.xyz / tc.w);
+#elif defined(SM_4_1)
       return dx10_1_hw_hq_7x7( tc.xyz / tc.w );
 #else // SM_4_1
       return dx10_0_hw_hq_7x7( tc ); 
@@ -636,7 +669,9 @@ float shadow_hw_hq( float4 tc )
 #if SUN_QUALITY>=4 // extreme quality
       return shadow_extreme_quality( tc.xyz / tc.w );
 #else // SUN_QUALITY<4
-#ifdef SM_4_1
+#ifdef XR_WEBGPU_GATHER
+      return webgpu_hw_hq_7x7(tc.xyz / tc.w);
+#elif defined(SM_4_1)
       return dx10_1_hw_hq_7x7( tc.xyz / tc.w );
 #else // SM_4_1
       return dx10_0_hw_hq_7x7( tc ); 

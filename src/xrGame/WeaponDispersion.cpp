@@ -5,6 +5,7 @@
 #include "StdAfx.h"
 
 #include "Weapon.h"
+#include "CombatRules.h"
 #include "InventoryOwner.h"
 #include "Actor.h"
 #include "inventory_item_impl.h"
@@ -16,7 +17,7 @@
 //возвращает 1, если оружие в отличном состоянии и >1 если повреждено
 float CWeapon::GetConditionDispersionFactor() const
 {
-    return (1.f + fireDispersionConditionFactor * (1.f - GetCondition()));
+    return xray::combat::conditionDispersion(GetCondition(), fireDispersionConditionFactor);
 }
 
 float CWeapon::GetFireDispersion(bool with_cartridge, bool for_crosshair)

@@ -632,6 +632,7 @@ pub(crate) fn timed_reload(
     tx: &Transaction<'_>, context: &Context, command: &Move,
     catalog: &crate::catalog::Catalog, rules: Option<&SurvivalRules>,
     timings: Option<&crate::reload_timing::ReloadTimings>,
+    native_rules: Option<&crate::combat::NativeWeaponRules>,
 ) -> Result<Value> {
     use crate::reload_timing::{ReloadCue, ReloadMotion, ReloadPlan};
     command.validate()?;
@@ -654,15 +655,19 @@ pub(crate) fn timed_reload(
     let Some((weapon, raw)) = drawn.filter(|_| matches!(slot, 2 | 3)) else {
         return Ok(json!({"status":"rejected","reason":"weapon_not_drawn"}));
     };
+    let before: ItemState = serde_json::from_str(&raw)?;
+    let reload = native_rules.filter(|native| native.matches_config(&command.item, &weapon, &before))
+        .map(|native| &native.reload);
+    let transfer = || move_item_with_reload(tx, principal, command, context, Some(catalog), rules, None, reload);
     let Some(timings) = timings else {
-        return move_item(tx, principal, command, context, Some(catalog), rules, None);
+        return transfer();
     };
 
     // Run the same move validation and ammo selection as the eventual commit.
     // Neither the proposed magazine nor its request outcome leaves this savepoint.
     tx.execute_batch("SAVEPOINT reload_preview")?;
     let preview = (|| -> Result<_> {
-        let result = move_item(tx, principal, command, context, Some(catalog), rules, None)?;
+        let result = transfer()?;
         let after = if result["status"] == "committed" {
             let raw: String = tx.query_row("SELECT state FROM inventory_items WHERE id=?1",
                 [&command.item], |row| row.get(0))?;
@@ -673,7 +678,6 @@ pub(crate) fn timed_reload(
     tx.execute_batch("ROLLBACK TO reload_preview; RELEASE reload_preview")?;
     let (result, after) = preview?;
     let Some(after) = after else { return Ok(result); };
-    let before: ItemState = serde_json::from_str(&raw)?;
     let ItemPayload::Weapon { cartridges, launcher_mode, jammed, .. } = &before.payload else {
         anyhow::bail!("reload preview accepted a nonweapon");
     };
@@ -692,7 +696,7 @@ pub(crate) fn timed_reload(
     };
     let plan = if *launcher_mode {
         ReloadPlan { open: None, apply: cue(ReloadMotion::Launcher, ReloadSound::Launcher)?, close: None }
-    } else if section.boolean("tri_state_reload", false)? {
+    } else if reload.map_or_else(|| section.boolean("tri_state_reload", false), |rules| Ok(rules.incremental))? {
         ReloadPlan { open: Some(cue(ReloadMotion::Open, ReloadSound::Open)?),
             apply: cue(ReloadMotion::Insert, ReloadSound::Insert)?,
             close: Some(cue(ReloadMotion::Close, ReloadSound::Close)?) }
@@ -721,6 +725,63 @@ pub(crate) fn move_item(
     catalog: Option<&crate::catalog::Catalog>,
     rules: Option<&crate::survival_rules::SurvivalRules>,
     treatment: Option<crate::survival::Record>,
+) -> Result<Value> {
+    move_item_with_reload(tx, principal, command, context, catalog, rules, treatment.map(Treatment::Legacy), None)
+}
+
+enum Treatment {
+    Legacy(crate::survival::Record),
+    Native(crate::native_condition::Consumption),
+}
+
+pub(crate) fn prepare_native_consumption(tx:&Transaction<'_>,context:&Context,command:&Move,
+    catalog:&crate::catalog::Catalog)->Result<Value> {
+    command.validate()?;
+    ensure!(matches!(command.action,MoveAction::Consume),"expected consumption");
+    let request=format!("inventory-move-v1\n{}",serde_json::to_string(command)?);
+    if let Some(value)=move_replay(tx,&context.principal,command,&request)? {return Ok(value);}
+    if !authorized(tx,&context.principal,context)? || command.life!=context.life {
+        return Ok(json!({"status":"rejected","reason":"stale_or_dead_life"}));
+    }
+    let row:Option<(String,u32,String,i64)>=tx.query_row("SELECT i.section,i.revision,i.state,a.generation
+        FROM inventory_items i JOIN item_containers c ON c.id=i.container
+        JOIN inventory_characters a ON a.principal=c.owner
+        WHERE i.id=?1 AND c.owner=?2 AND c.kind='carried' AND a.life=?3 AND a.alive=1",
+        params![command.item,context.principal,command.life],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
+    let Some((section,revision,raw,generation))=row else {return Ok(json!({"status":"rejected","reason":"unavailable"}));};
+    if revision!=command.revision {return Ok(json!({"status":"conflict","revision":revision}));}
+    let (definition,kind)=catalog.item(&section)?;
+    if kind!=crate::catalog::Kind::Consumable {
+        return Ok(json!({"status":"rejected","reason":"not_consumable"}));
+    }
+    if section.is_empty() || section.len()>128 || !section.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'_')
+        || ["eat_health","eat_power","eat_satiety","eat_radiation","wounds_heal_perc"].iter().any(|key|!definition.values.contains_key(*key))
+        || (definition.values.keys().any(|key|key.starts_with("boost_")&&key!="boost_time") && !definition.values.contains_key("boost_time")) {
+        return Ok(json!({"status":"rejected","reason":"unsupported_consumable"}));
+    }
+    catalog.validate_state(&section,&serde_json::from_str::<ItemState>(&raw)?)?;
+    Ok(json!({"status":"prepared","section":section,"generation":generation}))
+}
+
+pub(crate) fn consume_native(
+    tx: &Transaction<'_>, context: &Context, command: &Move,
+    catalog: Option<&crate::catalog::Catalog>, rules: Option<&SurvivalRules>,
+    proposal: crate::native_condition::Consumption,
+) -> Result<Value> {
+    ensure!(matches!(command.action, MoveAction::Consume), "expected consume action");
+    move_item_with_reload(tx, &context.principal, command, context, catalog, rules,
+        Some(Treatment::Native(proposal)), None)
+}
+
+fn move_item_with_reload(
+    tx: &Transaction<'_>,
+    principal: &str,
+    command: &Move,
+    context: &Context,
+    catalog: Option<&crate::catalog::Catalog>,
+    rules: Option<&crate::survival_rules::SurvivalRules>,
+    treatment: Option<Treatment>,
+    reload: Option<&crate::alife_weapon::ReloadRules>,
 ) -> Result<Value> {
     command.validate()?;
     let request = format!("inventory-move-v1\n{}", serde_json::to_string(command)?);
@@ -815,7 +876,7 @@ pub(crate) fn move_item(
                             nearby(tx, source, context)
                         }
                     };
-                    response = match crate::weapon_inventory::change_weapon(tx, &carry, command, catalog, next, can_take_addon)? {
+                    response = match crate::weapon_inventory::change_weapon(tx, &carry, command, catalog, next, can_take_addon, reload)? {
                         None => json!({"status":"committed","item":command.item,"revision":next,"container":carry}),
                         Some(reason) => json!({"status":"rejected","reason":reason}),
                     };
@@ -888,9 +949,13 @@ fn consume_item(
     command: &Move,
     catalog: Option<&crate::catalog::Catalog>,
     rules: Option<&SurvivalRules>,
-    treatment: Option<crate::survival::Record>,
+    treatment: Option<Treatment>,
 ) -> Result<Value> {
-    let Some(mut record) = treatment else { return Ok(json!({"error":"live treatment state required"})); };
+    let Some(treatment) = treatment else { return Ok(json!({"error":"live treatment state required"})); };
+    let (mut record, native) = match treatment {
+        Treatment::Legacy(record) => (record, None),
+        Treatment::Native(proposal) => (proposal.before.clone(), Some(proposal)),
+    };
     let catalog = catalog.context("consumption requires the item catalog")?;
     let rules = rules.context("consumption requires survival rules")?;
     let reject = |reason| Ok(json!({"status":"rejected","reason":reason}));
@@ -905,12 +970,28 @@ fn consume_item(
         return reject("not_consumable");
     }
     catalog.validate_state(&section, &item)?;
-    let Some(dose) = crate::survival::Dose::from_catalog(&section, definition, rules)? else {
-        return reject("unsupported_consumable");
+    let wound_heal = if let Some(proposal) = native {
+        let generation: i64 = tx.query_row("SELECT generation FROM inventory_characters WHERE principal=?1",
+            [principal], |row| row.get(0))?;
+        if proposal.section != section || u64::try_from(generation).ok() != Some(proposal.equipment) {
+            return reject("stale_native_consumption");
+        }
+        record.state.install_native_checkpoint(proposal.checkpoint)?;
+        // Hydration is custom server policy; native code owns every stock effect.
+        let hydration = rules.hydration_sources.get(&section).copied().unwrap_or(0.0);
+        record.state.thirst = (record.state.thirst + hydration).clamp(0.0, 1.0);
+        0.0 // Full native wounds already live in the checkpoint; no second heal.
+    } else {
+        if record.state.native_checkpoint().is_some() {
+            return reject("native_consumption_required");
+        }
+        let Some(dose) = crate::survival::Dose::from_catalog(&section, definition, rules)? else {
+            return reject("unsupported_consumable");
+        };
+        let wound_heal = dose.immediate_wound_heal();
+        if !record.state.dose(dose) { return reject("medicine_in_progress"); }
+        wound_heal
     };
-    if !record.state.dose(dose) {
-        return reject("medicine_in_progress");
-    }
 
     let previous = record.revision;
     record.revision = previous.checked_add(1).context("condition revision exhausted")?;
@@ -932,7 +1013,8 @@ fn consume_item(
             params![serde_json::to_string(&item)?, command.item])?;
     }
     Ok(json!({"status":"committed","item":command.item,"revision":command.revision+1,
-        "remaining":remaining,"life":command.life,"condition":record}))
+        "remaining":remaining,"life":command.life,"condition":record,
+        "condition_wound_heal":wound_heal}))
 }
 
 pub(crate) fn active_weapon_slot(tx: &Transaction<'_>, principal: &str) -> Result<u8> {
@@ -997,29 +1079,23 @@ pub(crate) fn carried_equipment(tx: &Transaction<'_>, principal: &str, catalog: 
         if Some(place.as_str()) == active_place {
             result.active_item_blocks_sprint = !allows_sprint(catalog, &section, &state)?;
             if kind == Kind::Weapon || matches!(place.as_str(), "slot:1" | "slot:4" | "slot:6") { appearance.weapon = Some(section.clone()); }
-            if matches!(place.as_str(), "slot:1" | "slot:4") {
+            if kind == Kind::Weapon || matches!(place.as_str(), "slot:1" | "slot:4") {
                 let id: String = row.get(4)?;
                 result.active_item = Some(u128::from_str_radix(&id, 16)?.to_le_bytes());
             }
             if kind == Kind::Weapon {
                 result.ballistics = crate::weapon_inventory::round_profile(catalog, &section, &state, row.get(3)?)?;
                 if let ItemPayload::Weapon { attachments, .. } = &state.payload {
-                    // Match X-Ray's scope, launcher and silencer flag values.
-                    let mask = catalog.addons(&section, &state)?.into_iter().zip([1, 4, 2])
-                        .filter(|((status, names), _)| {
-                            *status == 1 || (*status == 2 && attachments.iter().any(|name| names.contains(name)))
-                        })
-                        .fold(0, |mask, (_, flag)| mask | flag);
+                    let (mask, _) = catalog.equipped_addons(&section, &state, attachments)?;
                     appearance.weapon_addons = (mask != 0).then_some(mask);
                 }
                 if definition.boolean("zoom_enabled", false)?
                     && let ItemPayload::Weapon { launcher_mode, .. } = &state.payload
                 {
-                    let weapon: String = row.get(4)?;
                     let seconds = catalog.effective_number(&section, &state, "zoom_rotate_time", 0.25)?;
                     let raise_ticks = (seconds * f64::from(crate::world::TICK_HZ)).ceil() as u16;
                     result.aim = Some(crate::survival::AimProfile {
-                        weapon: u128::from_str_radix(&weapon, 16)?.to_le_bytes(),
+                        weapon: result.active_item.context("missing active weapon identity")?,
                         raise_ticks,
                         launcher: *launcher_mode,
                     });

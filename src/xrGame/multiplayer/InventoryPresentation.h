@@ -42,6 +42,7 @@ public:
     void update(const Fvector& position, float health);
     void updateWeaponHud(const Fmatrix& camera, bool firstPerson, const DetectorHint* detector);
     CWeapon* hudFirearm() const;
+    CActor* movementActor() const { return actor; }
     void setWeaponAim(bool aiming);
     void updateWorld(const std::function<Fvector(const std::array<float,3>&)>& project, bool firstPerson);
     bool pickup();

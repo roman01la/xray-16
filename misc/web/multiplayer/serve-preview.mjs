@@ -12,7 +12,7 @@ const tokenFile=process.env.ZONE_SERVER_TOKEN_FILE;
 if(tokenFile&&((await stat(tokenFile)).mode&0o077))throw Error('Preview token file must be private (0600)');
 const token=tokenFile?(await readFile(tokenFile,'utf8')).trim():'';
 if(token&&(!/^[\x21-\x7e]{1,256}$/.test(token)))throw Error('Invalid preview token');
-const root=resolve(process.argv[2]),mime={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.wasm':'application/wasm','.json':'application/json'};
+const root=resolve(process.argv[2]),mime={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.wasm':'application/wasm','.json':'application/json','.webp':'image/webp'};
 createServer(async(req,res)=>{
  if(!localRequestAllowed(req.headers,previewPort)){res.writeHead(403).end();return;}
  let path;try{path=decodeURIComponent(new URL(req.url,'http://localhost').pathname);}catch{res.writeHead(400).end();return;}

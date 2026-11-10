@@ -71,6 +71,8 @@ void R_dsgraph_structure::render_graph(u32 _priority)
                     const float LOD = calcLOD(item.ssa, item.pVisual->vis.sphere.R);
 #ifdef USE_DX11
                     cmd_list.LOD.set_LOD(LOD);
+#elif defined(XR_PLATFORM_WEB)
+                    cmd_list.webTessellationLOD = LOD;
 #endif
                     // --#SM+#-- Обновляем шейдерные данные модели [update shader values for this model]
                     // RCache.hemi.c_update(item.pVisual);
@@ -116,6 +118,8 @@ void R_dsgraph_structure::render_graph(u32 _priority)
                     const float LOD = calcLOD(item.ssa, item.pVisual->vis.sphere.R);
 #ifdef USE_DX11
                     cmd_list.LOD.set_LOD(LOD);
+#elif defined(XR_PLATFORM_WEB)
+                    cmd_list.webTessellationLOD = LOD;
 #endif
                     // --#SM+#-- Обновляем шейдерные данные модели [update shader values for this model]
                     // RCache.hemi.c_update(item.pVisual);

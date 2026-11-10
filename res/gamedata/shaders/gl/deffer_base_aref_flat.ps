@@ -44,8 +44,8 @@ f_deffer 	_main	( p_flat I )
 
 #else
   uint mask = 0x0;
-  float2 ddx_base = ddx( I.tcdh );
-  float2 ddy_base = ddy( I.tcdh );
+  float2 ddx_base = dFdx( I.tcdh );
+  float2 ddy_base = dFdy( I.tcdh );
 
   float2 pixeloffset = MSAAOffsets[0]*(1.0/16.0);
   

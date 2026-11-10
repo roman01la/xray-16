@@ -10,6 +10,10 @@ const repo=resolve(import.meta.dirname,'../../..');
 const menuLayouts=['configs/ui/ui_mm_main.xml','configs/ui/ui_mm_main_16.xml'];
 const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 
+export function hideNetworkMenuButtons(source) {
+  return source.replace(/^[ \t]*<btn\b(?=[^>]*\bname\s*=\s*["'](?:btn_net_game|btn_multiplayer)["'])[^>]*\/>[ \t]*\r?\n/gm,'');
+}
+
 async function readPackedLayouts(pack) {
   const source=await mkdtemp(join(tmpdir(),'xray-menu-'));
   try {
@@ -50,7 +54,7 @@ export async function stageBrowserMenu(frontend,pack,gameDir=process.env.XRAY_CO
     const source=data.toString('latin1');
     const filtered=source.replace(/^[ \t]*<btn\b(?=[^>]*\bname\s*=\s*["']btn_quit["'])[^>]*\/>[ \t]*\r?\n/gm,'');
     if(source===filtered)throw Error('No desktop exit button found in '+path);
-    files.set('gamedata/'+path,Buffer.from(filtered,'latin1'));
+    files.set('gamedata/'+path,Buffer.from(hideNetworkMenuButtons(filtered),'latin1'));
   }
   const manifestPath=join(frontend,'engine_data.json');
   const manifest=JSON.parse(await readFile(manifestPath,'utf8'));

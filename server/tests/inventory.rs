@@ -561,7 +561,7 @@ fn v4_migration_preserves_existing_identity_ownership_and_replay() {
     drop(db);
     // Reconstruct the exact pre-inventory schema; no v5 tables in a v4 fixture.
     let sql = file.connection();
-    sql.execute_batch("DROP TABLE alife_world_fences; DROP TABLE alife_corpse_deaths; DROP TABLE artefact_reveals; DROP TABLE authored_artefact_slots; DROP TABLE authored_artefact_worlds;
+    sql.execute_batch("DROP TABLE native_condition_receipts; DROP TABLE alife_world_fences; DROP TABLE alife_corpse_deaths; DROP TABLE artefact_reveals; DROP TABLE authored_artefact_slots; DROP TABLE authored_artefact_worlds;
         DROP TABLE authored_loose_slots; DROP TABLE authored_loot_slots; DROP TABLE authored_loot_worlds;
         DROP TABLE inventory_grants; DROP TABLE inventory_items; DROP TABLE inventory_characters; DROP TABLE item_containers;
         ALTER TABLE runtime_meta DROP COLUMN lab_lift_powered; PRAGMA user_version=4;").unwrap();
@@ -583,7 +583,7 @@ fn v4_migration_preserves_existing_identity_ownership_and_replay() {
     assert_eq!(
         sql.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        22
+        23
     );
     assert!(
         sql.prepare("PRAGMA foreign_key_check")

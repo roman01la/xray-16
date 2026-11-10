@@ -310,7 +310,7 @@ end
 function options_dialog:OnAOOptionChange()
 	local ao_opt_id = self.tab_ao_opt:GetActiveId()
 	local render_id = renderer_mode(self)
-	if(render_id>=4) and (ao_opt_id=="hdao") then
+	if ((render_id>=4) or (is_browser_build and is_browser_build())) and (ao_opt_id=="hdao") then
 		self.combo_ssao:enable_id(4)
 	else
 		self.combo_ssao:disable_id(4)

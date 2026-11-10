@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "Weapon.h"
+#include "CombatRules.h"
 #include "ParticlesObject.h"
 #include "entity_alive.h"
 #include "inventory_item_impl.h"
@@ -1071,18 +1072,12 @@ bool CWeapon::SwitchAmmoType(u32 flags)
     if (!(flags & CMD_START))
         return false;
 
-    u8 l_newType = m_ammoType;
-    bool b1, b2;
-    do
+    const unsigned l_newType = xray::combat::selectReloadAmmo(
+        static_cast<unsigned>(m_ammoTypes.size()), m_ammoType, true, false,
+        [&](unsigned candidate) { return unlimited_ammo() || m_pInventory->GetAny(m_ammoTypes[candidate].c_str()); });
+    if (l_newType < m_ammoTypes.size())
     {
-        l_newType = u8((u32(l_newType + 1)) % m_ammoTypes.size());
-        b1 = (l_newType != m_ammoType);
-        b2 = unlimited_ammo() ? false : (!m_pInventory->GetAny(m_ammoTypes[l_newType].c_str()));
-    } while (b1 && b2);
-
-    if (l_newType != m_ammoType)
-    {
-        m_set_next_ammoType_on_reload = l_newType;
+        m_set_next_ammoType_on_reload = static_cast<u8>(l_newType);
         if (OnServer())
         {
             Reload();
@@ -1219,28 +1214,10 @@ int CWeapon::GetAmmoCount_forType(shared_str const& ammo_type) const
 
 float CWeapon::GetConditionMisfireProbability() const
 {
-    float mis;
     if (misfireUseOldFormula)
-    {
-        if (GetCondition() > 0.95f)
-            return 0.0f;
-        mis = misfireProbability + powf(1.f - GetCondition(), 3.f) * misfireConditionK;
-    }
-    else // modified by Peacemaker [17.10.08]
-    {
-        if (GetCondition() > misfireStartCondition)
-            return 0.0f;
-        if (GetCondition() < misfireEndCondition)
-            return misfireEndProbability;
-        mis = misfireStartProbability +
-            ((misfireStartCondition - GetCondition()) * // condition goes from 1.f to 0.f
-                (misfireEndProbability - misfireStartProbability) / // probability goes from 0.f to 1.f
-                ((misfireStartCondition == misfireEndCondition) ? // !!!say "No" to devision by zero
-                    misfireStartCondition :
-                    (misfireStartCondition - misfireEndCondition)));
-    }
-    clamp(mis, 0.0f, 0.99f);
-    return mis;
+        return xray::combat::legacyMisfire(GetCondition(), misfireProbability, misfireConditionK);
+    return xray::combat::misfire(GetCondition(), misfireStartCondition, misfireEndCondition,
+        misfireStartProbability, misfireEndProbability);
 }
 
 BOOL CWeapon::CheckForMisfire()

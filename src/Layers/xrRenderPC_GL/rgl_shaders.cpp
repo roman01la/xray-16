@@ -229,6 +229,8 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
 
 #ifdef XR_PLATFORM_WEB
     options.add("#version 300 es");
+    if (pTarget[0] == 'p')
+        options.add("XR_WEBGPU_FRAGMENT", "1");
 #else
     options.add("#version 410");
     options.add("#extension GL_ARB_separate_shader_objects : enable");
@@ -244,6 +246,11 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
 
     xr_sprintf(c_name, "// %s.%s", name, pTarget);
     options.add(c_name);
+#ifdef XR_PLATFORM_WEB
+    // The browser evaluates authored PN/HM patches in a compute stage after
+    // the unchanged stock vertex transform and skinning code.
+    if (strstr(name, "WEB_TESS_")) options.add("XR_WEB_TESSELLATION", "1");
+#endif
 
     // Shadow map size
     {
@@ -419,7 +426,10 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
     appendShaderOption(o.gbuffer_opt, "GBUFFER_OPTIMIZATION", "1");
 
     // Shader Model 4.1
-#if !defined(XR_PLATFORM_APPLE) && !defined(XR_PLATFORM_WEB) // WebGL2 has no textureGatherOffset either
+#ifdef XR_PLATFORM_WEB
+    // WebGPU supports comparison gathers; do not enable unrelated SM4.1 paths.
+    appendShaderOption((strncmp(name, "accum_sun", 9) == 0 || strncmp(name, "combine_1", 9) == 0), "XR_WEBGPU_GATHER", "1");
+#elif !defined(XR_PLATFORM_APPLE)
     appendShaderOption(o.dx11_sm4_1, "SM_4_1", "1");
     // Despite the fact that glsl 4.1 is claimed to be supported on macOS,
     // the issue is that gatherTextureOffset requires compile-time constant offset argument.
@@ -444,7 +454,8 @@ HRESULT CRender::shader_compile(pcstr name, IReader* fs, pcstr pFunctionName,
             appendShaderOption(o.msaa_samples, "MSAA_SAMPLES", samples);
         }
 
-        xr_sprintf(c_isample, "uint(%d)", m_MSAASample);
+        // Pixel-frequency variants use the first sample; -1 is only the CPU sentinel.
+        xr_sprintf(c_isample, "uint(%d)", m_MSAASample < 0 ? 0 : m_MSAASample);
         options.add("ISAMPLE", c_isample);
         sh_name.append(static_cast<u32>(0));
 

@@ -86,7 +86,7 @@ const xr_token qssao_token[] = {{"st_opt_off", 0}, {"st_opt_low", 1}, {"st_opt_m
 
 u32 ps_r_sun_quality = 1; // = 0;
 const xr_token qsun_quality_token[] = {{"st_opt_low", 0}, {"st_opt_medium", 1}, {"st_opt_high", 2},
-#if defined(USE_DX11) // TODO: OGL: fix ultra and extreme settings
+#if defined(USE_DX11) || defined(XR_PLATFORM_WEB) // WebGPU supports the high-quality shadow paths
     {"st_opt_ultra", 3}, {"st_opt_extreme", 4},
 #endif // USE_DX11
     {nullptr, 0}};
@@ -103,8 +103,11 @@ const xr_token qwater_reflection_quality_token[] =
 };
 
 u32 ps_r3_msaa = 0; // = 0;
-const xr_token qmsaa_token[] = {{"st_opt_off", 0}, {"2x", 1}, {"4x", 2}, {"8x", 3},
-    {nullptr, 0}};
+#ifdef XR_PLATFORM_WEB
+const xr_token qmsaa_token[] = {{"st_opt_off", 0}, {"4x", 2}, {nullptr, 0}};
+#else
+const xr_token qmsaa_token[] = {{"st_opt_off", 0}, {"2x", 1}, {"4x", 2}, {"8x", 3}, {nullptr, 0}};
+#endif
 
 u32 ps_r3_msaa_atest = 0; // = 0;
 const xr_token qmsaa__atest_token[] = {

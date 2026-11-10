@@ -76,7 +76,7 @@ void CStringTable::Init()
         !translate("ui_st_money_descr", pData->m_sCurrency) && // OGSR
         !translate("ui_st_money_regional", pData->m_sCurrency)) // xp-dev
     {
-        pData->m_sCurrency = pSettingsOpenXRay->read_if_exists<pcstr>("gameplay", "currency", "RU");
+        pData->m_sCurrency = pSettingsOpenXRay->read_if_exists<pcstr>("gameplay", "currency", "UAH");
     }
 
 #ifndef MASTER_GOLD
@@ -265,7 +265,7 @@ xr_string CStringTable::BrowserSaveLabel(pcstr filename) const
 
 shared_str CStringTable::GetCurrency() const
 {
-    return pData ? pData->m_sCurrency : "RU";
+    return pData ? pData->m_sCurrency : "UAH";
 }
 
 xr_token* CStringTable::GetLanguagesToken() const { return languagesToken.data(); }

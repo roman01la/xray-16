@@ -20,8 +20,8 @@ frontend=collect(P(args.frontend).resolve(),args.mode=='multiplayer' or args.uni
 frontend['License.txt']=record(repo/'License.txt')
 if args.unified:
  frontend['index.html']=record(repo/'server/web/game.html')
- for name in ['game-ui.mjs','singleplayer-ui.mjs','public-ui.mjs','release-cache.mjs','opfs-store.mjs']:frontend[name]=record(repo/'server/web'/name)
- bootstrap={'index.html','game-ui.mjs','release-cache.mjs','opfs-store.mjs','release-files.json','favicon.ico'}
+ for name in ['game-ui.mjs','singleplayer-ui.mjs','public-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','startup-wallpaper.webp']:frontend[name]=record(repo/'server/web'/name)
+ bootstrap={'index.html','game-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
  release_index=output/'release-files.json'
  release_index.write_text(json.dumps({name:item for name,item in frontend.items() if name not in bootstrap},sort_keys=True,separators=(',',':')))
  frontend['release-files.json']=record(release_index)

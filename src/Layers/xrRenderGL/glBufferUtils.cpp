@@ -243,7 +243,8 @@ void SetVertexDeclaration(const VertexElement* dxdecl, u32 baseOffset)
 #ifdef XR_PLATFORM_WEB
 // Header: program, location, kind (0 vector, 1 Fmatrix, 2 integer, 3 sampler), word count.
 // Payload is copied immediately, so temporary matrices and stack vectors are safe.
-static u32 drawBatch[13 * 1024];
+static constexpr u32 drawRecordWords = 16;
+static u32 drawBatch[drawRecordWords * 1024];
 static u32 drawBatchWords = 0;
 static u32 stateBatch[6144];
 static u32 stateBatchWords = 0;
@@ -294,18 +295,18 @@ void PresentWebGPU(GLuint framebuffer, u32 width, u32 height)
     return;
 }
 
-EM_JS(int, xrCreateWebGPUTexture, (unsigned target, unsigned levels, unsigned format, unsigned width, unsigned height, unsigned depth), {
+EM_JS(int, xrCreateWebGPUTexture, (unsigned target, unsigned levels, unsigned format, unsigned width, unsigned height, unsigned depth, unsigned samples), {
     const r = globalThis.__xrayWebGPU;
     if (!r) throw Error("Native WebGPU is not initialized");
     const id = globalThis.__xrayWebGPUHandles.getNewId(globalThis.__xrayWebGPUHandles.textures);
     const token = {kind: "Texture", name: id};
     globalThis.__xrayWebGPUHandles.textures[id] = token;
-    r.allocateNativeTexture(token, target, levels, format, width, height, depth);
+    r.allocateNativeTexture(token, target, levels, format, width, height, depth, samples);
     return id;
 });
-void CreateWebGPUTexture(GLuint* texture, GLenum target, u32 levels, GLenum format, u32 width, u32 height, u32 depth)
+void CreateWebGPUTexture(GLuint* texture, GLenum target, u32 levels, GLenum format, u32 width, u32 height, u32 depth, u32 samples)
 {
-    *texture = xrCreateWebGPUTexture(target, levels, format, width, height, depth);
+    *texture = xrCreateWebGPUTexture(target, levels, format, width, height, depth, samples);
     R_ASSERT(*texture != 0);
 }
 EM_JS(int, xrUploadWebGPUTexture, (unsigned texture, unsigned target, unsigned level, unsigned width, unsigned height, unsigned depth, unsigned format, unsigned type, bool compressed, const void* data, unsigned size), {
@@ -354,6 +355,34 @@ EM_JS(int, xrUploadWebGPUBuffer, (unsigned buffer, const void* data, unsigned si
 void UploadWebGPUBuffer(GLuint buffer, const void* data, u32 size, u32 offset, bool replace)
 {
     xrUploadWebGPUBuffer(buffer, data, size, offset, replace);
+}
+EM_JS(int, xrUpdateWebGPUDetailRecords, (unsigned buffer, const unsigned* descriptors, unsigned count, const void* visible, unsigned visibleCount), {
+    globalThis.__xrayWebGPU.updateDetailRecords(globalThis.__xrayWebGPUHandles.buffers[buffer],
+        HEAPU32.subarray(Number(descriptors)/4,Number(descriptors)/4+count*7),HEAPU8,HEAPU32,
+        HEAPU32.subarray(Number(visible)/4,Number(visible)/4+visibleCount));
+    return 1;
+});
+void UpdateWebGPUDetailRecords(GLuint buffer, const u32* descriptors, u32 slotCount, const void* visible, u32 visibleCount)
+{
+    xrUpdateWebGPUDetailRecords(buffer, descriptors, slotCount, visible, visibleCount);
+}
+EM_JS(int, xrGatherWebGPUDetailRanges, (unsigned buffer, const unsigned* ranges, unsigned rangeCount, unsigned count, bool changed), {
+    globalThis.__xrayWebGPU.gatherDetailRanges(globalThis.__xrayWebGPUHandles.buffers[buffer],
+        HEAPU32.subarray(Number(ranges)/4,Number(ranges)/4+rangeCount*4),count,changed);
+    return 1;
+});
+void GatherWebGPUDetailRanges(GLuint buffer, const u32* ranges, u32 rangeCount, u32 instanceCount, bool changed)
+{
+    xrGatherWebGPUDetailRanges(buffer, ranges, rangeCount, instanceCount, changed);
+}
+EM_JS(int, xrGatherWebGPUDetailSet, (unsigned buffer, const unsigned* indices, unsigned count, bool changed), {
+    globalThis.__xrayWebGPU.gatherDetailSet(globalThis.__xrayWebGPUHandles.buffers[buffer],
+        HEAPU32.subarray(Number(indices)/4,Number(indices)/4+count),changed);
+    return 1;
+});
+void GatherWebGPUDetailSet(GLuint buffer, const u32* indices, u32 instanceCount, bool changed)
+{
+    xrGatherWebGPUDetailSet(buffer, indices, instanceCount, changed);
 }
 EM_JS(int, xrDeleteWebGPUBuffer, (unsigned buffer), {
     const r = globalThis.__xrayWebGPU;
@@ -469,17 +498,43 @@ static void RegisterWebGPUDeclaration(const VertexElement* dxdecl, SDeclaration*
     }, decl->dcl, attributes, count, uniformBatch, &uniformBatchWords, stateBatch, &stateBatchWords, bindingBatch, &bindingBatchWords, drawBatch, &drawBatchWords);
 }
 
-void SubmitWebGPUDraw(SDeclaration* decl, GLuint vb, GLuint ib, u32 stride,
-    GLuint program, GLenum topology, bool indexed, u32 count, u32 first, u32 baseVertex)
+bool WebGPUDetailProfilingEnabled()
 {
-    if (drawBatchWords + 13 > std::size(drawBatch))
+    static u32 enabled = 0;
+    static bool registered = false;
+    if (!registered)
+    {
+        EM_ASM({ globalThis.__xrayWebGPU.configureDetailProfiling(() => HEAPU32, Number($0)); }, &enabled);
+        registered = true;
+    }
+    return enabled != 0;
+}
+
+void SubmitWebGPUDetailDraw(SDeclaration* decl, GLuint vb, GLuint ib, u32 stride,
+    GLuint program, GLuint instances, u32 instanceCount, u32 indexCount, u32 first, u32 baseVertex)
+{
+    SubmitWebGPUDraw(decl, vb, ib, stride, program, GL_TRIANGLES, true, indexCount, first, baseVertex, 0.f);
+    u32* dst = drawBatch + drawBatchWords - drawRecordWords;
+    dst[14] = instances;
+    dst[15] = instanceCount;
+}
+
+void SubmitWebGPUDraw(SDeclaration* decl, GLuint vb, GLuint ib, u32 stride,
+    GLuint program, GLenum topology, bool indexed, u32 count, u32 first, u32 baseVertex, float tessellationLOD)
+{
+    if (drawBatchWords + drawRecordWords > std::size(drawBatch))
         EM_ASM({ globalThis.__xrayWebGPU.flushNativeDraws(); });
     u32* dst = drawBatch + drawBatchWords;
     dst[0] = decl->dcl; dst[1] = vb; dst[2] = ib; dst[3] = stride;
     dst[4] = program; dst[5] = topology; dst[6] = indexed; dst[7] = count;
     dst[8] = first; dst[9] = baseVertex;
     dst[10] = uniformBatchWords; dst[11] = stateBatchWords; dst[12] = bindingBatchWords;
-    drawBatchWords += 13;
+    // Preserve the stock per-visual LOD in the immutable draw record.
+    const float lod = clampr(tessellationLOD, 0.f, 1.f);
+    const u32 requested = static_cast<u32>(clampr(ceilf(lod * lod * lod * lod * lod * 8.f), 1.f, 7.f));
+    dst[13] = requested <= 1 ? 1 : requested <= 2 ? 2 : requested <= 4 ? 4 : 8;
+    dst[14] = 0; dst[15] = 1;
+    drawBatchWords += drawRecordWords;
 }
 
 #endif

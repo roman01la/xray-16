@@ -1,4 +1,4 @@
-import { validateBackup, decodeBytes, openSaveDirectory, prepareSaveBackup } from "./save-format.js";
+import { importSaveBackup, openSaveDirectory, prepareSaveBackup } from "./save-format.js";
 const toolbar = document.getElementById("toolbar");
 const button = document.createElement("button");
 button.textContent = "Saves";
@@ -62,31 +62,8 @@ $("save-file").onchange = async () => {
   try {
     const file = $("save-file").files[0];
     if (!file) return;
-    if (file.size > 128 * 1024 * 1024) throw Error("Backup exceeds 128 MB");
-    const backup = validateBackup(JSON.parse(await file.text())),
-      dir = await saveDirectory(true);
-    let imported = 0,
-      skipped = 0;
-    for (const entry of backup.files) {
-      let existing;
-      try {
-        existing = await dir.getFileHandle(entry.name);
-      } catch (e) {
-        if (e.name !== "NotFoundError") throw e;
-      }
-      if (existing) {
-        skipped++;
-        continue;
-      }
-      const handle = await dir.getFileHandle(entry.name, { create: true }),
-        stream = await handle.createWritable();
-      await stream.write(decodeBytes(entry.data));
-      await stream.close();
-      imported++;
-    }
-    report(
-      `Imported ${imported} files; kept ${skipped} existing files. Launch the game and use Load game.`,
-    );
+    const { imported, skipped } = await importSaveBackup(document.getElementById("game").value, file);
+    report(`Imported saves: ${imported}. Existing saves kept: ${skipped}. Launch the game and use Load game.`);
   } catch (e) {
     report("Import failed: " + e.message);
   } finally {

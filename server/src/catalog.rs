@@ -336,6 +336,26 @@ impl Catalog {
         }
         Ok(result)
     }
+    pub(crate) fn equipped_addons(
+        &self,
+        name: &str,
+        state: &crate::inventory::ItemState,
+        attachments: &[String],
+    ) -> Result<(u8, Option<String>)> {
+        // X-Ray's scope, silencer and launcher flags.
+        let mut mask = 0;
+        let mut scope = None;
+        for ((status, names), flag) in self.addons(name, state)?.into_iter().zip([1, 4, 2]) {
+            let attached = attachments.iter().find(|section| names.contains(section));
+            if status == 1 || (status == 2 && attached.is_some()) {
+                mask |= flag;
+                if flag == 1 && status == 2 {
+                    scope = attached.cloned();
+                }
+            }
+        }
+        Ok((mask, scope))
+    }
     pub(crate) fn launcher_available(
         &self,
         name: &str,

@@ -10,14 +10,14 @@ test('draw batches replay immutable state boundaries and drain trailing changes 
   const r={consumeUniformBatch(_w,_f,_i,start,n){events.push(['uniform',...w.slice(start,start+n)]);},
     consumeStateBatch(_w,start,n){events.push(['state',...w.slice(start,start+n)]);},
     consumeBindingBatch(_w,start,n){events.push(['binding',...w.slice(start,start+n)]);},
-    submitDraw(...args){events.push(['draw',args[0],args[7],args[9]]);r.flushNativeDraws();}};
+    submitDraw(...args){events.push(['draw',args[0],args[7],args[9],r.tessellationFactor]);r.flushNativeDraws();}};
   installNativeQueues(r,()=>({words:w,floats:new Float32Array(memory),ints:new Int32Array(memory)}),pointers,{vaos:[null,'geometry'],buffers:[],programs:[],textures:[],samplers:[],framebuffers:[]});
   w.set([11,12,13],0);w[100]=3;w.set([21,22],200);w[300]=2;w.set([31,32],400);w[500]=2;
-  w.set([1,0,0,12,0,4,0,3,0,0,1,1,1, 1,0,0,12,0,4,0,6,0,0xffffffff,2,2,2],600);w[750]=26;
+  w.set([1,0,0,12,0,4,0,3,0,0,1,1,1,4,0,1, 1,0,0,12,0,4,0,6,0,0xffffffff,2,2,2,8,0,1],600);w[750]=32;
   // Simulate memory growth; the queue must read the current heap, not an old view.
   const grown=new ArrayBuffer(8192);new Uint8Array(grown).set(new Uint8Array(memory));memory=grown;w=new Uint32Array(memory);
   r.flushNativeStates();events.push(['mutation']);
-  assert.deepEqual(events,[['uniform',11],['state',21],['binding',31],['draw','geometry',3,0],['uniform',12],['state',22],['binding',32],['draw','geometry',6,-1],['uniform',13],['mutation']]);
+  assert.deepEqual(events,[['uniform',11],['state',21],['binding',31],['draw','geometry',3,0,4],['uniform',12],['state',22],['binding',32],['draw','geometry',6,-1,8],['uniform',13],['mutation']]);
   assert.deepEqual([w[100],w[300],w[500],w[750]],[0,0,0,0]);
 });
 
@@ -60,3 +60,20 @@ test('changing frame uniforms preserves the object block allocation',()=>{
   assert.equal(r.allocateUniformBlock(p),initial);
   assert.notEqual(r.allocateUniformBlock(p.uniformBlocks[1]),initial);
 });
+
+ test('instanced records preserve counts and buffer handles between ordinary draws',()=>{
+ const memory=new ArrayBuffer(4096),w=new Uint32Array(memory),calls=[];
+ const r={submitDraw(...args){calls.push(args);}};
+ installNativeQueues(r,()=>({words:w,floats:new Float32Array(memory),ints:new Int32Array(memory)}),[0,400,800,1200,1600,2000,2400,3000],{vaos:[null,'vao'],buffers:[null,'vertices','indices','instances'],programs:[null,'program']});
+ for(let i=0;i<3;i++)w.set([1,1,2,20,1,4,1,6,2,0xffffffff,0,0,0,0,i===1?3:0,i===1?130:1],600+i*16);
+ w[750]=48;r.flushNativeDraws();
+ assert.deepEqual(calls.map(c=>c.slice(7)),[[6,2,-1,null,1],[6,2,-1,'instances',130],[6,2,-1,null,1]]);
+ assert.equal(w[750],0);
+ });
+ test('detail profiling flag follows enablement and refreshed heap views',()=>{
+ const r=Object.create(GPUFrontend.prototype);let heap=new Uint32Array(4);
+ r.configureDetailProfiling(()=>heap,4);assert.equal(heap[1],0);
+ r.syncDetailProfilingFlag(true);assert.equal(heap[1],1);
+ heap=new Uint32Array(8);r.syncDetailProfilingFlag(true);assert.equal(heap[1],1);
+ r.syncDetailProfilingFlag(false);assert.equal(heap[1],0);
+ });

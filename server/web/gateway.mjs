@@ -8,15 +8,18 @@ import {pipeline} from 'node:stream/promises';
 import {spawn} from 'node:child_process';
 import {createGunzip} from 'node:zlib';
 import {pathToFileURL} from 'node:url';
+import {startAnalytics} from './analytics-store.mjs';
+import {analyticsDashboard,validateAnalyticsEvent} from './analytics-http.mjs';
 const HASH=/^[a-f0-9]{64}$/,PATH=/^\/(releases|packs)\/[a-f0-9]{64}\/[a-zA-Z0-9_./#@+ -]+$/;
-const mime=p=>({html:'text/html; charset=utf-8',js:'text/javascript',mjs:'text/javascript',json:'application/json',wasm:'application/wasm',css:'text/css',ico:'image/x-icon'})[p.split('.').at(-1)]||'application/octet-stream';
+const mime=p=>({html:'text/html; charset=utf-8',js:'text/javascript',mjs:'text/javascript',json:'application/json',wasm:'application/wasm',css:'text/css',ico:'image/x-icon',webp:'image/webp'})[p.split('.').at(-1)]||'application/octet-stream';
 const equal=(a,b)=>{const x=Buffer.from(a||''),y=Buffer.from(b||'');return x.length===y.length&&timingSafeEqual(x,y);};
 function safePath(p){return PATH.test(p)&&!p.slice(1).split('/').some(x=>x==='..'||x==='.'||!x);}
 async function body(req,max){let size=0,parts=[];for await(const part of req){size+=part.length;if(size>max)throw Object.assign(Error('Request too large'),{status:413});parts.push(part);}return Buffer.concat(parts);}
-export async function createGateway({root,token,origin,backendPort=8082,assetOrigin=process.env.ZONE_ASSET_ORIGIN,cdnRefreshMs=5000}){
+export async function createGateway({root,token,origin,backendPort=8082,assetOrigin=process.env.ZONE_ASSET_ORIGIN,cdnRefreshMs=5000,analyticsPassword=process.env.ZONE_ANALYTICS_PASSWORD}){
  if(!token||new URL(origin).origin!==origin)throw Error('Gateway requires token and canonical origin');
  if(assetOrigin&&(new URL(assetOrigin).protocol!=='https:'||new URL(assetOrigin).origin!==assetOrigin))throw Error('CDN origin must be HTTPS');
  await mkdir(root+'/blobs',{recursive:true});await mkdir(root+'/manifests',{recursive:true});
+ const analytics=analyticsPassword?startAnalytics(join(root,'analytics.sqlite')):null;
  let active=null;try{active=JSON.parse(await readFile(root+'/active.json','utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
  let cdnHashes=new Set(),nextCdnRead=0;
  async function cdnReady(hash){
@@ -38,6 +41,38 @@ export async function createGateway({root,token,origin,backendPort=8082,assetOri
   const reply=(status,data='')=>{if(!res.headersSent)res.writeHead(status,headers);res.end(data);};
   try{
    const url=new URL(req.url,'http://local'),path=url.pathname,admin=equal(req.headers.authorization,'Bearer '+token);
+   if(path==='/analytics'||path==='/analytics/'||path==='/analytics/event'){
+    if(!analytics)return reply(404);
+    const ip=String(req.headers['fly-client-ip']||req.socket.remoteAddress);
+    if(path==='/analytics/event'){
+     if(req.method!=='POST')return reply(405);
+     if(req.headers.origin!==origin||req.headers['sec-fetch-site']==='cross-site')return reply(403);
+     if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||''))return reply(415);
+     if(limited(ip,'analytics-event',600,60000)||limited('*','analytics-event',1800,60000))return reply(429);
+     const event=validateAnalyticsEvent(JSON.parse(await body(req,1024)));
+     if(!event)return reply(400);
+     await analytics.request('record',event);
+     return reply(204);
+    }
+    if(!['GET','HEAD'].includes(req.method))return reply(405);
+    if(req.headers['sec-fetch-site']==='cross-site')return reply(403);
+    headers['Referrer-Policy']='no-referrer';
+    headers['Content-Security-Policy']="default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'";
+    const credentials=/^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(req.headers.authorization||'');
+    // Limit both individual and distributed guessing before comparing passwords.
+    if(credentials&&(limited(ip,'analytics-auth',8,900000)||limited('*','analytics-auth',60,900000))){
+     headers['Retry-After']='900';
+     return reply(429,'Too many analytics requests');
+    }
+    if(!credentials||!equal(Buffer.from(credentials[1],'base64').toString('utf8'),'analytics:'+analyticsPassword)){
+     headers['WWW-Authenticate']='Basic realm="S.T.A.L.K.E.R. Analytics", charset="UTF-8"';
+     return reply(401,'Authentication required');
+    }
+    const page=analyticsDashboard(await analytics.request('summary'));
+    headers['Content-Type']='text/html; charset=utf-8';
+    headers['Content-Length']=Buffer.byteLength(page);
+    return reply(200,req.method==='HEAD'?undefined:page);
+   }
    if(path.startsWith('/_deploy/')){
     if(!admin)return reply(403);
     const hash=path.slice('/_deploy/blobs/'.length);
@@ -126,6 +161,7 @@ ${iconLink}
   }catch(error){if(!res.headersSent)reply(error.status||400,'Request failed');else res.destroy();}
  });
  server.requestTimeout=1800000;server.headersTimeout=15000;server.maxRequestsPerSocket=1000;
+ if(analytics)server.once('close',()=>{void analytics.close();});
  return server;
 }
 async function nativeAlifeHosts(root){
@@ -184,7 +220,9 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   });
   child.on('error',error=>console.error(error.message));
  }
- supervise('/usr/local/bin/zone-server',[]);
+ const rustEnv={...process.env};
+ delete rustEnv.ZONE_ANALYTICS_PASSWORD;
+ supervise('/usr/local/bin/zone-server',[],{env:rustEnv});
  for(const host of nativeHosts){
   const env={PATH:process.env.PATH,LD_LIBRARY_PATH:dirname(nativeBin),ZONE_ALIFE_INTEREST_SOCKET:host.socket,
    SDL_VIDEODRIVER:'offscreen',SDL_AUDIODRIVER:'dummy',ALSOFT_DRIVERS:'null',LIBGL_ALWAYS_SOFTWARE:'1',LP_NUM_THREADS:'2'};

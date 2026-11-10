@@ -366,7 +366,7 @@ const int2 g_i2NormalLoadPattern[NUM_NORMAL_LOADS] =
 //=================================================================================================================================
 // Computes the general valley angle
 //=================================================================================================================================
-float ValleyAngle( uint2 u2ScreenCoord )
+float ValleyAngle( int2 u2ScreenCoord )
 {
 	float3 f3N1 = float3(0.0);
 	float3 f3N2 = float3(0.0);
@@ -388,12 +388,9 @@ float ValleyAngle( uint2 u2ScreenCoord )
 		i2OffsetScreenCoord = u2ScreenCoord + g_i2NormalLoadPattern[iNormal];
 		i2MirrorOffsetScreenCoord = u2ScreenCoord + i2MirrorPattern;
 		
-		// Clamp our test to screen coordinates
-		i2OffsetScreenCoord = ( i2OffsetScreenCoord > ( g_f2RTSize - float2( 1.0, 1.0 ) ) ) ? ( g_f2RTSize - float2( 1.0, 1.0 ) ) : ( i2OffsetScreenCoord );
-		i2MirrorOffsetScreenCoord = ( i2MirrorOffsetScreenCoord > ( g_f2RTSize - float2( 1.0, 1.0 ) ) ) ? ( g_f2RTSize - float2( 1.0, 1.0 ) ) : ( i2MirrorOffsetScreenCoord );
-		i2OffsetScreenCoord = ( i2OffsetScreenCoord < 0 ) ? ( 0 ) : ( i2OffsetScreenCoord );
-		i2MirrorOffsetScreenCoord = ( i2MirrorOffsetScreenCoord < 0 ) ? ( 0 ) : ( i2MirrorOffsetScreenCoord );
-						
+        // Keep integer pixel addressing valid at the screen boundary.
+        i2OffsetScreenCoord = clamp(i2OffsetScreenCoord, int2(0), int2(g_f2RTSize)-int2(1));
+        i2MirrorOffsetScreenCoord = clamp(i2MirrorOffsetScreenCoord, int2(0), int2(g_f2RTSize)-int2(1));
     #ifdef GBUFFER_OPTIMIZATION
 		f3N1.xy  = texelFetch( g_txNormal, i2OffsetScreenCoord, MSAA_SAMPLE_INDEX ).xy;
 		f3N1.xyz = gbuf_unpack_normal( f3N1.xy );
@@ -451,8 +448,8 @@ float ValleyAngle( uint2 u2ScreenCoord )
     		
 		    // Valley detect
 		    f2Diff     = fCenterZ.xx - f2SampledZ;
-		    f2Compare  = ( f2Diff < g_fHDAORejectRadius.xx ) ? ( 1.0 ) : ( 0.0 );
-		    f2Compare *= ( f2Diff > g_fHDAOAcceptRadius.xx ) ? ( 1.0 ) : ( 0.0 );
+		    f2Compare  = mix(float2(0.0), float2(1.0), lessThan(f2Diff, float2(g_fHDAORejectRadius)));
+		    f2Compare *= mix(float2(0.0), float2(1.0), greaterThan(f2Diff, float2(g_fHDAOAcceptRadius)));
     		
 		    // Weight occlusion
 		    fOcclusion += ( f2Compare.x * f2Compare.y * g_fHDAOSampleWeights[uValley] );	
@@ -530,21 +527,21 @@ float ValleyAngle( uint2 u2ScreenCoord )
 
                     f2Coord    = float2( f2ScreenCoord.x + float( uGather * 2 ), f2ScreenCoord.y );
                    
-                    f4Depth.x  = texelFetchOffset( g_txDepth, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 0, 1, 0 ) ).z;
-	                f4Depth.y  = texelFetchOffset( g_txDepth, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 1, 1, 0 ) ).z;
-	                f4Depth.z  = texelFetchOffset( g_txDepth, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 1, 0, 0 ) ).z;
-	                f4Depth.w  = texelFetchOffset( g_txDepth, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 0, 0, 0 ) ).z;
+                    f4Depth.x  = texelFetch( g_txDepth, int2(f2Coord ) + int2(0, 1), int(MSAA_SAMPLE_INDEX) ).z;
+	                f4Depth.y  = texelFetch( g_txDepth, int2(f2Coord ) + int2(1, 1), int(MSAA_SAMPLE_INDEX) ).z;
+	                f4Depth.z  = texelFetch( g_txDepth, int2(f2Coord ) + int2(1, 0), int(MSAA_SAMPLE_INDEX) ).z;
+	                f4Depth.w  = texelFetch( g_txDepth, int2(f2Coord ) + int2(0, 0), int(MSAA_SAMPLE_INDEX) ).z;
                     
                     #ifdef GBUFFER_OPTIMIZATION
-                        f4Normal.x = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 0, 1, 0 ) ).x;
-                        f4Normal.y = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 1, 1, 0 ) ).x;
-	                    f4Normal.z = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 1, 0, 0 ) ).x;
-	                    f4Normal.w = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 0, 0, 0 ) ).x;
+                        f4Normal.x = texelFetch( g_txNormal, int2(f2Coord ) + int2(0, 1), int(MSAA_SAMPLE_INDEX) ).x;
+                        f4Normal.y = texelFetch( g_txNormal, int2(f2Coord ) + int2(1, 1), int(MSAA_SAMPLE_INDEX) ).x;
+	                    f4Normal.z = texelFetch( g_txNormal, int2(f2Coord ) + int2(1, 0), int(MSAA_SAMPLE_INDEX) ).x;
+	                    f4Normal.w = texelFetch( g_txNormal, int2(f2Coord ) + int2(0, 0), int(MSAA_SAMPLE_INDEX) ).x;
 	                #else
-                        f4Normal.x = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 0, 1, 0 ) ).z;
-                        f4Normal.y = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 1, 1, 0 ) ).z;
-	                    f4Normal.z = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 1, 0, 0 ) ).z;
-	                    f4Normal.w = texelFetchOffset( g_txNormal, int2( f2Coord ), MSAA_SAMPLE_INDEX, int3( 0, 0, 0 ) ).z;
+                        f4Normal.x = texelFetch( g_txNormal, int2(f2Coord ) + int2(0, 1), int(MSAA_SAMPLE_INDEX) ).z;
+                        f4Normal.y = texelFetch( g_txNormal, int2(f2Coord ) + int2(1, 1), int(MSAA_SAMPLE_INDEX) ).z;
+	                    f4Normal.z = texelFetch( g_txNormal, int2(f2Coord ) + int2(1, 0), int(MSAA_SAMPLE_INDEX) ).z;
+	                    f4Normal.w = texelFetch( g_txNormal, int2(f2Coord ) + int2(0, 0), int(MSAA_SAMPLE_INDEX) ).z;
 	                #endif
                 #else
 
@@ -608,7 +605,7 @@ float	calc_new_hdao( float3 P, float3 N, float2 tc, float2 tcJ, uint iSample)
 #elif SSAO_QUALITY >= 3
 {
 	// Locals
-	uint2 u2CenterScreenCoord;
+	int2 u2CenterScreenCoord;
 	float2 f2ScreenCoord;
 	float2 f2MirrorScreenCoord;
 	float fCenterZ;
@@ -620,7 +617,7 @@ float	calc_new_hdao( float3 P, float3 N, float2 tc, float2 tcJ, uint iSample)
 	float fDot;
 								
 	// Compute screen coord, and store off the inverse of the RT Size
-	u2CenterScreenCoord = uint2( floor( tc * g_f2RTSize ) );
+	u2CenterScreenCoord = int2( floor( tc * g_f2RTSize ) );
 	
 	// Get the general valley angle, to scale the result by 
 	fDot = ValleyAngle( u2CenterScreenCoord );
@@ -637,22 +634,22 @@ float	calc_new_hdao( float3 P, float3 N, float2 tc, float2 tcJ, uint iSample)
 	for( iValley = 0; iValley < NUM_VALLEYS; iValley ++ )
 	{
 		// Sample depth & convert to camera space
-        f2SampledZ.x = texelFetch( g_txDepth, ( u2CenterScreenCoord + g_i2HDAOSamplePattern[iValley] ), MSAA_SAMPLE_INDEX ).z;
-		f2SampledZ.y = texelFetch( g_txDepth, ( u2CenterScreenCoord - g_i2HDAOSamplePattern[iValley] ), MSAA_SAMPLE_INDEX ).z;
+        f2SampledZ.x = texelFetch( g_txDepth, clamp(u2CenterScreenCoord + g_i2HDAOSamplePattern[iValley], int2(0), int2(g_f2RTSize)-int2(1)), MSAA_SAMPLE_INDEX ).z;
+		f2SampledZ.y = texelFetch( g_txDepth, clamp(u2CenterScreenCoord - g_i2HDAOSamplePattern[iValley], int2(0), int2(g_f2RTSize)-int2(1)), MSAA_SAMPLE_INDEX ).z;
 
         // Sample normal and do a scaled add
         #ifdef GBUFFER_OPTIMIZATION
-	        f2SampledZ.x += ( texelFetch( g_txNormal, ( u2CenterScreenCoord + g_i2HDAOSamplePattern[iValley] ), MSAA_SAMPLE_INDEX ).x * g_fHDAONormalScale ); 
-	        f2SampledZ.y += ( texelFetch( g_txNormal, ( u2CenterScreenCoord - g_i2HDAOSamplePattern[iValley] ), MSAA_SAMPLE_INDEX ).x * g_fHDAONormalScale );
+	        f2SampledZ.x += ( texelFetch( g_txNormal, clamp(u2CenterScreenCoord + g_i2HDAOSamplePattern[iValley], int2(0), int2(g_f2RTSize)-int2(1)), MSAA_SAMPLE_INDEX ).x * g_fHDAONormalScale );
+	        f2SampledZ.y += ( texelFetch( g_txNormal, clamp(u2CenterScreenCoord - g_i2HDAOSamplePattern[iValley], int2(0), int2(g_f2RTSize)-int2(1)), MSAA_SAMPLE_INDEX ).x * g_fHDAONormalScale );
 	    #else
-	        f2SampledZ.x += ( texelFetch( g_txNormal, ( u2CenterScreenCoord + g_i2HDAOSamplePattern[iValley] ), MSAA_SAMPLE_INDEX ).z * g_fHDAONormalScale ); 
-	        f2SampledZ.y += ( texelFetch( g_txNormal, ( u2CenterScreenCoord - g_i2HDAOSamplePattern[iValley] ), MSAA_SAMPLE_INDEX ).z * g_fHDAONormalScale );
+	        f2SampledZ.x += ( texelFetch( g_txNormal, clamp(u2CenterScreenCoord + g_i2HDAOSamplePattern[iValley], int2(0), int2(g_f2RTSize)-int2(1)), MSAA_SAMPLE_INDEX ).z * g_fHDAONormalScale );
+	        f2SampledZ.y += ( texelFetch( g_txNormal, clamp(u2CenterScreenCoord - g_i2HDAOSamplePattern[iValley], int2(0), int2(g_f2RTSize)-int2(1)), MSAA_SAMPLE_INDEX ).z * g_fHDAONormalScale );
 	    #endif
 
 		// Detect valleys 
 		f2Diff     = fCenterZ.xx - f2SampledZ;
-		f2Compare  = ( f2Diff < g_fHDAORejectRadius.xx ) ? ( 1.0 ) : ( 0.0 );
-		f2Compare *= ( f2Diff > g_fHDAOAcceptRadius.xx ) ? ( 1.0 ) : ( 0.0 );
+		f2Compare  = mix(float2(0.0), float2(1.0), lessThan(f2Diff, float2(g_fHDAORejectRadius)));
+		f2Compare *= mix(float2(0.0), float2(1.0), greaterThan(f2Diff, float2(g_fHDAOAcceptRadius)));
 						
 		// Accumulate weighted occlusion
 		fOcclusion += f2Compare.x * f2Compare.y * g_fHDAOSampleWeights[iValley];	

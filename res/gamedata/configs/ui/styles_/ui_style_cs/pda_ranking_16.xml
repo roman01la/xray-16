@@ -84,7 +84,7 @@
 		<text align="l" font="letterica18" color="ui_3">ui_inv_money</text>
 	</money_caption>
 	<money_value x="125" y="265" width="167" height="18" stretch="1">
-		<text align="l" font="letterica18" color="ui_2">0 RU</text>	
+		<text align="l" font="letterica18" color="ui_2">0 UAH</text>
 	</money_value>
 
 	<fraction_static x="46" y="343" width="125" height="16" stretch="1">

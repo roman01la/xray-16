@@ -2033,8 +2033,9 @@ The user authorized development defaults on 2026-11-08. They live in
 `config/survival-development.json`; `ZONE_SURVIVAL_RULES` selects an override.
 These are initial test values, not final balance:
 
-- Starter kit per life: knife, bolt, PDA, torch, one bandage and one bread.
-  No firearm or protected carried item. All six are lost on death.
+- Starter kit per life: knife, bolt, PDA, torch, one bandage, one bread,
+  an equipped PM pistol and AK-74, and one full box of ammo for each weapon.
+  All ten items are lost on death.
 - Respawn delay: 10 seconds; corpse lifetime: 30 minutes; dropped items: 15 minutes.
 - Loot refill interval: 15 minutes; exclusion radius: 100 m; cap: eight items per
   authored spawn. The stash replenishment pass uses these values.

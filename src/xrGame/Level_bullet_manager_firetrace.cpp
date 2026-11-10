@@ -5,6 +5,7 @@
 
 #include "StdAfx.h"
 #include "Level_Bullet_Manager.h"
+#include "CombatRules.h"
 #include "Entity.h"
 #include "xrMaterialSystem/GameMtlLib.h"
 #include "Level.h"
@@ -393,10 +394,7 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
             Fvector new_pos;
             new_pos.mad(bullet->bullet_pos, bullet->dir, R.range);
             float l = bullet->begin_density.distance_to(new_pos);
-            float shootFactor = l * bullet->density;
-            bullet->speed -= shootFactor;
-            if (bullet->speed < 0)
-                bullet->speed = 0;
+            bullet->speed = xray::combat::densitySpeed(bullet->speed, l, bullet->density);
         }
         if (DOT(hit_normal, bullet->dir) < 0)
         {
@@ -431,14 +429,12 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
 
     SGameMtl* mtl = GMLib.GetMaterialByIdx(target_material);
     float mtl_ap = mtl->fShootFactor;
-    float shoot_factor = 0.0f; // default >> пуля НЕ пробила материал!
-    float ap = bullet->armor_piercing;
-
-    if (ap > EPS && ap >= mtl_ap)
-    {
-        //пуля пробила материал
-        shoot_factor = ((ap - mtl_ap) / ap);
-    }
+    using xray::combat::SurfaceAction;
+    // Classify the early exits before drawing random values, preserving the
+    // stock RNG sequence for transparent and magnetic-beam contacts.
+    auto response = xray::combat::surfaceResponse(bullet->armor_piercing, mtl_ap,
+        bullet->air_resistance, bullet->flags.magnetic_beam, false, false,
+        0.f, 0.f, 0.f, m_fCollisionEnergyMin, m_fCollisionEnergyMax, EPS);
 
     hit_res->impulse = 0.0f;
     float speed_scale = 0.0f;
@@ -449,7 +445,7 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
     int bullet_state = 0;
 #endif
 
-    if (fsimilar(mtl_ap, 0.0f)) //Если материал полностью простреливаемый (кусты)
+    if (response.action == SurfaceAction::Transparent) //Если материал полностью простреливаемый (кусты)
     {
 #ifdef DEBUG
         bullet_state = 2;
@@ -457,13 +453,13 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
         return true;
     }
 
-    if (bullet->flags.magnetic_beam && (shoot_factor > EPS))
+    if (response.action == SurfaceAction::Magnetic)
     {
 #ifdef DEBUG
         bullet_state = 2;
 #endif
         // air resistance of magnetic_beam bullet is armor resistance too
-        bullet->armor_piercing -= mtl_ap * bullet->air_resistance;
+        bullet->armor_piercing = response.penetration;
         return true;
     }
 
@@ -475,13 +471,15 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
     float ricoshet_factor = bullet->dir.dotproduct(tgt_dir);
 
     float f = Random.randF(0.5f, 0.8f); //(0.5f,1.f);
-    if ((f < ricoshet_factor) && !mtl->Flags.test(SGameMtl::flNoRicoshet) && bullet->flags.allow_ricochet)
+    response = xray::combat::surfaceResponse(bullet->armor_piercing, mtl_ap,
+        bullet->air_resistance, bullet->flags.magnetic_beam, bullet->flags.allow_ricochet,
+        !mtl->Flags.test(SGameMtl::flNoRicoshet), bullet->dir.dotproduct(hit_normal),
+        ricoshet_factor, f, m_fCollisionEnergyMin, m_fCollisionEnergyMax, EPS);
+    if (response.action == SurfaceAction::Ricochet)
     {
         // уменьшение скорости полета в зависимости от угла падения пули (чем прямее угол, тем больше потеря)
         bullet->flags.allow_ricochet = 0;
-        float scale = 1.0f - _abs(bullet->dir.dotproduct(hit_normal)) * m_fCollisionEnergyMin;
-        clamp(scale, 0.0f, m_fCollisionEnergyMax);
-        speed_scale = scale;
+        speed_scale = response.speedScale;
 
         // вычисление рикошета, делается немного фейком, т.к. пуля остается в точке столкновения
         // и сразу выходит из RayQuery()
@@ -493,7 +491,7 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
         bullet_state = 0;
 #endif
     }
-    else if (shoot_factor < EPS)
+    else if (response.action == SurfaceAction::Stop)
     {
         //застрявание пули в материале
         speed_scale = 0.0f;
@@ -504,7 +502,7 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
     else
     {
         //пробивание материала
-        speed_scale = shoot_factor; // mtl->fShootFactor;
+        speed_scale = response.speedScale; // mtl->fShootFactor;
 
         bullet->bullet_pos.mad(bullet->bullet_pos, bullet->dir, EPS); // fake
         //ввести коэффициент случайности при простреливании

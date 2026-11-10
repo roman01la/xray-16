@@ -8,6 +8,7 @@ use crate::{
 use anyhow::{Context as _, Result, ensure};
 use rusqlite::{Transaction, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub(crate) const SCHEMA: &str = "
 ALTER TABLE inventory_characters ADD COLUMN condition TEXT NOT NULL DEFAULT '{}';
@@ -46,11 +47,15 @@ struct Medicine {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct State {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_checkpoint: Option<crate::native_condition::Checkpoint>,
     pub health: f32,
     pub power: f32,
     pub satiety: f32,
     pub thirst: f32,
     pub bleeding: f32,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    wounds: BTreeMap<String, [f32; 12]>,
     pub radiation: f32,
     pub psy_health: f32,
     pub alcohol: f32,
@@ -67,11 +72,13 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            native_checkpoint: None,
             health: 1.0,
             power: 1.0,
             satiety: 1.0,
             thirst: 1.0,
             bleeding: 0.0,
+            wounds: BTreeMap::new(),
             radiation: 0.0,
             psy_health: 1.0,
             alcohol: 0.0,
@@ -216,14 +223,45 @@ pub struct Impact {
     pub before: Record,
     pub location: Location,
     pub combat_lock_ms: u32,
+    pub native_armour: Option<NativeArmourImpact>,
+}
+
+#[derive(Clone, Copy)]
+pub struct NativeArmourImpact {
+    pub health: f32,
+    pub power_loss: f32,
+    pub generation: u64,
+    pub power: f32,
+    pub outfit: Option<f32>,
+    pub helmet: Option<f32>,
+    pub wound: bool,
 }
 
 #[derive(Clone)]
 pub enum ImpactKind {
-    Blast,
-    Wound,
+    Blast { bone: String },
+    Wound { bone: String },
     Strike,
     Bullet { bone: String, penetration: f32 },
+}
+
+// CoP EHitType slots in CWound. The empty bone key represents an unknown site.
+#[derive(Clone, Copy)]
+pub(crate) enum WoundKind {
+    Cut = 5,
+    Bullet = 6,
+    Blast = 8,
+}
+
+impl ImpactKind {
+    pub(crate) fn wound_site(&self) -> (WoundKind, &str) {
+        match self {
+            Self::Blast { bone } => (WoundKind::Blast, bone),
+            Self::Wound { bone } => (WoundKind::Cut, bone),
+            Self::Strike => (WoundKind::Cut, ""),
+            Self::Bullet { bone, .. } => (WoundKind::Bullet, bone),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -239,6 +277,8 @@ pub struct ShotVictim {
 #[derive(Clone)]
 pub struct FireVictim {
     pub authority: ShotVictim,
+    /// Server-produced native proposal; never deserialized from client input.
+    pub native: Option<crate::native_condition::Shot>,
     pub additional: Vec<crate::combat::ShotTarget>,
 }
 
@@ -392,6 +432,10 @@ pub(crate) struct Dose {
     psy_protection: Booster,
 }
 impl Dose {
+    pub(crate) fn immediate_wound_heal(&self) -> f32 {
+        if self.duration > 0.0 { 0.0 } else { self.influence.heal }
+    }
+
     pub(crate) fn from_catalog(
         section: &str,
         definition: &Section,
@@ -468,6 +512,81 @@ impl Dose {
 }
 
 impl State {
+    pub fn native_import(&self) -> Option<crate::native_condition::Import> {
+        if self.native_checkpoint.is_some() { return None; }
+        let mut bytes = b"ZCL1".to_vec();
+        for value in [self.health, self.power, self.satiety, self.radiation, self.psy_health, self.alcohol] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        let medicine = self.medicine.filter(|m| m.remaining > 0.0).map_or([0.0;9], |m| [
+            m.total.health, m.total.power, m.total.satiety, m.total.radiation,
+            m.total.heal, 0.0, m.total.alcohol, m.duration, m.remaining]);
+        for value in medicine { bytes.extend_from_slice(&value.to_le_bytes()); }
+        let flags = u32::from(self.limping) | (u32::from(self.walk_blocked)<<1) | (u32::from(self.sprint_blocked)<<2);
+        bytes.extend_from_slice(&flags.to_le_bytes());
+        let mut wounds = self.wounds.clone();
+        if wounds.is_empty() && self.bleeding > 0.0 {
+            wounds.entry(String::new()).or_insert([0.0;12])[WoundKind::Bullet as usize] = self.bleeding;
+        }
+        let boosts = [(0u32,self.boosts[0]), (1,self.boosts[1]), (3,self.boosts[2]), (2,self.boosts[3]),
+            (4,self.weight_boost), (5,self.radiation_protection), (6,self.psy_protection), (7,self.acid_protection)]
+            .into_iter().filter(|(_,b)| b.remaining > 0.0).collect::<Vec<_>>();
+        if wounds.len()>256 { return None; }
+        bytes.extend_from_slice(&(wounds.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(boosts.len() as u32).to_le_bytes());
+        for (bone,sizes) in wounds {
+            if bone.len()>63 { return None; }
+            bytes.push(bone.len() as u8); bytes.extend_from_slice(bone.as_bytes());
+            for value in sizes { bytes.extend_from_slice(&value.to_le_bytes()); }
+        }
+        for (kind,b) in boosts {
+            bytes.extend_from_slice(&kind.to_le_bytes());
+            bytes.extend_from_slice(&b.rate.to_le_bytes());
+            bytes.extend_from_slice(&b.remaining.to_le_bytes());
+        }
+        crate::native_condition::Import::parse(bytes)
+    }
+
+    /// Prepare custom policy on a clone. Commit the returned state only after
+    /// the matching X-Ray result; the live actor remains unchanged on retries.
+    pub fn prepare_native_step(&self, tuning: &Tuning, seconds: f32, protected: bool)
+        -> Option<(Self, crate::native_condition::Checkpoint)> {
+        if !seconds.is_finite() || !(0.0..=1.0).contains(&seconds) || self.health<=0.0 { return None; }
+        let checkpoint=self.native_checkpoint.as_ref()?;
+        let mut state=self.clone();
+        // An imported legacy treatment may also contain custom hydration.
+        // Only its thirst component stays here; X-Ray owns all stock effects.
+        if let Some(mut medicine)=state.medicine {
+            let elapsed=seconds.min(medicine.remaining);
+            if medicine.duration>0.0 { state.thirst+=medicine.total.thirst*elapsed/medicine.duration; }
+            medicine.remaining-=elapsed;
+            state.medicine=(medicine.remaining>0.0).then_some(medicine);
+        }
+        state.thirst=(state.thirst-tuning.thirst_decay*seconds).clamp(0.0,1.0);
+        let loss=if !protected && state.thirst<=0.0 { tuning.dehydration_damage*seconds } else {0.0};
+        let input=checkpoint.with_policy(protected,loss)?;
+        Some((state,input))
+    }
+
+    pub fn native_checkpoint(&self) -> Option<&crate::native_condition::Checkpoint> {
+        self.native_checkpoint.as_ref()
+    }
+    pub(crate) fn install_native_checkpoint(&mut self, checkpoint: crate::native_condition::Checkpoint) -> Result<()> {
+        let state = checkpoint.projection().context("invalid native condition projection")?;
+        self.health = state.health;
+        self.power = state.power;
+        self.radiation = state.radiation;
+        self.psy_health = state.psy_health;
+        self.satiety = state.satiety;
+        self.alcohol = state.alcohol;
+        self.bleeding = state.bleeding;
+        self.limping = state.limping;
+        self.walk_blocked = state.walk_blocked;
+        self.sprint_blocked = state.sprint_blocked;
+        self.native_checkpoint = Some(checkpoint);
+        Ok(())
+    }
+
     pub fn health_points(&self) -> u16 {
         (self.health.clamp(0.0, 1.0) * 100.0).ceil() as u16
     }
@@ -486,6 +605,8 @@ impl State {
             let expiring = active && booster.remaining <= 3.0;
             icons | (u32::from(active) << index) | (u32::from(expiring) << (index + 8))
         });
+        let booster_icons = self.native_checkpoint.as_ref().and_then(|state| state.projection())
+            .map_or(booster_icons, |state| state.booster_icons);
         [
             life,
             quantize(self.power),
@@ -506,6 +627,12 @@ impl State {
         ]
     }
     fn limits(&self, tuning: &Tuning, loadout: Loadout) -> (f64, f64) {
+        if let Some(state) = self.native_checkpoint.as_ref().and_then(|state| state.projection()) {
+            // Checkpoint limits include native boosters; equipment's separate
+            // additional-weight contribution is already present in the loadout.
+            return ((f64::from(state.carry_limit)+loadout.capacity_bonus).max(0.001),
+                (f64::from(state.walk_limit)+loadout.capacity_bonus).max(0.001));
+        }
         let extra = loadout.capacity_bonus
             + if self.weight_boost.remaining > 0.0 {
                 f64::from(self.weight_boost.rate)
@@ -533,10 +660,41 @@ impl State {
         self.apply_hit(f32::from(points) / 100.0, fire_wound);
     }
     pub(crate) fn apply_hit(&mut self, power: f32, fire_wound: bool) {
+        self.apply_hit_at(power, fire_wound.then_some((WoundKind::Bullet, "")));
+    }
+
+    pub(crate) fn apply_hit_at(&mut self, power: f32, wound: Option<(WoundKind, &str)>) {
         self.health = (self.health - power).max(0.0);
-        if fire_wound && self.health > 0.0 {
-            self.bleeding = (self.bleeding + power).min(1.0);
+        if self.health > 0.0 && let Some((kind, bone)) = wound {
+            self.add_wound(kind, bone, power);
         }
+    }
+
+    pub(crate) fn add_wound(&mut self, kind: WoundKind, bone: &str, power: f32) {
+        if power <= 0.0 { return; }
+        self.restore_legacy_wound();
+        let sizes = self.wounds.entry(bone.to_owned()).or_default();
+        let size = &mut sizes[kind as usize];
+        *size = crate::xray_combat_rules::add_wound_hit(*size, power);
+        self.update_bleeding();
+    }
+
+    fn restore_legacy_wound(&mut self) {
+        if self.wounds.is_empty() && self.bleeding > 0.0 {
+            self.wounds.entry(String::new()).or_default()[WoundKind::Bullet as usize] = self.bleeding;
+        }
+    }
+
+    fn update_bleeding(&mut self) {
+        self.bleeding = if self.wounds.is_empty() { 0.0 } else {
+            self.wounds.values().flatten().sum::<f32>() / self.wounds.len() as f32
+        };
+    }
+
+    fn heal_wounds(&mut self, amount: f32, minimum: f32) {
+        self.restore_legacy_wound();
+        self.wounds.retain(|_, sizes| crate::xray_combat_rules::heal_wound(sizes, amount, minimum));
+        self.update_bleeding();
     }
     pub(crate) fn field_boost(&self, kind: crate::environment::Kind) -> f32 {
         use crate::environment::Kind;
@@ -585,7 +743,9 @@ impl State {
         self.radiation += effect.radiation * fraction;
         self.alcohol += effect.alcohol * fraction;
         self.thirst += effect.thirst * fraction;
-        self.bleeding -= effect.heal * fraction;
+        if effect.heal != 0.0 {
+            self.heal_wounds(effect.heal * fraction, 0.0);
+        }
         self.bound();
     }
     fn bound(&mut self) {
@@ -597,7 +757,6 @@ impl State {
             &mut self.psy_health,
             &mut self.alcohol,
             &mut self.thirst,
-            &mut self.bleeding,
         ] {
             *value = value.clamp(0.0, 1.0);
         }
@@ -611,6 +770,7 @@ impl State {
         jumped: bool,
         protected: bool,
     ) {
+        use crate::xray_combat_rules as stock;
         if self.health <= 0.0 {
             return;
         }
@@ -628,12 +788,7 @@ impl State {
         let restoration = loadout.restoration;
         self.satiety += (restoration.satiety - tuning.satiety_decay) * dt;
         self.thirst -= tuning.thirst_decay * dt;
-        let satiety_effect = (self.satiety.clamp(0.0, 1.0) - tuning.satiety_critical)
-            / if self.satiety >= tuning.satiety_critical {
-                1.0 - tuning.satiety_critical
-            } else {
-                tuning.satiety_critical
-            };
+        let satiety_effect = stock::satiety_health_factor(self.satiety.clamp(0.0, 1.0), tuning.satiety_critical);
         let equipment_health = if protected { restoration.health.max(0.0) } else { restoration.health };
         self.health += (tuning.health_restore + equipment_health) * dt + boosts[0];
         let satiety_health = tuning.satiety_health * satiety_effect * dt;
@@ -656,28 +811,18 @@ impl State {
         let power_rate = match activity {
             Activity::Standing => tuning.stand_power,
             _ => {
-                let weight = ratio
-                    * if ratio > 1.0 {
-                        tuning.overweight_walk
-                    } else {
-                        1.0
-                    };
                 let factor = match activity {
                     Activity::Running => tuning.run_factor,
                     Activity::Sprinting => tuning.sprint_factor,
                     _ => 1.0,
                 };
-                (tuning.walk_power + tuning.walk_weight_power * weight) * factor * power_loss
+                stock::movement_power_cost(tuning.walk_power, tuning.walk_weight_power, ratio,
+                    tuning.overweight_walk) * factor * power_loss
             }
         };
         if jumped {
-            let weight = ratio
-                * if ratio > 1.0 {
-                    tuning.overweight_jump
-                } else {
-                    1.0
-                };
-            self.power -= (tuning.jump_power + tuning.jump_weight_power * weight) * power_loss;
+            self.power -= stock::movement_power_cost(tuning.jump_power, tuning.jump_weight_power, ratio,
+                tuning.overweight_jump) * power_loss;
         }
         self.power += (tuning.satiety_power * self.satiety.clamp(0.0, 1.0) - power_rate
             + restoration.power) * dt + boosts[1];
@@ -687,36 +832,30 @@ impl State {
         }
         self.psy_health += tuning.psy_recovery * dt;
         if self.bleeding > 0.0 {
-            self.bleeding -= (tuning.wound_recovery + restoration.bleeding) * dt + boosts[2];
-        }
-        if self.bleeding < tuning.minimum_wound {
-            self.bleeding = 0.0;
+            self.heal_wounds((tuning.wound_recovery + restoration.bleeding) * dt + boosts[2],
+                tuning.minimum_wound);
         }
         self.radiation += (restoration.radiation - tuning.radiation_decay) * dt - boosts[3];
         self.alcohol += tuning.alcohol_decay * dt;
         self.bound();
-        let blocked =
-            |previous, min, recover| self.power < min || (previous && self.power <= recover);
-        self.sprint_blocked = blocked(
-            self.sprint_blocked,
-            tuning.sprint_min,
-            tuning.sprint_recover,
-        );
-        self.walk_blocked = blocked(self.walk_blocked, tuning.walk_min, tuning.walk_recover);
-        self.limping = self.power < tuning.limp_power_min
-            || self.health < tuning.limp_health_min
-            || (self.limping
-                && (self.power <= tuning.limp_power_recover
-                    || self.health <= tuning.limp_health_recover));
+        [self.sprint_blocked, self.walk_blocked, self.limping] = stock::movement_restrictions(
+            self.power, self.health, [
+                tuning.sprint_min, tuning.sprint_recover, tuning.walk_min, tuning.walk_recover,
+                tuning.limp_power_min, tuning.limp_power_recover, tuning.limp_health_min, tuning.limp_health_recover,
+            ], [self.sprint_blocked, self.walk_blocked, self.limping]);
     }
     /// The simulation keeps progressing while a dose is queued. Preserve new
     /// damage/changes, and retain the committed timer/booster replacement.
-    pub fn merge_dose(mut self, before: &Self, live: &Self) -> Self {
+    pub fn merge_dose(mut self, before: &Self, live: &Self, wound_heal: f32) -> Self {
         self.health += live.health - before.health;
         self.power += live.power - before.power;
         self.satiety += live.satiety - before.satiety;
         self.thirst += live.thirst - before.thirst;
-        self.bleeding += live.bleeding - before.bleeding;
+        self.bleeding = live.bleeding;
+        self.wounds.clone_from(&live.wounds);
+        if wound_heal != 0.0 {
+            self.heal_wounds(wound_heal, 0.0);
+        }
         self.radiation += live.radiation - before.radiation;
         self.psy_health += live.psy_health - before.psy_health;
         self.alcohol += live.alcohol - before.alcohol;
@@ -827,16 +966,27 @@ pub(crate) fn resolve_impact(
     context: &Context,
     impact: Impact,
 ) -> Result<ImpactOutcome> {
-    let Impact { power, mut before, location, combat_lock_ms, kind } = impact;
+    let Impact { power, mut before, location, combat_lock_ms, kind, native_armour } = impact;
+    ensure!(before.state.native_checkpoint().is_none(), "native condition hit proposal required");
     if !impact_current(tx, context, &before)? {
         return Ok(ImpactOutcome::Stale);
     }
     let character = crate::world::CharacterKey { principal: context.principal.clone(), life: context.life };
-    let (impact, power_loss) = crate::armour::impact(tx, catalog, &character, kind, f64::from(power), before.state.health)?;
+    let native = native_armour
+        .map(|sample| crate::armour::apply_native_impact(tx, catalog, &character, &kind, sample))
+        .transpose()?.flatten();
+    let (impact, power_loss) = match native {
+        Some(result) => {
+            tracing::trace!(generation = native_armour.map(|sample| sample.generation), "committing X-Ray armour impact");
+            result
+        }
+        None => crate::armour::impact(tx, catalog, &character, &kind, f64::from(power), before.state.health)?,
+    };
     let ArmourImpact::Hit { power, wound, .. } = impact else { return Ok(ImpactOutcome::Stale); };
     before.state.power = (before.state.power - power_loss).max(0.0);
     let deadline = impact_deadline(power, combat_lock_ms)?;
-    let ImpactCommit { revision, alive } = commit_impact(tx, context, rules, before, location, (power, wound), deadline)?;
+    let ImpactCommit { revision, alive } = commit_impact(tx, context, rules, before, location,
+        (power, wound.then(|| kind.wound_site())), deadline)?;
     Ok(ImpactOutcome::Applied { revision, alive, impact, power_loss })
 }
 
@@ -855,9 +1005,9 @@ pub(crate) fn impact_deadline(power: f32, combat_lock_ms: u32) -> Result<i64> {
 
 pub(crate) fn commit_impact(
     tx: &Transaction<'_>, context: &Context, rules: Option<&SurvivalRules>, mut record: Record,
-    mut location: Location, (power, wound): (f32, bool), deadline: i64,
+    mut location: Location, (power, wound): (f32, Option<(WoundKind, &str)>), deadline: i64,
 ) -> Result<ImpactCommit> {
-    record.state.apply_hit(power, wound);
+    record.state.apply_hit_at(power, wound);
     location.combat_until_ms = location.combat_until_ms.max(deadline);
     commit_condition_change(tx, context, rules, record, location)
 }
@@ -886,6 +1036,102 @@ pub(crate) fn commit_condition_change(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_view_uses_native_boosters_and_capacity_without_legacy_stacking() {
+        let mut bytes=b"ZCS1".to_vec();
+        let mut values=[0.0f32;23+8+12+9];
+        values[0]=0.8; values[1]=0.7; values[5]=1.0; values[18]=1.0;
+        values[19]=70.0; values[20]=80.0;
+        for value in values { bytes.extend_from_slice(&value.to_le_bytes()); }
+        for value in [0u32,16,0,2] { bytes.extend_from_slice(&value.to_le_bytes()); }
+        for (kind,value,remaining) in [(4u32,20.0f32,2.0f32),(14,0.1,30.0)] {
+            bytes.extend_from_slice(&kind.to_le_bytes()); bytes.extend_from_slice(&value.to_le_bytes());
+            bytes.extend_from_slice(&remaining.to_le_bytes());
+        }
+        let mut state=State::default();
+        state.weight_boost=Booster{rate:99.0,remaining:999.0};
+        state.boosts[0]=Booster{rate:0.5,remaining:99.0};
+        state.install_native_checkpoint(crate::native_condition::Checkpoint::parse(bytes).unwrap()).unwrap();
+        let mut loadout=Loadout::default(); loadout.capacity_bonus=5.0; loadout.mass=84.0;
+        let view=state.wire_view(0,&tuning(),loadout);
+        assert_eq!((view[8],view[9]),(75000,85000));
+        assert_eq!(view[13],(1<<4)|(1<<5)|(1<<12));
+        assert!(!state.motion(&tuning(),loadout).over_limit);
+        loadout.mass=86.0; assert!(state.motion(&tuning(),loadout).over_limit);
+        state.thirst=0.0;
+        let (pending,input)=state.prepare_native_step(&tuning(),0.5,false).unwrap();
+        assert_eq!(pending.health,state.health); assert_eq!(pending.thirst,0.0);
+        assert_eq!(f32::from_le_bytes(input.bytes()[36..40].try_into().unwrap()),-tuning().dehydration_damage*0.5);
+        let (_,protected)=state.prepare_native_step(&tuning(),0.5,true).unwrap();
+        assert_eq!(f32::from_le_bytes(protected.bytes()[36..40].try_into().unwrap()),0.0);
+        assert!(state.prepare_native_step(&tuning(),1.01,false).is_none());
+        assert!(state.prepare_native_step(&tuning(),f32::NAN,false).is_none());
+        state.medicine=Some(Medicine{total:Influence{health:0.8,thirst:0.2,..Influence::default()},duration:1.0,remaining:1.0});
+        let (hydrated,_)=state.prepare_native_step(&tuning(),0.5,false).unwrap();
+        assert!((hydrated.thirst-(0.1-tuning().thirst_decay*0.5)).abs()<1e-6);
+        assert_eq!(hydrated.health,state.health);
+        assert_eq!(hydrated.medicine.unwrap().remaining,0.5);
+        assert_eq!(state.medicine.unwrap().remaining,1.0);
+        let mut world=crate::world::World::new();
+        world.survival_tuning=Some(tuning());
+        let id=world.spawn(crate::world::Kind::Player,crate::world::Vec3::default());
+        world.entities.get_mut(&id).unwrap().set_condition(state.clone());
+        let before=serde_json::to_value(&state).unwrap();
+        world.safe_zones.clear();
+        world.environment_fields=Some(crate::environment::native_field_fixture());
+        let mut batches=0;
+        for _ in 0..30 {
+            world.step();
+            for (target,pulses) in &world.environment_hits {
+                assert_eq!(*target,id);assert_eq!(pulses.len(),2);
+                assert!(matches!(pulses[0].kind,crate::environment::Kind::Heat));
+                assert!(matches!(pulses[1].kind,crate::environment::Kind::Radiation));
+                assert_eq!(pulses[0].power,0.2);assert_eq!(pulses[1].power,0.2);
+                batches+=1;
+            }
+        }
+        assert_eq!(batches,10);
+        assert_eq!(serde_json::to_value(world.entities[&id].condition.as_ref().unwrap()).unwrap(),before);
+        world.native_player_movement=true;
+        for _ in 0..30 {
+            world.step();
+            assert!(world.environment_hits.is_empty(),"native actor received duplicate Rust field hits");
+        }
+        assert_eq!(serde_json::to_value(world.entities[&id].condition.as_ref().unwrap()).unwrap(),before);
+
+
+
+
+    }
+
+    #[test]
+    fn native_import_preserves_wounds_treatment_and_booster_types() {
+        let mut state = State::default();
+        state.health = 0.71; state.power = 0.63; state.satiety = 0.52;
+        state.wounds.entry("bip01_spine".into()).or_default()[WoundKind::Bullet as usize] = 0.1234567;
+        state.boosts[2] = Booster { rate: 0.03, remaining: 42.5 };
+        state.medicine = Some(Medicine { total: Influence { health: 0.2, heal: 0.15,
+            radiation: -0.1, ..Influence::default() }, duration: 60.0, remaining: 12.5 });
+        let imported = state.native_import().unwrap();
+        let fence = crate::native_condition::Fence { epoch: 1, boot: 2, player: 3, incarnation: 4,
+            revision: 5, sequence: 6, equipment: 7 };
+        let request = crate::native_condition::Request::import(fence, 25.0, &imported).unwrap();
+        let bytes = &request.bytes()[60..];
+        let scalar = |at| f32::from_le_bytes(bytes[at..at+4].try_into().unwrap());
+        assert_eq!(&bytes[..4], b"ZCL1");
+        assert_eq!((scalar(4), scalar(8), scalar(12)), (0.71,0.63,0.52));
+        assert_eq!((scalar(28),scalar(40),scalar(44),scalar(56),scalar(60)), (0.2,-0.1,0.15,60.0,12.5));
+        assert_eq!(bytes[76], 11);
+        assert_eq!(&bytes[77..88], b"bip01_spine");
+        assert_eq!(scalar(88+WoundKind::Bullet as usize*4),0.1234567);
+        assert_eq!(u32::from_le_bytes(bytes[136..140].try_into().unwrap()),3); // native bleeding restore enum
+        assert_eq!((scalar(140),scalar(144)),(0.03,42.5));
+        state.wounds.clear(); state.bleeding=0.4;
+        assert!(state.native_import().is_some()); // legacy bleeding becomes unknown-bone wound
+        state.wounds.insert("invalid/name".into(),[0.0;12]);
+        assert!(state.native_import().is_none());
+    }
 
     fn tuning() -> Tuning {
         Tuning {
@@ -924,6 +1170,29 @@ mod tests {
             thirst_decay: 0.0002,
             dehydration_damage: 0.001,
         }
+    }
+
+    #[test]
+    fn wounds_average_by_bone_and_treatment_merges_with_live_healing() {
+        let mut before = State::default();
+        before.apply_hit_at(0.15, Some((WoundKind::Bullet, "bip01_spine")));
+        before.apply_hit_at(0.15, Some((WoundKind::Cut, "bip01_spine")));
+        before.apply_hit_at(0.06, Some((WoundKind::Bullet, "bip01_head")));
+        assert!((before.bleeding - 0.18).abs() < 1e-6);
+
+        let persisted = serde_json::to_string(&before).unwrap();
+        let mut live: State = serde_json::from_str(&persisted).unwrap();
+        live.heal_wounds(0.01, 0.0);
+        let mut treated = before.clone();
+        treated.heal_wounds(0.05, 0.0);
+        let merged = treated.merge_dose(&before, &live, 0.05);
+        assert_eq!(merged.wounds.len(), 1);
+        assert!((merged.bleeding - 0.18).abs() < 1e-6);
+
+        let mut legacy: State = serde_json::from_str(r#"{"bleeding":0.3}"#).unwrap();
+        legacy.heal_wounds(0.05, 0.0);
+        assert!((legacy.bleeding - 0.25).abs() < 1e-6);
+        assert!(legacy.wounds.contains_key(""));
     }
 
     #[test]

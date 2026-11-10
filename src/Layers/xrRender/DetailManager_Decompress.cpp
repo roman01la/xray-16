@@ -74,6 +74,11 @@ bool det_render_debug = false;
 void CDetailManager::cache_Decompress(Slot* S)
 {
     VERIFY(S);
+#ifdef XR_PLATFORM_WEB
+    // Slot pool reuse can preserve pointer identities while replacing every value.
+    for (auto& part : S->G)
+        for (auto& items : part.r_items) ++items.revision;
+#endif
     Slot& D = *S;
     D.type = stReady;
     if (D.empty)
@@ -221,6 +226,10 @@ void CDetailManager::cache_Decompress(Slot* S)
 #else
             Item.scale = (Dobj->m_fMinScale * 0.5f + Dobj->m_fMaxScale * 0.9f) / 2;
 // Item.scale	= 0.1f;
+#endif
+#ifdef XR_PLATFORM_WEB
+            Item.scale_calculated = 0.f;
+            Item.web_visibleClass = 255;
 #endif
             // X-Form BBox
             Fmatrix mScale, mXform;

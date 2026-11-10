@@ -5,6 +5,7 @@ import {clearNativeRects} from './native-clear.js';
 import {GPUFrontend} from './backend.js';
 import {EngineFormat} from './engine-formats.js';
 import {shaderKey} from './shader-key.js';
+import {installNativeQueues} from './native-queue.js';
 
 test('native handle ownership and packaged shaders work without Emscripten EngineFormat',()=>{
   const handles=createNativeHandles(), linked=[];
@@ -100,4 +101,40 @@ test('native framebuffer validation flushes records and rejects missing, release
   r.info(depth).height=16;assert.throws(()=>r.validateNativeFramebuffer(),/sizes differ/);
   r.info(depth).height=32;depth.deleted=true;assert.throws(()=>r.validateNativeFramebuffer(),/invalid attachment/);
   r.fbo=null;assert.throws(()=>r.validateNativeFramebuffer(),/not bound/);
+});
+
+test('presentation preserves the engine framebuffer for queued attachments drained by deletion',()=>{
+  const r=Object.create(GPUFrontend.prototype),handles=createNativeHandles();
+  const framebuffer=allocateHandle(handles,'framebuffers');
+  const readFramebuffer=allocateHandle(handles,'framebuffers');
+  const texture=allocateHandle(handles,'textures');
+  const shader=allocateHandle(handles,'shaders');
+  const fb=handles.framebuffers[framebuffer],read=handles.framebuffers[readFramebuffer];
+  Object.assign(r,{objects:new WeakMap(),state:{},fbo:fb,readFbo:read});
+  const memory=new ArrayBuffer(4096),words=new Uint32Array(memory);
+  installNativeQueues(r,()=>({words,floats:new Float32Array(memory),ints:new Int32Array(memory)}),
+    [0,400,800,1200,1600,2000,2400,3000],handles);
+  let presented=0,draws=0;
+  r.blit=()=>{assert.equal(r.fbo,null);assert.equal(r.readFbo,fb);presented++;};
+  r.submitDraw=()=>{assert.equal(r.fbo,fb);draws++;};
+  // Presentation is internal renderer work. A subsequent attachment command
+  // may rely on the already bound engine framebuffer without another bind.
+  r.presentNative(fb,1280,720);
+  words.set([16,EngineFormat.COLOR_ATTACHMENT0,texture,0,0,0],200);words[300]=6;
+  words.set([0,0,0,0,0,0,0,0,0,0,0,6,0,1,0,1],600);words[750]=16;
+  deleteNativeObject(r,handles,'shaders',shader);
+  assert.equal(presented,1);assert.equal(draws,1);
+  assert.equal(r.info(fb).attachments.get(EngineFormat.COLOR_ATTACHMENT0).texture,handles.textures[texture]);
+  assert.equal(r.fbo,fb);assert.equal(r.readFbo,read);
+  assert.equal(words[300],0);assert.equal(words[750],0);
+  // Deleting the framebuffer itself still clears both live bindings safely.
+  r.readFbo=fb;deleteNativeObject(r,handles,'framebuffers',framebuffer);
+  assert.equal(r.fbo,null);assert.equal(r.readFbo,null);
+});
+
+test('failed presentation restores engine framebuffer bindings',()=>{
+  const r=Object.create(GPUFrontend.prototype),fb={},read={},presented={};
+  Object.assign(r,{fbo:fb,readFbo:read,blit(){throw Error('device unavailable');}});
+  assert.throws(()=>r.presentNative(presented,1280,720),/device unavailable/);
+  assert.equal(r.fbo,fb);assert.equal(r.readFbo,read);
 });

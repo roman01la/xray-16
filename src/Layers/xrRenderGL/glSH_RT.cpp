@@ -54,8 +54,8 @@ void CRT::create(LPCSTR Name, u32 w, u32 h, D3DFORMAT f, u32 SampleCount /*= 1*/
 
     target = (SampleCount > 1) ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D;
 #ifdef XR_PLATFORM_WEB
-    R_ASSERT2(SampleCount == 1, "Native WebGPU render targets require single-sample mode");
-    CreateWebGPUTexture(&pRT, target, 1, glTextureUtils::ConvertTextureFormat(fmt), w, h);
+    R_ASSERT2(SampleCount == 1 || SampleCount == 4, "WebGPU supports 1x and 4x targets");
+    CreateWebGPUTexture(&pRT, target, 1, glTextureUtils::ConvertTextureFormat(fmt), w, h, 1, SampleCount);
 #else
     {
     const texture_upload_unit uploadUnit(target);
@@ -105,7 +105,7 @@ void CRT::resolve_into(CRT& destination) const
 {
 #ifdef XR_PLATFORM_WEB
     R_ASSERT2(dwWidth == destination.dwWidth && dwHeight == destination.dwHeight,
-        "WebGPU resolve expects matching single-sample targets");
+        "WebGPU resolve expects matching target sizes");
     CopyWebGPUTexture(pRT, destination.pRT, dwWidth, dwHeight);
     return;
 #endif

@@ -65,6 +65,9 @@ void CBlender_deffer_model::Load(IReader& fs, u16 version)
 void CBlender_deffer_model::Compile(CBlender_Compile& C)
 {
     IBlender::Compile(C);
+#ifdef XR_PLATFORM_WEB
+    C.TessMethod = oTessellation.IDselected;
+#endif
 
 #if RENDER == R_R2
     BOOL bForward = FALSE;

@@ -11,9 +11,16 @@
 #include "alife_host_targets.h"
 #if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
 #include "Level.h"
+#include "game_cl_base.h"
 #include "CustomMonster.h"
+#include "ai/stalker/ai_stalker.h"
+#include "Inventory.h"
+#include "Weapon.h"
+#include "Include/xrRender/Kinematics.h"
+#include "multiplayer/NpcPresentation.h"
 #include "Include/xrRender/KinematicsAnimated.h"
 #include "Include/xrRender/RenderVisual.h"
+#include "xrEngine/Environment.h"
 #endif
 #include "xrServer_Objects_ALife.h"
 #include "alife_graph_registry.h"
@@ -70,12 +77,29 @@ void CALifeSwitchManager::open_host_interests()
     Msg("* Zone A-Life interest receiver ready");
 }
 
-void CALifeSwitchManager::refresh_host_interests(CLevel& level) const
+void CALifeSwitchManager::poll_host_interests() const
 {
     if (!m_hostInterests || !initialized())
         return;
     const auto name = ai().game_graph().header().level(graph().level().level_id()).name();
     m_hostInterests->refresh(name.c_str());
+    // Replays and accepted condition proposals must not depend on resuming
+    // actor movement. New equipment is reconciled by the normal update path;
+    // serviceConditions retains its equipment-generation/readiness checks.
+    if (Device.Paused() && m_hostTargets && g_pGameLevel && g_pGameLevel->bReady)
+        m_hostTargets->serviceConditions(Level(), *m_hostInterests);
+}
+
+void CALifeSwitchManager::advance_host_interests(CLevel& level) const
+{
+    if (!m_hostInterests || !initialized())
+        return;
+    if (const auto clock = m_hostInterests->takeCampaignClock())
+    {
+        const auto error = std::abs(static_cast<s64>(clock->milliseconds) - static_cast<s64>(level.GetGameTime()));
+        if (error > 1000 * std::max(1.f, clock->factor) || !fsimilar(clock->factor, level.GetGameTimeFactor()))
+            level.game->SetEnvironmentGameTimeFactor(clock->milliseconds, clock->factor);
+    }
     if (level.CurrentEntity())
         m_hostTargets->update(level, server(), *m_hostInterests);
 }
@@ -92,6 +116,11 @@ bool CALifeSwitchManager::host_interests_requested()
 }
 
 #if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+bool CALifeSwitchManager::host_hit_capacity() const
+{
+    return !m_hostInterests || m_hostInterests->hasHitCapacity();
+}
+
 void CALifeSwitchManager::report_host_hit(u16 target, const SHit& hit) const
 {
     if (m_hostInterests && m_hostTargets)
@@ -102,12 +131,95 @@ void CALifeSwitchManager::report_host_death(CSE_Abstract& entity)
     if (m_hostTargets)
         m_hostTargets->observeDeath(Level(), entity);
 }
+namespace {
+std::size_t packNpcPose(CCustomMonster& npc, std::string_view model,
+    std::array<unsigned char, zone::npcPoseCapacity>& packet)
+{
+    auto* skeleton = PKinematics(npc.Visual());
+    if (!skeleton || !skeleton->LL_BoneCount() || skeleton->LL_BoneCount() > zone::npcMaxBones)
+        return 0;
+    skeleton->CalculateBones(TRUE);
+    const auto mask = skeleton->LL_GetBonesVisible();
+    if (!mask) return 0;
+    const auto modelKey = zone::npcModelKey(model);
+    std::memcpy(packet.data(), &modelKey, sizeof(modelKey));
+    packet[4] = npc.g_Alive() ? 0 : 1;
+    packet[5] = skeleton->LL_BoneCount();
+    packet[6] = packet[7] = 0;
+    std::memcpy(packet.data() + 8, &mask, sizeof(mask));
+    const auto& position = npc.Position();
+    const float root[] = {position.x, position.y, position.z};
+    std::memcpy(packet.data() + 16, root, sizeof(root));
+    if (!_valid(position) || !zone::packNpcRotation(packet.data() + 28, npc.XFORM()))
+        return 0;
+    auto size = zone::npcPoseHeader;
+    for (u16 bone = 0; bone < skeleton->LL_BoneCount(); ++bone)
+    {
+        if (skeleton->LL_GetBoneVisible(bone) && !zone::packNpcBone(packet.data() + size, skeleton->LL_GetTransform(bone)))
+            return 0;
+        size += zone::npcBoneBytes;
+    }
+    auto* stalker = smart_cast<CAI_Stalker*>(&npc);
+    if (!stalker || !npc.g_Alive())
+        return size;
+    auto* weapon = smart_cast<CWeapon*>(stalker->inventory().ActiveItem());
+    // CInventoryOwner draws the active item explicitly. CHudItem checks its
+    // weapon state and attachment, independent of spatial visibility.
+    if (!weapon || (weapon->IsHidden() && !stalker->attached(weapon)) || !weapon->Visual())
+        return size;
+    const auto& name = weapon->cNameSect();
+    if (!name.size() || name.size() > 127)
+        return size;
+    const std::string_view section(name.c_str(), name.size());
+    if (section.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-") != section.npos)
+        return size;
+
+    weapon->get_LastFP(); // Runs the stock attachment calculation.
+    Fmatrix inverse, attached;
+    inverse.invert(npc.XFORM());
+    attached.mul_43(inverse, weapon->XFORM());
+    if (!zone::packNpcBone(packet.data() + size, attached))
+        return size;
+    packet[6] = section.size();
+    packet[7] = (weapon->IsScopeAttached() ? zone::npcScope : 0) |
+        (weapon->IsGrenadeLauncherAttached() ? zone::npcLauncher : 0) |
+        (weapon->IsSilencerAttached() ? zone::npcSilencer : 0);
+    size += zone::npcBoneBytes;
+    std::copy(section.begin(), section.end(), packet.begin() + size);
+    size += section.size();
+
+    const auto& shot = weapon->zoneNpcShot();
+    if (shot.time && Device.dwTimeGlobal - shot.time <= 500)
+    {
+        Fmatrix muzzle;
+        muzzle.mul_43(inverse, shot.muzzle);
+        if (zone::packNpcBone(packet.data() + size + sizeof(shot.time), muzzle))
+        {
+            packet[7] |= zone::npcShot | (shot.launcher ? zone::npcShotLauncher : 0);
+            std::memcpy(packet.data() + size, &shot.time, sizeof(shot.time));
+            size += zone::npcShotBytes;
+        }
+    }
+    return size;
+}
+}
 void CALifeSwitchManager::publish_host_npcs(CLevel& level) const
 {
     if (!m_hostInterests)
         return;
+    // CLevel's publication callback also owns movement and attack dispatch.
+    // A paused host may service proposals, but must not advance those paths.
+    if (Device.Paused())
+    {
+        if (m_hostTargets)
+            m_hostTargets->serviceConditions(level, *m_hostInterests);
+        return;
+    }
     if (m_hostTargets)
+    {
+        m_hostTargets->stepMovement(level, *level.Server, *m_hostInterests);
         m_hostTargets->collectCorpses(level, server(), *m_hostInterests);
+    }
     for (unsigned i = 0; m_hostTargets && i < 128; ++i)
     {
         const auto attack = m_hostInterests->nextAttack();
@@ -117,11 +229,20 @@ void CALifeSwitchManager::publish_host_npcs(CLevel& level) const
     }
     if (!m_hostInterests->wantsNpcFrame())
         return;
+    auto& environment = g_pGamePersistent->Environment();
+    const auto cycle = environment.GetWeatherCycle();
+    const auto effect = environment.IsWFXPlaying() ? environment.GetWeather() : shared_str{};
+    const auto name = [](const shared_str& value) {
+        return value.size() ? std::string_view(value.c_str(), value.size()) : std::string_view{};
+    };
+    m_hostInterests->publishEnvironment(level.GetEnvironmentGameTime(), level.GetGameTimeFactor(),
+        name(cycle), name(effect), environment.GetWeatherEffectTimeLeft());
     std::array<AlifeHostInterests::NpcPose, AlifeHostInterests::MaxNpcs> npcs;
+    std::array<CCustomMonster*, AlifeHostInterests::MaxNpcs> sources;
     std::size_t count = 0;
     for (u32 i = 0; i < level.Objects.o_count() && count < npcs.size(); ++i)
     {
-        const auto* npc = smart_cast<const CCustomMonster*>(level.Objects.o_get_by_iterator(i));
+        auto* npc = smart_cast<CCustomMonster*>(level.Objects.o_get_by_iterator(i));
         if (!npc || !npc->Local() || npc->getDestroy() || !npc->Visual() || !_valid(npc->Position()) ||
             !std::isfinite(npc->GetfHealth()))
             continue;
@@ -156,11 +277,45 @@ void CALifeSwitchManager::publish_host_npcs(CLevel& level) const
         if (!_valid(center) || !_valid(half) || std::abs(center.x) > 30.f || std::abs(center.y) > 30.f ||
             std::abs(center.z) > 30.f || half.x > 30.f || half.y > 30.f || half.z > 30.f)
             continue;
+        sources[count] = npc;
         npcs[count++] = {npc->ID(), health, p.x, p.y, p.z, yaw, primary ? primary->motionID.val : u32(-1), time,
             npc->spawn_time(), {center.x, center.y, center.z},
             {std::max(.025f, half.x), std::max(.025f, half.y), std::max(.025f, half.z)}, model};
     }
     m_hostInterests->publishNpcs(npcs.data(), count);
+    // Rotate the starting point so socket backpressure cannot starve later NPCs.
+    const auto start = count ? Device.dwFrame % count : 0;
+    for (std::size_t n = 0; n < count; ++n)
+    {
+        const auto i = (start + n) % count;
+        const auto& npc = npcs[i];
+        if (!m_hostInterests->near(npc.x, npc.y, npc.z, 100.f))
+            continue;
+        std::array<unsigned char, zone::npcPoseCapacity> pose{};
+        const auto size = packNpcPose(*sources[i], npc.model, pose);
+        if (size && !m_hostInterests->publishNpcPose(npc.id, npc.spawn, pose.data(), size))
+            break;
+    }
+    m_hostInterests->flushNpcPoses();
+    // Keep skeleton refresh and private datagram traffic bounded. Rotate the
+    // same candidate list so dense scenes cannot permanently starve one NPC.
+    if (m_hostInterests->nativeMovement())
+    {
+        std::vector<unsigned char> hitboxes;
+        std::size_t sampled = 0;
+        for (std::size_t n = 0; n < count && sampled < 64; ++n)
+        {
+            const auto i = (start + n) % count;
+            const auto& npc = npcs[i];
+            if (!npc.health || !m_hostInterests->near(npc.x, npc.y, npc.z, 100.f))
+                continue;
+            ++sampled;
+            AlifeHostTargets::writeHitboxes(*sources[i], sources[i]->Position(), hitboxes);
+            if (hitboxes.size() > 44 && !m_hostInterests->publishHitboxes(npc.id, npc.spawn, hitboxes, true))
+                break;
+        }
+    }
+    m_hostInterests->publishSounds();
 }
 #endif
 

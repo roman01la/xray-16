@@ -320,3 +320,19 @@ draw batching, and reused presentation/ImGui resources. This run recorded zero n
 streaming allocations, zero native program/vertex selector calls, one prepared draw
 cache miss, and about 949 KB of uniform uploads per frame. Cross-level validation
 covers Jupiter to Skadovsk; it does not certify every game scene or modification.
+
+
+### Native detail instances
+
+The browser detail renderer uses one mesh copy and a native WebGPU instance
+vertex buffer. Transform/lighting rows are cached per visible slot/wind class in
+bounded GPU storage pages. Exact source revisions upload only changed records;
+ordered visibility indices drive a compute gather into the instance buffer.
+Unchanged batches reuse it across frames/passes; wind and view constants remain
+pass-specific. The gather retains the original vertex shader and draw order. Loaded
+detail WGSL receives a deterministic instance-input variant at program link time,
+covering both packaged and runtime-compiled shaders. Frame diagnostics separates
+detail preparation/submission time and counts instances and reused batches.
+
+See [the terrain profile and implementation notes](TERRAIN-PERFORMANCE-2026-11-09.md)
+for the measured baseline, validation and remaining manual scene checks.

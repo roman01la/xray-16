@@ -23,7 +23,7 @@ float4 _main ( float2 tc, float2 tcJ )
 	float Gloss = tex2D( s_patched_normal, tc ).a;
 #else
 #ifndef MSAA_OPTIMIZATION
-	float Gloss = texelFetch( s_patched_normal, int2(tc * pos_decompression_params2.xy), ISAMPLE ).a;
+	float Gloss = texelFetch( s_patched_normal, int2(tc * pos_decompression_params2.xy), int(ISAMPLE) ).a;
 #else
 	float Gloss = texelFetch( s_patched_normal, int2(tc * pos_decompression_params2.xy), int(iSample) ).a;
 #endif	

@@ -181,30 +181,37 @@ void CRenderTarget::phase_combine()
         RImplementation.Vertex.Unlock(4, g_combine->vb_stride);
 
         // Draw
-        if (!RImplementation.o.msaa)
-            RCache.set_Element(s_combine->E[0]);
-        else
-            RCache.set_Element(s_combine_msaa[0]->E[0]);
+        RCache.set_Element(s_combine->E[0]);
         RCache.set_Geometry(g_combine);
 
-        RCache.set_c("m_v2w", Device.mInvView);
-        RCache.set_c("L_ambient", ambclr);
+        const auto set_combine_constants = [&]()
+        {
+            RCache.set_c("m_v2w", Device.mInvView);
+            RCache.set_c("L_ambient", ambclr);
 
-        RCache.set_c("Ldynamic_color", sunclr);
-        RCache.set_c("Ldynamic_dir", sundir);
+            RCache.set_c("Ldynamic_color", sunclr);
+            RCache.set_c("Ldynamic_dir", sundir);
 
-        RCache.set_c("env_color", envclr);
-        RCache.set_c("fog_color", fogclr);
+            RCache.set_c("env_color", envclr);
+            RCache.set_c("fog_color", fogclr);
 
-        RCache.set_c("ssao_noise_tile_factor", fSSAONoise);
-        RCache.set_c("ssao_kernel_size", fSSAOKernelSize);
+            RCache.set_c("ssao_noise_tile_factor", fSSAONoise);
+            RCache.set_c("ssao_kernel_size", fSSAOKernelSize);
+        };
+        set_combine_constants();
 
         if (!RImplementation.o.msaa)
             RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
         else
         {
+            // As in the original deferred renderer, shade interiors once and
+            // marked edges per sample. Skipping the first pass leaves holes.
+            RCache.set_Stencil(TRUE, D3DCMP_EQUAL, 0x01, 0x81, 0);
+            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
             if (RImplementation.o.msaa_opt)
             {
+                RCache.set_Element(s_combine_msaa[0]->E[0]);
+                set_combine_constants();
                 RCache.set_Stencil(TRUE, D3DCMP_EQUAL, 0x81, 0x81, 0);
                 RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
             }
@@ -220,8 +227,18 @@ void CRenderTarget::phase_combine()
     {
         PIX_EVENT(Forward_rendering);
 #ifdef XR_PLATFORM_WEB
-        rt_Generic_0_r->copy_into(*rt_Forward);
-        u_setrt(RCache, rt_Forward, nullptr, nullptr, rt_MSAADepth);
+        if (RImplementation.o.msaa)
+        {
+            // Refraction samples the resolved image while forward geometry keeps
+            // the multisample depth and colour targets. No read/write aliasing.
+            rt_Generic_0_r->resolve_into(*rt_Generic_0);
+            u_setrt(RCache, rt_Generic_0_r, nullptr, nullptr, rt_MSAADepth);
+        }
+        else
+        {
+            rt_Generic_0_r->copy_into(*rt_Forward);
+            u_setrt(RCache, rt_Forward, nullptr, nullptr, rt_MSAADepth);
+        }
 #else
         u_setrt(RCache, rt_Generic_0_r, nullptr, nullptr, rt_MSAADepth); // LDR RT
 #endif
@@ -234,7 +251,8 @@ void CRenderTarget::phase_combine()
         if (g_pGamePersistent)
             g_pGamePersistent->OnRenderPPUI_main(); // PP-UI
 #ifdef XR_PLATFORM_WEB
-        rt_Forward->copy_into(*rt_Generic_0_r);
+        if (!RImplementation.o.msaa)
+            rt_Forward->copy_into(*rt_Generic_0_r);
 #endif
     }
 

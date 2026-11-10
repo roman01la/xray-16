@@ -8,6 +8,10 @@ if (!globalThis.XRAY_WEBGPU) {
 }
 
 import "./storage-manager.js";
+import { acquireSaveSession } from "./save-format.js";
+let releaseSaveSession;
+window.addEventListener("pagehide", () => { releaseSaveSession?.(); releaseSaveSession = undefined; });
+window.addEventListener("pageshow", event => { if(event.persisted)location.reload(); });
 const streamURL = new URLSearchParams(location.search).get("stream");
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
@@ -191,9 +195,11 @@ $("launch").onclick = async () => {
   $("ingest-status").textContent = "syncing engine data...";
   let streaming, saveTimes;
   try {
+    releaseSaveSession ??= await acquireSaveSession(root);
     const pack = streamURL && root === "stream-cop" ? new URL(streamURL, location.href).href : undefined;
     ({ streaming, saveTimes } = await askWorker({ type: "sync-engine-data", root, pack, includeSaveTimes: true }));
   } catch (e) {
+    releaseSaveSession?.(); releaseSaveSession = undefined;
     $("ingest-status").textContent = "engine data sync failed: " + e.message;
     print("engine data sync failed: " + e.message);
     $("launch").disabled = false;

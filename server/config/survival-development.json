@@ -1,11 +1,15 @@
 {
   "starterKit": [
     {"section":"wpn_knife","count":1,"placement":{"kind":"slot","slot":1}},
+    {"section":"wpn_pm","count":1,"placement":{"kind":"slot","slot":2}},
+    {"section":"wpn_ak74","count":1,"placement":{"kind":"slot","slot":3}},
     {"section":"bolt","count":1,"placement":{"kind":"slot","slot":6}},
     {"section":"device_pda","count":1,"placement":{"kind":"slot","slot":8}},
     {"section":"device_torch","count":1,"placement":{"kind":"slot","slot":10}},
     {"section":"bandage","count":1,"placement":{"kind":"rucksack"}},
-    {"section":"bread","count":1,"placement":{"kind":"rucksack"}}
+    {"section":"bread","count":1,"placement":{"kind":"rucksack"}},
+    {"section":"ammo_9x18_fmj","count":1,"placement":{"kind":"rucksack"}},
+    {"section":"ammo_5.45x39_fmj","count":1,"placement":{"kind":"rucksack"}}
   ],
   "respawnDelaySeconds": 10,
   "corpseLifetimeSeconds": 1800,

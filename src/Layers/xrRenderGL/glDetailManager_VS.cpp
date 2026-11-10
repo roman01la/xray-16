@@ -3,6 +3,9 @@
 #include "xrEngine/IGame_Persistent.h"
 #include "xrEngine/Environment.h"
 #include "Layers/xrRender/BufferUtils.h"
+#ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
+#endif
 
 namespace xray::render::RENDER_NAMESPACE
 {
@@ -95,6 +98,11 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
     static shared_str strXForm("xform");
 
     RImplementation.BasicStats.DetailCount = 0;
+#ifdef XR_PLATFORM_WEB
+    const bool profileDetails = WebGPUDetailProfilingEnabled();
+    double preparationMs = 0.0, submissionMs = 0.0;
+    u32 packedInstances = 0, reusedBatches = 0, changedBatches = 0, membershipChanges = 0, contentChanges = 0;
+#endif
 
     // Matrices and offsets
     u32 vOffset = 0;
@@ -116,6 +124,81 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
         xr_vector<SlotItemVec*>& vis = list [O];
         if (!vis.empty())
         {
+#ifdef XR_PLATFORM_WEB
+            auto& batches = hw_instances[var_id];
+            if (batches.size() < objects.size()) batches.resize(objects.size());
+            auto& batch = batches[O];
+            const double preparationStart = profileDetails ? emscripten_get_now() : 0.0;
+            batch.descriptors.clear();
+            batch.dirtySlots.clear();
+            for (auto* items : vis)
+            {
+                items->visibleFrame = Device.dwFrame;
+                if (items->storageGeneration != hw_storageGeneration)
+                {
+                    items->storageGeneration = hw_storageGeneration;
+                    items->storageIndex = u32(-1);
+                    items->uploadedRevision = u64(-1);
+                }
+                if (!xray::detail_cache::needsUpload(*items))
+                    continue;
+                if (items->packedRevision != items->revision)
+                {
+                    items->rows.resize(items->size()*4);
+                    Fvector4* row = items->rows.data();
+                    for (const auto* instance : *items)
+                    {
+                        const float scale = instance->scale_calculated;
+                        const Fmatrix& M = instance->mRotY;
+                        (row++)->set(M._11 * scale, M._21 * scale, M._31 * scale, M._41);
+                        (row++)->set(M._12 * scale, M._22 * scale, M._32 * scale, M._42);
+                        (row++)->set(M._13 * scale, M._23 * scale, M._33 * scale, M._43);
+                        (row++)->set(instance->c_sun, instance->c_sun, instance->c_sun, instance->c_hemi);
+                    }
+                    packedInstances += static_cast<u32>(items->size());
+                    items->packedRevision = items->revision;
+                }
+                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items)));
+                batch.descriptors.push_back(static_cast<u32>(items->revision));
+                batch.descriptors.push_back(static_cast<u32>(items->revision >> 32));
+                batch.descriptors.push_back(static_cast<u32>(items->size()));
+                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items->rows.data())));
+                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->storageIndex)));
+                batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->visibleFrame)));
+                batch.dirtySlots.push_back(items);
+            }
+            if (!batch.buffer) CreateWebGPUBuffer(&batch.buffer, nullptr, 0);
+            const bool changed = !batch.dirtySlots.empty();
+            if (changed)
+            {
+                UpdateWebGPUDetailRecords(batch.buffer, batch.descriptors.data(), static_cast<u32>(batch.dirtySlots.size()), vis.data(), static_cast<u32>(vis.size()));
+                for (auto* items : batch.dirtySlots)
+                    items->uploadedRevision = items->revision;
+            }
+            u32 instanceCount = 0;
+            const bool indicesChanged = xray::detail_cache::updateSignature(vis, batch.signature, instanceCount);
+            if (indicesChanged)
+            {
+                batch.indices.resize(vis.size()*4);
+                u32* range = batch.indices.data();
+                u32 first = 0;
+                for (const auto* items : vis)
+                {
+                    *range++ = items->storageIndex;
+                    *range++ = static_cast<u32>(items->size());
+                    *range++ = first;
+                    *range++ = 0;
+                    first += static_cast<u32>(items->size());
+                }
+            }
+            if (changed || indicesChanged)
+                GatherWebGPUDetailRanges(batch.buffer, batch.indices.data(), static_cast<u32>(vis.size()), instanceCount, indicesChanged);
+            changedBatches += changed || indicesChanged;
+            reusedBatches += !changed && !indicesChanged;
+            membershipChanges += indicesChanged;
+            contentChanges += changed;
+            if (profileDetails) preparationMs += emscripten_get_now() - preparationStart;
+#endif
             for (u32 iPass = 0; iPass < Object.shader->E[lod_id]->passes.size(); ++iPass)
             {
                 // Setup matrices + colors (and flush it as necessary)
@@ -130,6 +213,17 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                 cmd_list.set_c(strDir2D, wind);
                 cmd_list.set_c(strXForm, Device.mFullTransform);
 
+#ifdef XR_PLATFORM_WEB
+                if (instanceCount)
+                {
+                    const double submissionStart = profileDetails ? emscripten_get_now() : 0.0;
+                    cmd_list.RenderDetails(batch.buffer, instanceCount, vOffset, Object.number_vertices,
+                        iOffset, Object.number_indices / 3);
+                    if (profileDetails) submissionMs += emscripten_get_now() - submissionStart;
+                    RImplementation.BasicStats.DetailCount += instanceCount;
+                    cmd_list.stat.r.s_details.add(instanceCount * Object.number_vertices);
+                }
+#else
                 ref_constant constArray = cmd_list.get_c(strArray);
                 VERIFY(constArray);
 
@@ -224,10 +318,15 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                     cmd_list.Render(D3DPT_TRIANGLELIST, vOffset, 0, dwCNT_verts, iOffset, dwCNT_prims);
                     cmd_list.stat.r.s_details.add(dwCNT_verts);
                 }
+#endif
             }
         }
         vOffset += hw_BatchSize * Object.number_vertices;
         iOffset += hw_BatchSize * Object.number_indices;
     }
+#ifdef XR_PLATFORM_WEB
+    if (profileDetails) EM_ASM({ globalThis.__xrayWebGPU.recordDetailTimings($0, $1, $2, $3, $4, $5, $6); },
+        preparationMs, submissionMs, packedInstances, reusedBatches, changedBatches, membershipChanges, contentChanges);
+#endif
 }
 } // namespace xray::render::RENDER_NAMESPACE

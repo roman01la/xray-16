@@ -46,6 +46,11 @@ void CDetailManager::hw_Load_Geom()
     // Analyze batch-size
     hw_BatchSize = (u32(HW.Caps.geometry.dwRegisters) - c_hdr) / c_size;
     clamp<size_t>(hw_BatchSize, 0, 64);
+#ifdef XR_PLATFORM_WEB
+    // WebGPU fetches transforms from an instance vertex buffer. Keep a single
+    // geometry copy, with the original shader's row selector fixed at zero.
+    hw_BatchSize = 1;
+#endif
     Msg("* [DETAILS] VertexConsts(%u), Batch(%zu)", u32(HW.Caps.geometry.dwRegisters), hw_BatchSize);
 
     // Pre-process objects
@@ -112,6 +117,15 @@ void CDetailManager::hw_Load_Geom()
 
 void CDetailManager::hw_Unload()
 {
+#ifdef XR_PLATFORM_WEB
+    ++hw_storageGeneration;
+    for (auto& groups : hw_instances)
+    {
+        for (auto& group : groups)
+            if (group.buffer) DeleteWebGPUBuffer(group.buffer);
+        groups.clear();
+    }
+#endif
     // Destroy VS/VB/IB
     if (hw_Geom)
         hw_Geom.destroy();

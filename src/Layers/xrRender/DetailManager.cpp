@@ -135,6 +135,7 @@ CDetailManager::CDetailManager() : xrc("detail manager")
 CDetailManager::~CDetailManager()
 {
     ZoneScoped;
+    WaitMTCalc();
 
     for (u32 i = 0; i < dm_cache_size; ++i)
         cache_pool[i].~Slot();
@@ -234,6 +235,9 @@ void CDetailManager::Load()
 void CDetailManager::Unload()
 {
     ZoneScoped;
+    // Calculation owns pointers into dtFS, objects and the slot/cache pools.
+    // A paused/hidden frame may never have rendered (and joined) that task.
+    WaitMTCalc();
     if (UseVS())
         hw_Unload();
     else
@@ -352,15 +356,20 @@ void CDetailManager::UpdateVisibleM()
                         for(auto& siIT : sp.items)
                         {
                             SlotItem& Item = *siIT;
-                            float scale = Item.scale_calculated = Item.scale * alpha_i;
-                            float ssa = scale * scale * Rq_drcp;
-                            if (ssa < r_ssaDISCARD)
-                            {
+                            const float scale = Item.scale * alpha_i;
+                            const float ssa = scale * scale * Rq_drcp;
+                            const u32 vis_id = ssa < r_ssaDISCARD ? 255 :
+                                (ssa > r_ssaCHEAP ? Item.vis_ID : 0);
+#ifdef XR_PLATFORM_WEB
+                            // Membership may change inside the same SlotItemVec, so
+                            // comparing the outer visible-list pointers alone is insufficient.
+                            if (Item.scale_calculated != scale || Item.web_visibleClass != vis_id)
+                                xray::detail_cache::invalidate(sp.r_items, Item.web_visibleClass, vis_id);
+                            Item.web_visibleClass = static_cast<u8>(vis_id);
+#endif
+                            Item.scale_calculated = scale;
+                            if (vis_id == 255)
                                 continue;
-                            }
-                            u32 vis_id = 0;
-                            if (ssa > r_ssaCHEAP)
-                                vis_id = Item.vis_ID;
 
                             sp.r_items[vis_id].push_back(siIT);
 
@@ -399,6 +408,10 @@ bool CDetailManager::UseVS() const
 
 void CDetailManager::Render(CBackend& cmd_list)
 {
+    // Several render passes can wait concurrently. Only the owner thread
+    // retires the handle in DispatchMTCalc/Unload/destruction.
+    if (m_calc_task)
+        TaskScheduler->Wait(*m_calc_task);
 #ifndef _EDITOR
     if (nullptr == dtFS)
         return;
@@ -407,8 +420,6 @@ void CDetailManager::Render(CBackend& cmd_list)
 #endif
 
     ZoneScoped;
-
-    TaskScheduler->Wait(*m_calc_task);
 
     RImplementation.BasicStats.DetailRender.Begin();
     g_pGamePersistent->m_pGShaderConstants->m_blender_mode.w = 1.0f; //--#SM+#-- Флаг начала рендера травы [begin of grass render]
@@ -432,19 +443,26 @@ void CDetailManager::Render(CBackend& cmd_list)
     RImplementation.BasicStats.DetailRender.End();
 }
 
+void CDetailManager::WaitMTCalc()
+{
+    if (!m_calc_task)
+        return;
+    TaskScheduler->Wait(*m_calc_task);
+    m_calc_task = nullptr;
+}
+
 void CDetailManager::DispatchMTCalc()
 {
+    // Render may be skipped by menus, pause or a device reset. Never lose the
+    // previous task handle or let two workers mutate this manager's cache.
+    WaitMTCalc();
+#ifndef _EDITOR
+    if (!dtFS || !psDeviceFlags.is(rsDrawDetails))
+        return;
+#endif
     m_calc_task = &TaskScheduler->AddTask([this]
     {
-#ifndef _EDITOR
-        if (nullptr == RImplementation.Details)
-            return; // possibly deleted
-        if (nullptr == dtFS)
-            return;
-        if (!psDeviceFlags.is(rsDrawDetails))
-            return;
-#endif
-
+        // Unload/destruction joins this task before touching its inputs.
         ZoneScoped;
 
         EYE = Device.vCameraPosition;

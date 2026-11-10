@@ -26,7 +26,7 @@ void main ()
 #ifdef MSAA_OPTIMIZATION
 	SV_Target	=	texelFetch	( s_generic, int2( w_tc.xy * pos_decompression_params2.xy ), gl_SampleID );
 #else
-	SV_Target	=	texelFetch	( s_generic, int2( w_tc.xy * pos_decompression_params2.xy ), ISAMPLE );
+	SV_Target	=	texelFetch	( s_generic, int2( w_tc.xy * pos_decompression_params2.xy ), int(ISAMPLE) );
 #endif
 #endif
 }

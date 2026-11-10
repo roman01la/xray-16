@@ -4,14 +4,14 @@ use crate::{
     alife_attacks::{NativeDamage, NativeHitKind},
     combat::ChargedShot,
     inventory::{Context, ItemState, active_weapon_slot},
-    survival::ShotVictim,
+    survival::FireVictim,
 };
 use anyhow::{Context as _, Result, ensure};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     Slash,
@@ -120,6 +120,17 @@ impl Profile {
         })
     }
 
+    pub fn powers(&self,splash:bool)->([f64;3],usize) {
+        let mut powers=[0.0;3];
+        let count=if splash {
+            for (index,power) in powers[..self.splash_hits].iter_mut().enumerate() {
+                *power=self.power*self.falloff.powi(index as i32);
+            }
+            self.splash_hits
+        } else {powers[0]=self.power*self.direct_scale;1};
+        (powers,count)
+    }
+
     pub fn range(&self) -> f32 {
         self.reach + self.radius
     }
@@ -131,7 +142,7 @@ pub(crate) fn strike(
     id: &str,
     catalog: &Catalog,
     (mode, splash): (Mode, bool),
-    victim: Option<ShotVictim>,
+    victim: Option<FireVictim>,
     rules: Option<&crate::survival_rules::SurvivalRules>,
 ) -> Result<Value> {
     let state: Option<String> = tx
@@ -153,23 +164,23 @@ pub(crate) fn strike(
     }
     catalog.validate_state("wpn_knife", &serde_json::from_str::<ItemState>(&state)?)?;
     let profile = Profile::from_catalog(catalog, mode)?;
-    let mut powers = [0.0; 3];
-    let count = if splash {
-        for (index, power) in powers[..profile.splash_hits].iter_mut().enumerate() {
-            *power = profile.power * profile.falloff.powi(index as i32);
-        }
-        profile.splash_hits
-    } else {
-        powers[0] = profile.power * profile.direct_scale;
-        1
-    };
+    let (powers,count)=profile.powers(splash);
+    let mut volley=None;
     let (armour, target_commit, power_loss) =
-        if let Some(victim) = victim.filter(|v| v.target.distance <= profile.range()) {
+        if let Some(victim) = victim.filter(|v| v.authority.target.distance <= profile.range()) {
+            if let Some(native)=victim.native.as_ref() {
+                ensure!(native.attack==crate::native_condition::Attack::Knife{mode,splash}, "native knife mode changed");
+                ensure!(victim.additional.is_empty(), "knife must target one actor");
+                volley=Some(vec![crate::weapon_inventory::commit_volley(tx,catalog,context,victim,rules,
+                    (0.0,0.0,profile.range()))?]);
+                (None,None,0.0)
+            } else {
             let (impact, commit, power_loss) = crate::weapon_inventory::commit_shot_hit(
                 tx,
                 context,
-                victim,
+                victim.authority,
                 rules,
+                crate::survival::WoundKind::Cut,
                 |target, state| {
                     crate::armour::wound(
                         tx,
@@ -181,6 +192,7 @@ pub(crate) fn strike(
                 },
             )?;
             (Some(impact), commit, power_loss)
+            }
         } else {
             (None, None, 0.0)
         };
@@ -188,7 +200,7 @@ pub(crate) fn strike(
     let impulse_key = match mode { Mode::Slash => "hit_impulse", Mode::Stab => "hit_impulse_2" };
     let impulse = if definition.values.contains_key(impulse_key) { definition.number(impulse_key)? as f32 } else { 0.0 };
     let damage = (powers[..count].iter().sum::<f64>() * 100.0).round() as u16;
-    Ok(json!({"effect":("wpn_knife", mode.observer_mode()), "shot":ChargedShot {
+    Ok(json!({"volley":volley,"effect":("wpn_knife", mode.observer_mode()), "shot":ChargedShot {
         ammo: 0, range: profile.range(), damage, interval: 0, mass_spent: 0.0, power_loss,
         queue: None, armour, target_commit, launcher: None,
         native_damage: Some(NativeDamage { kind: NativeHitKind::Wound, power: powers.map(|v| v as f32), penetration: 0.0, impulse }),

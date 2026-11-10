@@ -46,7 +46,7 @@ try {
   if(!/^[a-z0-9_-]{1,24}$/.test(slot))throw Error('Invalid preview slot');
   const pack=new URLSearchParams(location.search).get('stream');if(!pack)throw Error('A same-origin streaming pack URL is required');
   const root='zone-engine-preview-'+slot,worker=new Worker('./ingest-worker.js',{type:'module'});
-  $('status').textContent='Preparing isolated engine assets…';
+  $('status').textContent='Preparing game files…';
   let streamed;
   try {
     streamed=await new Promise((resolve,reject)=>{
@@ -67,7 +67,7 @@ try {
   const handle=await dir.getFileHandle(layout.configName),original=await (await handle.getFile()).text(),writer=await handle.createWritable();
   await writer.write(streamingConfig(original));await writer.close();
   checkActive();
-  $('status').textContent='Connecting to Rust server…';
+  $('status').textContent='Connecting to multiplayer…';
   const readWorld=async identity=>{
     const response=await fetch('/world.json',{cache:'no-store',headers:identity?{'X-Zone-Identity':identity.secret}:{}});
     const data=await response.json();
@@ -79,6 +79,8 @@ try {
   if(worldData.campaign&&identity)worldData=await readWorld(identity);
   const world=await validateWorld(worldData);
   const level=levelForWorld(world.contract.world);
+  const nativeMovement=worldData.nativePlayerMovement===true;
+  if(nativeMovement&&(!level||!worldData.survival))throw Error("X-Ray movement requires a campaign map and a player save");
   if(level && requestedMap && level!==requestedMap)throw Error('Requested map differs from the server world');
   const previewLevel=level??(requestedMap==='zaton'?'zaton':null);
   if(previewLevel && capabilities.mapPreview!==true)throw Error('Engine does not support map preview');
@@ -109,9 +111,10 @@ try {
     $('status').textContent='Entering the next map…';
     const url=new URL(location.href);
     url.searchParams.delete('map');
+    window.dispatchEvent(new Event('xray-browser-navigation'));
     location.replace(url.href);
   },{once:true});
-  await client.connect({contract:world.contract,identitySecret:identity?.secret,impairment:faultOptions(location.search)});
+  await client.connect({contract:world.contract,identitySecret:identity?.secret,nativeMovement,impairment:faultOptions(location.search)});
   if(worldData.survival){
     if(!identity)throw Error('Survival requires persistent identity');
     client.inventory=new InventoryClient(client,{principal:identity.principalId,onChange:view=>client.emit('inventory',view),onError:error=>log('Inventory reconciliation pending: '+error.message)});
@@ -146,7 +149,7 @@ try {
   client.addEventListener('action-result',event=>log('Action: '+JSON.stringify(event.detail)));
   client.addEventListener('weapon-shot',event=>log('Weapon shot: '+JSON.stringify(event.detail)));
   client.addEventListener('engine-inventory',event=>log('Native inventory view: '+JSON.stringify(event.detail)));
-  if(previewLevel)$('description').textContent=level?`${level} · WASD move · X sprint · Shift walk · Space jump · Ctrl crouch · J first-person · V launcher mode · Mouse aim · Use pickup · click fire · R reload · Enter respawn · server authority + shared Rust prediction`:'Zaton map-view test · synthetic server movement with visual ground projection';
+  if(previewLevel)$('description').textContent=level?`${level} · WASD move · X sprint · Shift walk · Space jump · Ctrl crouch · J switch camera · V launcher mode · Mouse aim · Use pickup · click fire · R reload · Enter respawn · ${nativeMovement?'X-Ray movement':'server authority + shared Rust prediction'}`:'Zaton map-view test · synthetic server movement with visual ground projection';
   if(client.impairment)$('description').textContent+=` · TEST: ${client.impairment.delayMs} ms each way, ${client.impairment.loss*100}% state loss`;
   const epoch=crypto.randomUUID();
   bridge=createPthreadBridge(client,{epoch,onError:e=>log(e.message),onApplied:value=>{report=value;$('persistent').textContent=[...client.lifecycle.entries.values()].filter(e=>e.persistentId&&client.snapshot?.entities.some(v=>v.id===e.id)).map(e=>e.persistentId+' → '+e.id).join(', ');$('status').textContent=`C++ tick ${value.tick} · ${value.entities} entities · ${client.lifecycle.entries.size} metadata${value.prediction?` · prediction ${value.prediction.active?'active':value.prediction.ready?'authority fallback':'warming'} · replay ${value.prediction.replays}`:''}`;const local=client.snapshot?.entities.find(e=>e.id===client.playerId);if(local)$('health').textContent=`Health ${local.health}`;if(local)$('status').textContent+=` · ${local.flags&4?'crouched':'standing'} · ${local.flags&2?'grounded':'airborne'}`;}});
@@ -154,8 +157,8 @@ try {
   $('status').textContent='Loading engine…';
   await startShaderCompiler();checkActive();
   const {default:createModule}=await import('./xr_3da.js');
-  await createModule({canvas:$('canvas'),zoneBridge:bridge,zoneEpoch:epoch,zoneContract:client.contract,zoneContent:world.content,
-    arguments:['-nosplash','-nointro','-nogameintro',...(previewLevel?['-zone_map_preview','-noprefetch','-start',`server(${previewLevel}/single)`,'client(localhost)']:['-zone_bridge_only']),'-fsltx',layout.configPath,'-stream_mount',streamed.mount],print:log,printErr:log});
+  await createModule({canvas:$('canvas'),zoneBridge:bridge,zoneEpoch:epoch,zoneContract:client.contract,zoneContent:world.content,zoneNativeMovement:nativeMovement,
+    arguments:[...(nativeMovement?['-zone-native-player']:[]),'-nosplash','-nointro','-nogameintro',...(previewLevel?['-zone_map_preview','-noprefetch','-start',`server(${previewLevel}/single)`,'client(localhost)']:['-zone_bridge_only']),'-fsltx',layout.configPath,'-stream_mount',streamed.mount],print:log,printErr:log});
   await wait(()=>report!==null,180000);$('peer').disabled=false;$('combat').disabled=!world.content;
   log('PASS · real engine application pthread validated a Rust server snapshot');
 } catch(e){const cancelled=stopped;stop();if(!cancelled){$('status').textContent='Failed: '+e.message;log(e.stack||e.message);}}

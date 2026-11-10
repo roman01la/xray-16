@@ -1,10 +1,16 @@
 #include "pch_script.h"
 #include "EngineAdapter.h"
+#include "NpcPresentation.h"
+#include "xrCore/Animation/Bone.hpp"
 #include "Appearance.h"
 #include "Actor_Flags.h"
+#include "Actor.h"
+#include "CharacterPhysicsSupport.h"
+#include "PHMovementControl.h"
 #include "InventoryPresentation.h"
 #include "InventoryIntent.h"
 #include "Level.h"
+#include "game_cl_base.h"
 #include "UIGameCustom.h"
 #include "HUDManager.h"
 #include "HudSound.h"
@@ -21,6 +27,7 @@
 #include "Include/xrRender/Kinematics.h"
 #include "Include/xrRender/KinematicsAnimated.h"
 #include <emscripten.h>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
@@ -42,11 +49,17 @@ EM_JS(void, zone_view, (int firstPerson, int crosshair), {globalThis.zoneEngineV
 extern ENGINE_API float g_fov;
 extern BOOL b_toggle_weapon_aim;
 EM_JS(int, zone_prediction, (float* out), {return globalThis.zoneEnginePrediction?.(out) ?? 0;});
+EM_JS(unsigned, zone_native_sequence, (), {return globalThis.zoneNativeInputSequence?.() ?? 0;});
+EM_JS(unsigned, zone_native_motion_flags, (), {return globalThis.zoneNativeMotionFlags?.() ?? 3;});
+EM_JS(float, zone_native_motion_scale, (), {return globalThis.zoneNativeMotionScale?.() ?? 1;});
 EM_JS(int, zone_world_space, (), {return globalThis.zoneEngineWorldSpace?.()?1:0;});
 EM_JS(void, zone_verify_asset, (int kind, const void* pointer, unsigned size), {
     globalThis.zoneEngineVerifyAsset?.(kind,pointer,size);
 });
 EM_JS(int, zone_content_status, (), {return globalThis.zoneEngineContentStatus?.() ?? -1;});
+EM_JS(unsigned, zone_npc_media_poll, (void* output, unsigned capacity), {
+    return globalThis.zoneEngineNpcMediaPoll?.(output, capacity) ?? 0;
+});
 EM_JS(int, zone_appearance_poll, (void* out, unsigned capacity), {
     return globalThis.zoneEngineAppearancePoll?.(out, capacity) ?? 0;
 });
@@ -136,6 +149,19 @@ void playMuzzleParticle(pcstr effect, const Fmatrix& muzzle) {
 
 // Presentation only: no CGameObject, AI, scheduler, inventory or local physics.
 class Proxy final : public SpatialBase, public RenderableBase {
+    enum class Gait { Idle, Walk, Run, Sprint };
+    struct NpcPose {
+        Fvector position;
+        float yaw;
+        double tick;
+        std::uint32_t motion;
+        std::uint16_t motionTimeMs;
+        std::uint16_t health;
+    };
+    struct AuthoredPose {
+        double tick;
+        std::vector<unsigned char> bytes;
+    };
 public:
     bool visible=true;
     explicit Proxy(const std::string& model = {}) : SpatialBase(g_pGamePersistent->SpatialSpace), npcModel(model) {
@@ -157,6 +183,7 @@ public:
         if (!npcModel.empty()) {
             if (!appearance.visual.empty() && npcModel != appearance.visual) {
                 npcModel = appearance.visual;
+                npcPoses.clear();
                 loadNpcModel();
             }
             return;
@@ -201,13 +228,16 @@ public:
             updateWeaponAddonBones();
         }
     }
-    void pose(const Fvector& position, float yaw, bool moving, bool crouch, bool dead) {
+    void pose(const Fvector& position, float yaw, float speed, bool crouch, bool dead) {
         from = renderable.xform.c;target = position;fromYaw = currentYaw;targetYaw = yaw;elapsed = 0;
         if (!registered || from.distance_to_sqr(target) > 400.f) {from = target;fromYaw = targetYaw;}
-        if (moving != walking || crouch != crouched || dead != deadState) {
+        const auto nextGait = speed < 0.1f ? Gait::Idle
+            : crouch || speed < 3.f ? Gait::Walk
+            : speed < 5.f ? Gait::Run : Gait::Sprint;
+        if (nextGait != gait || crouch != crouched || dead != deadState) {
             const bool wasDead=deadState;deadState=dead;
             crouched=crouch;
-            walking = moving;
+            gait = nextGait;
             if (!nativeNpc()) {
                 if (deadState) {
                     firingTime = 0.f;
@@ -218,13 +248,66 @@ public:
             }
         }
     }
+    void settleLootBody()
+    {
+        if (!renderable.visual) return;
+        if (auto* animated = renderable.visual->dcast_PKinematicsAnimated())
+            holdDeathPose(*animated, true);
+    }
+    void queueAuthoredPose(const unsigned char* bytes, std::size_t size, double tick)
+    {
+        if (!nativeNpc() || !renderable.visual || size < npcPoseHeader ||
+            u32(bytes) != npcModelKey(npcModel) || bytes[4] > 1 || (bytes[7] & ~npcWeaponFlags))
+            return;
+        auto* skeleton = PKinematics(renderable.visual);
+        const unsigned count = bytes[5], weaponLength = bytes[6];
+        const auto expected = npcPoseHeader + npcBoneBytes * count +
+            (weaponLength ? npcBoneBytes + weaponLength : 0) + (bytes[7] & npcShot ? npcShotBytes : 0);
+        if (!skeleton || count != skeleton->LL_BoneCount() || !count || count > npcMaxBones ||
+            weaponLength > 127 || size != expected || (!weaponLength && bytes[7]) ||
+            (npcDeadConfirmed && bytes[4] == 0))
+            return;
+        const Fvector position{f32(bytes + 16), f32(bytes + 20), f32(bytes + 24)};
+        if (!_valid(position) || (!authoredPoses.empty() && tick <= authoredPoses.back().tick))
+            return;
+        if (bytes[4] && !npcDeadConfirmed)
+            npcDeadConfirmed = true;
+        if (bytes[4] && !authoredPoses.empty() && authoredPoses.back().bytes[4] == 0)
+            authoredPoses.clear();
+        authoredPoses.push_back({tick, {bytes, bytes + size}});
+        if (authoredPoses.size() > 6) authoredPoses.pop_front();
+    }
+    bool hasNativeBody() const { return nativeNpc() && deadState && authoredBodyReady; }
+    void queueNpcPose(const Fvector& position, const Entity& entity, double tick) {
+        if (!nativeNpc()) {
+            pose(position, entity.yaw, std::hypot(entity.vx, entity.vz),
+                (entity.flags & 4) != 0, entity.health == 0);
+            return;
+        }
+        if (entity.health == 0) npcDeadConfirmed = true;
+        // Death is authoritative immediately. Never replay an older live pose
+        // after a zero-health snapshot or show a death animation on AOI entry.
+        if (entity.health == 0 && !npcPoses.empty() && npcPoses.back().health != 0)
+            npcPoses.clear();
+        if (!npcPoses.empty()) {
+            const auto& last = npcPoses.back();
+            const float distance = last.position.distance_to_sqr(position);
+            if (distance == 0.f && last.yaw == entity.yaw &&
+                last.motion == entity.motion && last.motionTimeMs == entity.motionTimeMs && last.health == entity.health)
+                return; // The relay can repeat the same native sample.
+            if (distance > 400.f) npcPoses.clear();
+        }
+        npcPoses.push_back({position, entity.yaw, tick, entity.motion, entity.motionTimeMs, entity.health});
+        if (npcPoses.size() > 8) npcPoses.pop_front();
+    }
     void applyNpcMotion(std::uint32_t id, std::uint16_t timeMs) {
         if (!nativeNpc() || !renderable.visual || id == noMotion || (id == npcMotion && timeMs == npcTimeMs)) return;
         auto* animated = renderable.visual->dcast_PKinematicsAnimated();
         if (!animated) return;
         const MotionID motion(static_cast<u16>(id >> 16), static_cast<u16>(id));
         if (motion.slot >= animated->LL_MotionsSlotCount() || motion.idx >= animated->LL_MotionsSlot(motion.slot).motion_defs()->size()) return;
-        if (id != npcMotion) {
+        const bool changed = id != npcMotion;
+        if (changed) {
             animated->PlayCycle(BI_NONE, motion, FALSE);
             if (npcMotion == noMotion) Msg("* Zone NPC motion ready: %s", npcModel.c_str());
         }
@@ -233,11 +316,22 @@ public:
         for (::u32 part = 0; part < MAX_PARTS; ++part)
             for (::u32 i = 0; i < animated->LL_PartBlendsCount(part); ++i) {
                 auto* blend = animated->LL_PartBlend(part, i);
-                if (blend && blend->channel == 0 && blend->motionID == motion)
-                    blend->timeCurrent = std::min(timeMs * .001f, blend->timeTotal);
+                if (!blend || blend->channel != 0 || blend->motionID != motion || blend->timeTotal <= 0.f)
+                    continue;
+                const float phase = std::min(timeMs * .001f, blend->timeTotal);
+                if (changed) {
+                    blend->timeCurrent = phase;
+                } else if (blend->stop_at_end) {
+                    blend->timeCurrent = std::min(blend->timeCurrent + 0.03f,
+                        std::max(blend->timeCurrent, phase));
+                } else {
+                    const float error = std::remainder(phase - blend->timeCurrent, blend->timeTotal);
+                    blend->timeCurrent = std::clamp(blend->timeCurrent +
+                        std::clamp(error * 0.25f, -0.03f, 0.03f), 0.f, blend->timeTotal);
+                }
             }
     }
-    void advance(float dt) {
+    void advance(float dt, double npcTick = 0.) {
         if (!renderable.visual) return;
         if (firingTime > 0.f) {
             firingTime = std::max(0.f, firingTime - dt);
@@ -247,9 +341,32 @@ public:
             }
         }
         elapsed += dt;
-        const float blend = std::min(1.f, elapsed * 15.f);
-        Fvector position;position.lerp(from, target, blend);
-        currentYaw = fromYaw + std::remainder(targetYaw - fromYaw, 6.2831853f) * blend;
+        if (!authoredPoses.empty()) {
+            advanceAuthoredPose(npcTick);
+            return;
+        }
+        Fvector position;
+        if (npcPoses.empty()) {
+            const float blend = std::min(1.f, elapsed * 15.f);
+            position.lerp(from, target, blend);
+            currentYaw = fromYaw + std::remainder(targetYaw - fromYaw, 6.2831853f) * blend;
+        } else {
+            while (npcPoses.size() > 1 && npcPoses[1].tick <= npcTick) npcPoses.pop_front();
+            const auto& start = npcPoses.front();
+            const auto& end = npcPoses.size() > 1 ? npcPoses[1] : start;
+            const float blend = end.tick > start.tick
+                ? static_cast<float>(std::clamp((npcTick - start.tick) / (end.tick - start.tick), 0., 1.))
+                : 0.f;
+            position.lerp(start.position, end.position, blend);
+            currentYaw = start.yaw + std::remainder(end.yaw - start.yaw, 6.2831853f) * blend;
+            deadState = start.health == 0;
+            if (!deadState) {
+                npcHitTime = std::max(0.f, npcHitTime - dt);
+                if (npcHitTime == 0.f) applyNpcMotion(start.motion, start.motionTimeMs);
+                if (npcHealth && start.health < *npcHealth) playNpcHit();
+            }
+            npcHealth = start.health;
+        }
         // Player input uses atan2(x, z); native NPC poses already use X-Ray HPB.
         renderable.xform.setHPB(npcModel.empty() ? -currentYaw : currentYaw, 0, 0);
         renderable.xform.c = position;
@@ -302,12 +419,110 @@ public:
     }
     void renderable_Render(::u32 context, IRenderable* root) override {
         if (!visible || !renderable.visual) return;
+        if (nativeNpc() && ((npcDeadConfirmed && !authoredBodyReady) ||
+            (authoredPoses.empty() && npcMotion == noMotion && npcHitTime <= 0.f)))
+            return;
         if (auto* bones = renderable.visual->dcast_PKinematics()) bones->CalculateBones(TRUE);
         GEnv.Render->add_Visual(context, root, renderable.visual, renderable.xform);
         if (helmetPose) GEnv.Render->add_Visual(context, root, helmet, helmetTransform);
         if (weaponPose && !deadState) GEnv.Render->add_Visual(context, root, weapon, weaponTransform);
     }
 private:
+    void advanceAuthoredPose(double tick)
+    {
+        while (authoredPoses.size() > 1 && authoredPoses[1].tick <= tick)
+            authoredPoses.pop_front();
+        const auto& start = authoredPoses.front();
+        const auto& end = authoredPoses.size() > 1 ? authoredPoses[1] : start;
+        const auto* a = start.bytes.data();
+        const auto* b = end.bytes.data();
+        const float blend = end.tick > start.tick
+            ? static_cast<float>(std::clamp((tick - start.tick) / (end.tick - start.tick), 0., 1.))
+            : 0.f;
+        auto* skeleton = PKinematics(renderable.visual);
+        if (!skeleton) return;
+        const auto mix = [blend](const Fmatrix& from, const Fmatrix& to) {
+            Fquaternion first, second, rotation;
+            rotation.slerp(first.set(from), second.set(to), blend);
+            Fmatrix result;
+            result.rotation(rotation);
+            result.c.lerp(from.c, to.c, blend);
+            return result;
+        };
+        const auto root = [](const unsigned char* p) {
+            Fmatrix result;
+            result.rotation(readNpcRotation(p + 28));
+            result.c.set(f32(p + 16), f32(p + 20), f32(p + 24));
+            return result;
+        };
+        const auto mask = std::uint64_t(u32(a + 8)) | (std::uint64_t(u32(a + 12)) << 32);
+        const auto nextMask = std::uint64_t(u32(b + 8)) | (std::uint64_t(u32(b + 12)) << 32);
+        for (u16 bone = 0; bone < a[5]; ++bone) {
+            if (!(mask & (std::uint64_t{1} << bone))) continue;
+            const auto offset = npcPoseHeader + bone * npcBoneBytes;
+            auto& pose = authoredBones[bone];
+            pose = readNpcBone(a + offset);
+            if (blend > 0.f && (nextMask & (std::uint64_t{1} << bone)))
+                pose = mix(pose, readNpcBone(b + offset));
+            if (!authoredCallbacks[bone]) {
+                skeleton->LL_GetBoneInstance(bone).set_callback(bctCustom,
+                    [](CBoneInstance* instance) {
+                        instance->mTransform.set(*static_cast<const Fmatrix*>(instance->callback_param()));
+                    }, &pose, TRUE);
+                authoredCallbacks[bone] = true;
+            }
+        }
+        if (skeleton->LL_GetBonesVisible() != mask) skeleton->LL_SetBonesVisible(mask);
+        renderable.xform = mix(root(a), root(b));
+        deadState = a[4] != 0;
+        authoredBodyReady = deadState;
+        const auto weaponAt = npcPoseHeader + a[5] * npcBoneBytes;
+        const auto* weaponSectionBytes = a + weaponAt + (a[6] ? npcBoneBytes : 0);
+        const std::string_view section(reinterpret_cast<const char*>(weaponSectionBytes), a[6]);
+        const bool weaponChanged = section != authoredWeapon;
+        if (weaponChanged) {
+            authoredWeapon = section;
+            GEnv.Render->model_Delete(weapon);
+            weapon = equipmentVisual(authoredWeapon, "visual");
+        }
+        const auto addons = a[7] & (npcScope | npcLauncher | npcSilencer);
+        if (weaponChanged || addons != weaponAddons) {
+            weaponAddons = addons;
+            updateWeaponAddonBones();
+        }
+        weaponPose = weapon && !deadState;
+        if (weaponPose) {
+            auto attachment = readNpcBone(a + weaponAt);
+            if (a[6] == b[6] && blend > 0.f &&
+                std::memcmp(a + weaponAt + npcBoneBytes, b + weaponAt + npcBoneBytes, a[6]) == 0)
+                attachment = mix(attachment, readNpcBone(b + weaponAt));
+            weaponTransform.mul_43(renderable.xform, attachment);
+            if (a[7] & npcShot)
+                playAuthoredShot(weaponSectionBytes + a[6], root(a), a[7]);
+        }
+        skeleton->CalculateBones_Invalidate();
+        skeleton->CalculateBones(TRUE);
+        spatial.sphere.P = renderable.xform.c;
+        spatial.sphere.P.y += 1.f;
+        if (!registered) {spatial_register();registered = true;} else spatial_move();
+    }
+    void playAuthoredShot(const unsigned char* shot, const Fmatrix& shotRoot, unsigned flags)
+    {
+        const auto time = u32(shot);
+        if (time == authoredShot) return;
+        authoredShot = time;
+        Fmatrix muzzle;
+        muzzle.mul_43(shotRoot, readNpcBone(shot + 4));
+        const auto* const section = authoredWeapon.c_str();
+        const bool launcher = (flags & npcShotLauncher) != 0;
+        const bool silenced = (flags & npcSilencer) != 0;
+        const auto* flame = pSettings->read_if_exists<pcstr>(section, launcher ? "grenade_flame_particles" :
+            silenced ? "silencer_flame_particles" : "flame_particles", nullptr);
+        const auto* smoke = launcher ? nullptr : pSettings->read_if_exists<pcstr>(section,
+            silenced ? "silencer_smoke_particles" : "smoke_particles", nullptr);
+        playMuzzleParticle(flame, muzzle);
+        playMuzzleParticle(smoke, muzzle);
+    }
     void updateWeaponAddonBones() {
         auto* bones = weapon ? weapon->dcast_PKinematics() : nullptr;
         if (!bones) return;
@@ -331,10 +546,40 @@ private:
             Msg("* Zone observer addons: %s mask=%u bones=%u", weaponSection.c_str(), unsigned(weaponAddons), visibleMask);
     }
     bool nativeNpc() const { return !npcModel.empty() && npcModel != "stalker"; }
+    void playNpcHit() {
+        auto* animated = renderable.visual->dcast_PKinematicsAnimated();
+        if (!animated) return;
+        if (animated->PlayFX_Safe("norm_damage_0", 1.f)) return;
+        const auto motion = animated->ID_Cycle_Safe("norm_damage_0");
+        if (!motion.valid()) return;
+        animated->PlayCycle(BI_NONE, motion, FALSE);
+        npcHitTime = animated->get_animation_length(motion);
+        npcMotion = noMotion;
+    }
+    static void holdDeathPose(IKinematicsAnimated& animated, bool settled = false) {
+        for (unsigned part = 0; part < MAX_PARTS; ++part)
+            for (unsigned i = 0; i < animated.LL_PartBlendsCount(part); ++i) {
+                auto* blend = animated.LL_PartBlend(part, i);
+                blend->stop_at_end = true;
+                blend->fall_at_end = false;
+                if (settled) {
+                    blend->timeCurrent = std::max(0.f, blend->timeTotal - 1.f / 30.f);
+                    blend->playing = false;
+                }
+            }
+    }
     void loadNpcModel() {
         GEnv.Render->model_Delete(renderable.visual);
         renderable.visual = nativeNpc() ? loadProxyVisual(npcModel.c_str()) : GEnv.Render->model_Create(DefaultProxyVisual);
         npcMotion = noMotion;
+        npcHealth.reset();
+        npcHitTime = 0.f;
+        deadState = npcDeadConfirmed = authoredBodyReady = false;
+        authoredPoses.clear();
+        authoredCallbacks.fill(false);
+        authoredWeapon.clear();
+        authoredShot = 0;
+        GEnv.Render->model_Delete(weapon);
         if (!renderable.visual) Msg("! Zone NPC model unavailable: %s", npcModel.c_str());
         else if (nativeNpc()) Msg("* Zone NPC model ready: %s", npcModel.c_str());
         else resetSkeleton();
@@ -371,7 +616,7 @@ private:
         string64 name;
         const auto* posture = crouched ? "cr" : "norm";
         auto motion = MotionID();
-        if (firing && knifeStab && !walking) {
+        if (firing && knifeStab && gait == Gait::Idle) {
             xr_sprintf(name, "%s_all_%d_attack_%d", posture, animationSlot, *knifeStab ? 1 : 0);
             motion = animated->ID_Cycle_Safe(name);
         }
@@ -379,7 +624,7 @@ private:
         if (!wholeBody) {
             const bool slash = knifeStab && !*knifeStab;
             const auto* cycle = firing ? (slash ? "attack_0" : "attack_1")
-                : animationSlot ? (walking ? "aim_2" : "aim_1") : "aim_0";
+                : animationSlot ? (gait != Gait::Idle ? "aim_2" : "aim_1") : "aim_0";
             xr_sprintf(name, "%s_torso_%d_%s", posture, animationSlot, cycle);
             motion = animated->ID_Cycle_Safe(name);
             if (!motion.valid() || animated->LL_GetMotionDef(motion)->bone_or_part >= MAX_PARTS) return 0.f;
@@ -399,21 +644,21 @@ private:
     void animate(bool wasDead) {
         auto* animated = renderable.visual->dcast_PKinematicsAnimated();
         if (!animated) return;
-        const auto* name = deadState ? "norm_death_0" : crouched ? (walking ? "cr_walk_fwd_0" : "cr_idle_0")
-                                                              : (walking ? "norm_walk_fwd_0" : "norm_idle_0");
+        const auto* name = deadState ? "norm_death_0"
+            : crouched ? (gait == Gait::Idle ? "cr_idle_0" : "cr_walk_fwd_0")
+            : gait == Gait::Sprint ? "norm_escape_00"
+            : gait == Gait::Run ? "norm_run_fwd_0"
+            : gait == Gait::Walk ? "norm_walk_fwd_0" : "norm_idle_0";
         auto motion = animated->ID_Cycle_Safe(name);
         if (!motion.valid() && deadState) motion = animated->ID_Cycle_Safe("norm_dead_stop_0");
         if (!motion.valid() && deadState) motion = animated->ID_Cycle_Safe("death_init");
         if (!motion.valid() && crouched && !deadState) motion = animated->ID_Cycle_Safe("cr_idle_1");
+        if (!motion.valid() && !deadState && gait == Gait::Sprint) motion = animated->ID_Cycle_Safe("norm_run_fwd_0");
+        if (!motion.valid() && !deadState && gait != Gait::Idle) motion = animated->ID_Cycle_Safe("norm_walk_fwd_0");
         if (!motion.valid()) return;
         if (deadState || wasDead) {
             animated->PlayCycle(BI_NONE, motion, FALSE);
-            if (deadState) for (unsigned part = 0; part < MAX_PARTS; ++part)
-                for (unsigned i = 0; i < animated->LL_PartBlendsCount(part); ++i) {
-                    auto* blend = animated->LL_PartBlend(part, i);
-                    blend->stop_at_end = true;
-                    blend->fall_at_end = false;
-                }
+            if (deadState) holdDeathPose(*animated);
         } else animated->PlayCycle(motion, TRUE);
     }
     void updateEquipmentPose() {
@@ -444,7 +689,17 @@ private:
         weaponTransform.mul_43(transform, weaponOffset);
         weaponPose = true;
     }
-    bool registered = false, walking = false, crouched=false, deadState=false;
+    bool registered = false, crouched=false, deadState=false;
+    Gait gait = Gait::Idle;
+    std::deque<NpcPose> npcPoses;
+    std::optional<std::uint16_t> npcHealth;
+    float npcHitTime = 0.f;
+    bool npcDeadConfirmed = false, authoredBodyReady = false;
+    std::deque<AuthoredPose> authoredPoses;
+    std::array<Fmatrix, npcMaxBones> authoredBones;
+    std::array<bool, npcMaxBones> authoredCallbacks{};
+    std::string authoredWeapon;
+    std::uint32_t authoredShot = 0;
     IRenderVisual* helmet = nullptr;
     IRenderVisual* weapon = nullptr;
     std::string outfitSection, helmetSection, weaponSection, npcModel;
@@ -508,6 +763,22 @@ class MapPreview final : public CLevel {
     std::unique_ptr<InventoryPresentation> inventoryPresentation;
     std::map<std::string, std::unique_ptr<Proxy>> corpses;
     std::map<std::string, HUD_SOUND_COLLECTION_LAYERED> detonationSounds;
+    std::map<std::string, std::uint32_t> corpseActors;
+    std::map<std::uint32_t, std::unique_ptr<Proxy>> retiredNpcCorpses;
+    std::array<unsigned char, 64 * (8 + 8 + npcPoseCapacity + 8 + 151) + 8 + 152 + 32 * (8 + 159)> npcMediaBytes{};
+    struct WorldWeather {
+        std::uint32_t tick;
+        std::uint32_t received;
+        std::uint64_t gameTime;
+        float seconds, factor, effectRemaining;
+        std::string cycle, effect;
+    };
+    std::optional<WorldWeather> worldWeather;
+    std::optional<std::uint32_t> appliedWorldClock;
+    bool appliedWorldWeather = false;
+    std::map<std::string, ref_sound> nativeSounds;
+    struct NativeSoundLoop { ref_sound sound; std::uint32_t seen, tick; };
+    std::map<std::uint32_t, NativeSoundLoop> nativeSoundLoops;
     std::map<std::pair<std::string, unsigned>, HUD_SOUND_COLLECTION_LAYERED> gunshotSounds;
     DetectorHint detectorHint{};
     std::vector<TimedParticle> detonationParticles;
@@ -517,7 +788,14 @@ class MapPreview final : public CLevel {
     std::uint64_t corpseDiscoveryUpdates = 0;
     Fvector anchor{}, focus{};
     std::uint32_t applied = 0;
+    std::uint32_t npcBaseTick = 0;
+    double npcRenderTick = 0.;
     float heading = 0, pitch=0;
+    struct PredictedPose { std::uint32_t sequence; Fvector position; };
+    std::deque<PredictedPose> nativeHistory;
+    Fvector nativeCorrection{}, lastAuthorityPosition{}, lastPredictedPosition{};
+    std::uint32_t nativeAck = 0, nativeLife = 0, nativeAckTime = 0;
+    bool nativeMovement = false, nativeReady = false, nativeLow = false;
     bool firstPerson=false, crosshair=false;
     bool triggerHeld=false;
     std::string primedThrow;
@@ -618,6 +896,141 @@ class MapPreview final : public CLevel {
         }
     }
 
+    void receiveWorldWeather(const unsigned char* packet, const SnapshotState& frame)
+    {
+        const auto tick = u32(packet);
+        const auto age = static_cast<std::int32_t>(frame.tick - tick);
+        if (age < 0 || age > 60 || (worldWeather && !newer(tick, worldWeather->tick))) return;
+        const auto name = [](const unsigned char* bytes) -> std::optional<std::string> {
+            const auto* end = std::find(bytes, bytes + 64, 0);
+            if (end == bytes + 64) return {};
+            std::string value(reinterpret_cast<const char*>(bytes), end - bytes);
+            if (value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != value.npos)
+                return {};
+            return value;
+        };
+        auto cycle = name(packet + 16), effect = name(packet + 80);
+        const float seconds = f32(packet + 4), factor = f32(packet + 8), remaining = f32(packet + 12);
+        const auto gameTime = std::uint64_t(u32(packet + 144)) | (std::uint64_t(u32(packet + 148)) << 32);
+        if (!cycle || cycle->empty() || !effect || !(seconds >= 0.f && seconds < 86400.f) ||
+            !(factor >= 0.f && factor <= 1000.f) || !(remaining >= 0.f && remaining <= 86400.f) ||
+            gameTime >= 1000000000000000ULL)
+            return;
+        const float elapsed = age * factor / 30.f;
+        worldWeather = WorldWeather{tick, Device.dwTimeGlobal,
+            gameTime + static_cast<std::uint64_t>(elapsed * 1000.f), seconds + elapsed, factor,
+            remaining - elapsed, std::move(*cycle), std::move(*effect)};
+    }
+
+    void advanceWorldWeather()
+    {
+        if (!worldWeather) return;
+        const auto& weather = *worldWeather;
+        auto& environment = g_pGamePersistent->Environment();
+        const auto milliseconds = Device.dwTimeGlobal - weather.received;
+        const float elapsed = milliseconds * .001f * weather.factor;
+        if (game && appliedWorldClock != weather.tick) {
+            const auto time = weather.gameTime + static_cast<std::uint64_t>(double(milliseconds) * weather.factor);
+            game->SetGameTimeFactor(time, weather.factor);
+            game->SetEnvironmentGameTimeFactor(time, weather.factor);
+            appliedWorldClock = weather.tick;
+        }
+        const float seconds = std::fmod(weather.seconds + elapsed, 86400.f);
+        const float remaining = weather.effectRemaining - elapsed;
+        const bool active = !weather.effect.empty() && remaining > 0.f;
+        const float difference = std::remainder(seconds - environment.GetGameTime(), 86400.f);
+        const bool jump = !appliedWorldWeather || std::abs(difference) > std::max(60.f, weather.factor * 2.f);
+        if (environment.IsWFXPlaying() && (jump || !active || environment.GetWeather() != weather.effect.c_str()))
+            environment.StopWFX();
+        if (jump || difference >= 0.f)
+            environment.SetGameTime(seconds, weather.factor);
+        if (jump || environment.GetWeatherCycle() != weather.cycle.c_str())
+            environment.SetWeather(weather.cycle.c_str(), !environment.IsWFXPlaying());
+        if (active && !environment.IsWFXPlaying())
+            environment.StartWeatherFXFromTime(weather.effect.c_str(), remaining);
+        appliedWorldWeather = true;
+    }
+
+    void applyNativeSound(const unsigned char* packet, std::size_t size, std::uint32_t loop = 0,
+        std::uint32_t tick = 0)
+    {
+        std::string name(reinterpret_cast<const char*>(packet + 24), size - 24);
+        if (name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-\\/ ") != name.npos ||
+            name.find("..") != name.npos || name.front() == '/' || name.front() == '\\')
+            return;
+        std::replace(name.begin(), name.end(), '/', '\\');
+        Fvector position{f32(packet), f32(packet + 4), f32(packet + 8)};
+        float volume = f32(packet + 12), frequency = f32(packet + 16);
+        const float range = f32(packet + 20);
+        if (!_valid(position) || !(volume >= 0.f && volume <= 4.f) ||
+            !(frequency >= .1f && frequency <= 4.f) || !(range >= 1.f && range <= 100.f))
+            return;
+        const auto exists = [&] {
+            string_path path;
+            const auto file = name + ".ogg";
+            return FS.exist(path, "$level$", file.c_str()) || FS.exist(path, "$game_sounds$", file.c_str());
+        };
+        if (loop) {
+            auto sound = nativeSoundLoops.find(loop);
+            if (sound == nativeSoundLoops.end()) {
+                if (nativeSoundLoops.size() >= 48 || !exists()) return;
+                sound = nativeSoundLoops.try_emplace(loop).first;
+                sound->second.sound.create(name.c_str(), st_Effect, sg_SourceType);
+            } else if (!newer(tick, sound->second.tick)) return;
+            auto& state = sound->second;
+            state.seen = Device.dwTimeGlobal;
+            state.tick = tick;
+            if (!state.sound._feedback())
+                state.sound.play_at_pos(nullptr, position, sm_Looped);
+            state.sound.set_position(position);
+            state.sound.set_volume(volume);
+            state.sound.set_frequency(frequency);
+            if (const auto* params = state.sound.get_params())
+                state.sound.set_range(std::min(params->min_distance, range), range);
+            return;
+        }
+        auto sound = nativeSounds.find(name);
+        if (sound == nativeSounds.end()) {
+            if (!exists()) return;
+            if (nativeSounds.size() >= 128) nativeSounds.erase(nativeSounds.begin());
+            sound = nativeSounds.try_emplace(name).first;
+            sound->second.create(name.c_str(), st_Effect, sg_SourceType);
+        }
+        sound->second.play_no_feedback(nullptr, 0, 0.f, &position, &volume, &frequency);
+    }
+
+    void consumeNpcMedia(const SnapshotState& frame)
+    {
+        const auto length = zone_npc_media_poll(npcMediaBytes.data(), npcMediaBytes.size());
+        if (length > npcMediaBytes.size()) return;
+        for (std::size_t offset = 0; offset + 8 <= length;) {
+            const auto type = u32(npcMediaBytes.data() + offset);
+            const auto size = u32(npcMediaBytes.data() + offset + 4);
+            offset += 8;
+            if (size > length - offset) break;
+            const auto* packet = npcMediaBytes.data() + offset;
+            offset += size;
+            if (type == 35 && size == 152) {
+                receiveWorldWeather(packet, frame);
+            } else if (type == 33 && size >= 8 + npcPoseHeader) {
+                const auto id = u32(packet), tick = u32(packet + 4);
+                auto proxy = proxies.find(id);
+                if (proxy != proxies.end() && std::abs(double(static_cast<std::int32_t>(frame.tick - tick))) <= 60.)
+                    proxy->second->queueAuthoredPose(packet + 8, size - 8, static_cast<std::int32_t>(tick - npcBaseTick));
+            } else if (type == 34 && size >= 25 && size <= 151) {
+                applyNativeSound(packet, size);
+            } else if (type == 36 && size >= 33 && size <= 159 && u32(packet) &&
+                frame.tick - u32(packet + 4) <= 20) {
+                applyNativeSound(packet + 8, size - 8, u32(packet), u32(packet + 4));
+            }
+        }
+        for (auto loop = nativeSoundLoops.begin(); loop != nativeSoundLoops.end();)
+            if (Device.dwTimeGlobal - loop->second.seen > 750)
+                loop = nativeSoundLoops.erase(loop);
+            else
+                ++loop;
+    }
+
     void playGunshots(std::uint32_t localPlayer) {
         GunshotEffect effects[GunshotCapacity];
         const auto count = std::min(zone_gunshots(effects, GunshotCapacity), GunshotCapacity);
@@ -669,39 +1082,161 @@ class MapPreview final : public CLevel {
         const auto& carried = inventory();
         if (!discovery.state.valid || !carried.valid || !carried.alive || carried.life != discovery.state.life) {
             corpses.clear();
+            corpseActors.clear();
             corpseDiscoveryUpdates = 0;
             return;
         }
         if (corpseDiscoveryUpdates != discovery.updates) {
             std::map<std::string, std::unique_ptr<Proxy>> next;
+            std::map<std::string, std::uint32_t> links;
             for (const auto& body : discovery.corpses) {
                 auto existing = corpses.find(body.source);
                 if (existing != corpses.end()) {
                     next.emplace(body.source, std::move(existing->second));
-                    continue;
+                    if (auto linked = corpseActors.find(body.source); linked != corpseActors.end())
+                        links.emplace(body.source, linked->second);
+                } else {
+                    auto proxy = std::make_unique<Proxy>();
+                    proxy->pose(projectWorld(body.position), 0.f, 0.f, false, true);
+                    proxy->settleLootBody();
+                    next.emplace(body.source, std::move(proxy));
                 }
-                auto proxy = std::make_unique<Proxy>();
-                proxy->pose(projectWorld(body.position), 0.f, false, false, true);
-                next.emplace(body.source, std::move(proxy));
             }
             corpses = std::move(next);
+            corpseActors = std::move(links);
             corpseDiscoveryUpdates = discovery.updates;
         }
-        // The player replica already renders the body before respawn.
-        for (auto& entry : corpses) {
-            auto& proxy = *entry.second;
-            proxy.advance(Device.fTimeDelta);
-            proxy.visible = true;
+        for (auto& [source, corpse] : corpses) {
+            corpse->advance(Device.fTimeDelta, npcRenderTick);
+            corpse->visible = true;
+            auto linked = corpseActors.find(source);
+            if (linked == corpseActors.end()) {
+                const auto& anchor = corpse->renderable.xform.c;
+                float closest = 1.5f;
+                std::uint32_t match = 0;
+                const auto consider = [&](std::uint32_t id, const Proxy& proxy) {
+                    if (!proxy.hasNativeBody() || std::any_of(corpseActors.begin(), corpseActors.end(),
+                        [id](const auto& item) { return item.second == id; }))
+                        return;
+                    const auto& position = proxy.renderable.xform.c;
+                    const float distance = std::hypot(position.x - anchor.x, position.z - anchor.z);
+                    if (distance < closest && std::abs(position.y - anchor.y) < 2.f) {
+                        closest = distance;
+                        match = id;
+                    }
+                };
+                for (const auto& [id, actor] : proxies) consider(id, *actor);
+                for (const auto& [id, actor] : retiredNpcCorpses) consider(id, *actor);
+                if (match) linked = corpseActors.emplace(source, match).first;
+            }
+            if (linked != corpseActors.end()) {
+                if (!corpse->hasNativeBody()) {
+                    if (auto retired = retiredNpcCorpses.find(linked->second); retired != retiredNpcCorpses.end()) {
+                        corpse = std::move(retired->second);
+                        corpse->visible = true;
+                        retiredNpcCorpses.erase(retired);
+                    }
+                }
+                if (auto actor = proxies.find(linked->second); actor != proxies.end()) {
+                    if (corpse->hasNativeBody()) actor->second->visible = false;
+                    else corpse->visible = false;
+                }
+                continue;
+            }
             for (const auto& entity : frame.entities) {
-                if (entity.health != 0 || (firstPerson && entity.id == frame.playerId)) continue;
-                const auto liveProxy = proxies.find(entity.id);
-                if (liveProxy != proxies.end() &&
-                    liveProxy->second->renderable.xform.c.distance_to_sqr(proxy.renderable.xform.c) < 0.09f) {
-                    proxy.visible = false;
+                if (entity.kind != 1 || entity.health != 0 || (firstPerson && entity.id == frame.playerId)) continue;
+                const auto player = proxies.find(entity.id);
+                if (player != proxies.end() &&
+                    player->second->renderable.xform.c.distance_to_sqr(corpse->renderable.xform.c) < 0.09f) {
+                    corpse->visible = false;
                     break;
                 }
             }
         }
+    }
+    void updateNativePlayer(const SnapshotState& frame, const Entity& self, bool newFrame)
+    {
+        auto* actor = inventoryPresentation->movementActor();
+        if (!actor || self.health == 0 || !inventory().alive) {
+            if (actor && nativeReady) actor->character_physics_support()->movement()->DestroyCharacter();
+            nativeReady = false;
+            nativeHistory.clear();
+            return;
+        }
+        const Fvector authority{self.x, self.y, self.z};
+        const Fvector velocity{self.vx, self.vy, self.vz};
+        const bool reset = !nativeReady || nativeLife != inventory().life ||
+            (newFrame && authority.distance_to_sqr(lastAuthorityPosition) > 64.f &&
+                authority.distance_to_sqr(lastPredictedPosition) > 64.f);
+        if (reset) {
+            actor->resetZoneMovement(authority, velocity, (self.flags & 4) != 0);
+            nativeReady = true;
+            nativeLife = inventory().life;
+            nativeHistory.clear();
+            nativeCorrection.set(0, 0, 0);
+            nativeAck = frame.ack;
+            nativeAckTime = Device.dwTimeGlobal;
+        }
+        Fvector position, actualVelocity;
+        const auto flags = actor->sampleZoneMovement(position, actualVelocity);
+        nativeLow = (flags & 4) != 0;
+        if (newFrame) {
+            lastAuthorityPosition = authority;
+            if (newer(frame.ack, nativeAck)) {
+                nativeAck = frame.ack;
+                nativeAckTime = Device.dwTimeGlobal;
+                while (!nativeHistory.empty() && newer(frame.ack, nativeHistory.front().sequence))
+                    nativeHistory.pop_front();
+                if (!nativeHistory.empty() && nativeHistory.front().sequence == frame.ack) {
+                    nativeCorrection.sub(authority, nativeHistory.front().position);
+                    if (nativeCorrection.square_magnitude() < .0064f)
+                        nativeCorrection.set(0, 0, 0);
+                }
+            }
+        }
+        // Keep the stock controller running through short gaps in host updates.
+        // An extended outage releases movement input without resetting physics every frame.
+        const bool predict = Device.dwTimeGlobal - nativeAckTime <= 1000;
+        const auto sequence = zone_native_sequence();
+        if (sequence && (nativeHistory.empty() || newer(sequence, nativeHistory.back().sequence))) {
+            nativeHistory.push_back({sequence, position});
+            if (nativeHistory.size() > 32) nativeHistory.pop_front();
+        }
+        if (nativeCorrection.square_magnitude() > 0.f) {
+            Fvector adjustment = nativeCorrection;
+            adjustment.mul(1.f - std::exp(-Device.fTimeDelta / .18f));
+            const auto length = adjustment.magnitude();
+            if (length > .08f) adjustment.mul(.08f / length);
+            position.add(adjustment);
+            auto* movement = actor->character_physics_support()->movement();
+            Fvector physicalPosition;
+            movement->GetCharacterPosition(physicalPosition);
+            movement->SetPosition(physicalPosition.add(adjustment));
+            nativeCorrection.sub(adjustment);
+            for (auto& sample : nativeHistory) sample.position.add(adjustment);
+            if (nativeCorrection.square_magnitude() < .0001f)
+                nativeCorrection.set(0, 0, 0);
+        }
+        const auto motion = zone_native_motion_flags();
+        const bool aiming = !aimedItem.empty();
+        const bool walking = walk || (aiming && !crouch);
+        std::uint32_t controls = ((predict ? crouch : nativeLow) ? 16u : 0u) | (walking ? 128u : 0u);
+        if (predict && (motion & 2)) {
+            controls |= firstPerson
+                ? (forward && !back ? 1u : back && !forward ? 2u : 0u)
+                    | (left && !right ? 4u : right && !left ? 8u : 0u)
+                : (forward != back || left != right ? 1u : 0u);
+            if (jump && !aiming) controls |= 32u;
+            if (sprint && !walking && !aiming && (motion & 1)) controls |= 64u;
+        }
+        actor->driveZoneMovement(controls, heading, zone_native_motion_scale(), Device.fTimeDelta);
+        focus = position;
+        lastPredictedPosition = position;
+        actor->updateZoneActorPose(position, heading, pitch, Device.fTimeDelta);
+        actor->UpdateAnimation();
+        actor->CStepManager::update(firstPerson);
+        if (auto local = proxies.find(frame.playerId); local != proxies.end())
+            local->second->predicted(position, heading);
     }
     void updateInput() {
         if (!hasFrame) return;
@@ -881,6 +1416,8 @@ public:
         map_data.m_name = level.c_str();
         R_ASSERT(IGame_Level::Load(id));
         worldSpace = zone_world_space()!=0;
+        firstPerson = worldSpace;
+        nativeMovement = worldSpace && strstr(Core.Params, "-zone-native-player");
         if (worldSpace) {
             IReader* geometry=FS.r_open("$level$","level.cform");
             R_ASSERT2(geometry,"Missing campaign collision asset");
@@ -899,7 +1436,7 @@ public:
         return true;
     }
     bool Load_GameSpecific_Before() override {return true;}
-    void net_Stop() override {stopFire();inventoryPresentation.reset();proxies.clear();flyingGrenades.clear();appearance.clear();corpses.clear();detonationParticles.clear();blowoutLights.clear();detonationSounds.clear();gunshotSounds.clear();IGame_Level::net_Stop();}
+    void net_Stop() override {stopFire();inventoryPresentation.reset();proxies.clear();flyingGrenades.clear();appearance.clear();corpses.clear();corpseActors.clear();retiredNpcCorpses.clear();detonationParticles.clear();blowoutLights.clear();detonationSounds.clear();gunshotSounds.clear();nativeSounds.clear();nativeSoundLoops.clear();worldWeather.reset();appliedWorldClock.reset();appliedWorldWeather=false;IGame_Level::net_Stop();}
     void OnFrame() override {
         if(worldSpace && !contentReady) {
             const int status=zone_content_status();
@@ -907,18 +1444,35 @@ public:
             contentReady=true;Msg("* Zone content verified: authoritative world coordinates enabled");
         }
         const auto& frame = snapshot();
-        if (!frame.valid) {stopFire();inventoryPresentation.reset();proxies.clear();flyingGrenades.clear();appearance.clear();corpses.clear();detonationParticles.clear();blowoutLights.clear();corpseDiscoveryUpdates = 0;hasFrame = false;return;}
+        if (!frame.valid) {stopFire();inventoryPresentation.reset();proxies.clear();flyingGrenades.clear();appearance.clear();corpses.clear();corpseActors.clear();retiredNpcCorpses.clear();detonationParticles.clear();blowoutLights.clear();nativeSoundLoops.clear();corpseDiscoveryUpdates = 0;hasFrame = false;nativeReady = false;nativeHistory.clear();return;}
+        constexpr double npcDelayTicks = 6.; // Buffer two native host updates at 10 Hz.
+        if (!hasFrame) {
+            npcBaseTick = frame.tick;
+            npcRenderTick = -npcDelayTicks;
+        }
+        const auto latestNpcTick = static_cast<double>(frame.tick - npcBaseTick);
+        const double phaseError = latestNpcTick - npcDelayTicks - npcRenderTick;
+        if (std::abs(phaseError) > 30.) npcRenderTick = latestNpcTick - npcDelayTicks;
+        npcRenderTick = std::min(latestNpcTick,
+            npcRenderTick + Device.fTimeDelta * 30. * std::clamp(1. + phaseError * .025, .85, 1.15));
         const auto appearanceSize = zone_appearance_poll(appearanceBytes.data(), appearanceBytes.size());
         if (appearanceSize > 0 && appearance.apply(appearanceBytes.data(), appearanceSize)) {
             for (auto& entry : proxies) entry.second->setAppearance(appearance.get(entry.first));
         }
-        if (!hasFrame || applied != frame.tick) {
+        const bool newFrame = !hasFrame || applied != frame.tick;
+        if (newFrame) {
             std::map<std::uint32_t, bool> present;
             for (const auto& entity : frame.entities) {
                 const auto& look = appearance.get(entity.id);
                 if (entity.kind == 2 && look.visual.empty() && !proxies.count(entity.id)) continue;
                 present[entity.id] = true;
                 auto& proxy = proxies[entity.id];
+                if (!proxy && entity.kind == 2 && entity.health == 0) {
+                    if (auto retired = retiredNpcCorpses.find(entity.id); retired != retiredNpcCorpses.end()) {
+                        proxy = std::move(retired->second);
+                        retiredNpcCorpses.erase(retired);
+                    }
+                }
                 if (!proxy) {
                     proxy = std::make_unique<Proxy>(look.visual);
                     proxy->setAppearance(look);
@@ -928,8 +1482,9 @@ public:
                 // Visual ground projection only. Rust still simulates a flat test
                 // world; this must not be mistaken for server-side map collision.
                 if(!worldSpace)position.y = floor(position.x, position.z);
-                proxy->pose(position, entity.yaw, entity.vx * entity.vx + entity.vz * entity.vz > 0.01f, (entity.flags & 4)!=0, entity.health==0);
-                if (entity.kind == 2) proxy->applyNpcMotion(entity.motion, entity.motionTimeMs);
+                if (entity.kind == 2) proxy->queueNpcPose(position, entity, latestNpcTick);
+                else proxy->pose(position, entity.yaw, std::hypot(entity.vx, entity.vz),
+                    (entity.flags & 4)!=0, entity.health==0);
                 if (entity.id == frame.playerId) {
                     focus = position;
                     if (!hasFrame) {
@@ -940,16 +1495,24 @@ public:
                 }
             }
             for (auto i = proxies.begin(); i != proxies.end();) {
-                if (!present.count(i->first)) {Msg("* Zone proxy removed: %u", i->first);i = proxies.erase(i);}else ++i;
+                if (present.count(i->first)) { ++i; continue; }
+                if (i->second->hasNativeBody()) {
+                    i->second->visible = false;
+                    if (retiredNpcCorpses.size() >= 128) retiredNpcCorpses.erase(retiredNpcCorpses.begin());
+                    retiredNpcCorpses.insert_or_assign(i->first, std::move(i->second));
+                }
+                i = proxies.erase(i);
             }
             const bool firstFrame = !hasFrame;
             applied = frame.tick;hasFrame = true;
             if (firstFrame) updateInput();
         }
-        for (auto& entry : proxies) {entry.second->visible=!firstPerson||entry.first!=frame.playerId;entry.second->advance(Device.fTimeDelta);}
+        consumeNpcMedia(frame);
+        advanceWorldWeather();
+        for (auto& entry : proxies) {entry.second->visible=!firstPerson||entry.first!=frame.playerId;entry.second->advance(Device.fTimeDelta,npcRenderTick);}
         if (auto local = proxies.find(frame.playerId); local != proxies.end()) {
             float predicted[4];
-            if(worldSpace && zone_prediction(predicted)) {
+            if(worldSpace && !nativeMovement && zone_prediction(predicted)) {
                 Fvector position;position.set(predicted[0],predicted[1],predicted[2]);
                 local->second->predicted(position,predicted[3]);
             }
@@ -957,8 +1520,11 @@ public:
         }
         if (inventory().valid) {
             if (!inventoryPresentation) inventoryPresentation=std::make_unique<InventoryPresentation>(*this);
-            float health=0.f;for(const auto& entity:frame.entities)if(entity.id==frame.playerId)health=float(entity.health)/100.f;
-            inventoryPresentation->update(focus,health);
+            const auto self = std::find_if(frame.entities.begin(), frame.entities.end(),
+                [&](const auto& entity) { return entity.id == frame.playerId; });
+            inventoryPresentation->update(focus, self == frame.entities.end() ? 0.f : float(self->health) / 100.f);
+            if (nativeMovement && self != frame.entities.end())
+                updateNativePlayer(frame, *self, newFrame);
             if (!aimedItem.empty()) {
                 const auto* equipped = inventoryPresentation->equippedWeapon();
                 if (!equipped || equipped->id != aimedItem || equipped->launcherMode != aimedLauncher
@@ -977,6 +1543,7 @@ public:
         Fvector camera = focus,direction;
         if(firstPerson) {
             bool low=false;for(const auto& entity:frame.entities)if(entity.id==frame.playerId){low=(entity.flags&4)!=0;break;}
+            if (nativeMovement && nativeReady) low = nativeLow;
             camera.y+=low?0.95f:1.55f;
             direction.set(std::sin(heading)*std::cos(pitch),std::sin(pitch),std::cos(heading)*std::cos(pitch));
         } else {

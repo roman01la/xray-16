@@ -1,4 +1,7 @@
 import {ARCHIVE_CHUNKS, ARCHIVE_DESCRIPTORS, INSTALL_DIRECTORY, LEGACY_CHUNKS, LEGACY_DESCRIPTORS} from './opfs-store.mjs';
+import {startCampaignAnalytics} from './analytics-client.mjs';
+
+startCampaignAnalytics();
 
 // Request fullscreen on an element owned by the top document. Keyboard
 // Lock cannot be requested by the release iframe itself.
@@ -87,7 +90,12 @@ capture.addEventListener('click',async()=>{
 });
 
 const params=new URLSearchParams(location.search),multiplayer=params.get('play')==='multiplayer';
+if(multiplayer)document.documentElement.dataset.multiplayer='';
 const managingStorage=params.get('storage')==='manage';
+const importingSaves=params.get('saves')==='import';
+const importButton=document.querySelector('#boot-import');
+const importFile=document.querySelector('#boot-import-file');
+const backupStatus=document.querySelector('#backup-status');
 const returnToMenuKey='xray-return-to-menu';
 const storageLock='xray-installed-game-data';
 const deleteKey='xray-delete-game-data';
@@ -96,10 +104,22 @@ const reinstallButton=document.querySelector('#reinstall-game');
 const storageStatus=document.querySelector('#storage-status');
 const returningToMenu=sessionStorage.getItem(returnToMenuKey)===location.href;
 if(returningToMenu)sessionStorage.removeItem(returnToMenuKey);
-if(multiplayer||returningToMenu||managingStorage){
+if(multiplayer||returningToMenu||managingStorage||importingSaves){
  document.querySelector('#start-game').hidden=true;
  document.querySelector('#boot-backup').hidden=true;
 }
+importButton.hidden=multiplayer||returningToMenu||managingStorage;
+importButton.disabled=!navigator.locks||!navigator.storage?.getDirectory;
+importButton.addEventListener('click',()=>{
+ if(importingSaves){importFile.click();return;}
+ const root=params.has('stream')?'stream-cop':document.querySelector('#game').value;
+ if(!root){backupStatus.textContent='Wait for the game files to be selected, then try again.';return;}
+ const url=new URL(location.href);url.searchParams.delete('storage');url.searchParams.set('saves','import');
+ if(!params.has('stream'))url.searchParams.set('save-root',root);
+ // Release engine workers and their OPFS handles before restoring save files.
+ window.dispatchEvent(new Event('xray-browser-navigation'));
+ location.replace(url.href);
+});
 deleteButton.hidden=multiplayer||returningToMenu||!params.has('stream');
 deleteButton.disabled=!navigator.locks||!navigator.storage?.getDirectory;
 
@@ -173,7 +193,7 @@ function selectMode(mode){
   for(const key of ['play','map','slot'])url.searchParams.delete(key);
   sessionStorage.setItem(returnToMenuKey,url.href);
  }
- window.dispatchEvent(new Event('xray-browser-mode-change'));
+ window.dispatchEvent(new Event('xray-browser-navigation'));
  location.assign(url.href);
 }
 let switching=false;
@@ -184,7 +204,30 @@ window.addEventListener('xray-engine-log',({detail:line})=>{
 });
 document.querySelector('#multiplayer-hud').hidden=!multiplayer;
 document.querySelector('#return-menu').onclick=()=>{document.querySelector('#disconnect').click();selectMode('singleplayer');};
-if(managingStorage){
+if(importingSaves){
+ document.querySelector('#boot-status').textContent='Import saved games';
+ document.querySelector('#load-progress').style.display='none';
+ document.querySelector('#load-detail').textContent='Choose a JSON backup made with Download Saves. Existing saves are kept; matching save names and their thumbnails are skipped.';
+ importButton.textContent='Choose Backup';
+ deleteButton.hidden=true;
+ const back=document.querySelector('#retry');back.hidden=false;back.textContent='Return to Game';
+ back.onclick=()=>{
+  const url=new URL(location.href);url.searchParams.delete('saves');url.searchParams.delete('save-root');
+  location.replace(url.href);
+ };
+ importFile.addEventListener('change',async()=>{
+  const file=importFile.files[0];if(!file)return;
+  importButton.disabled=true;back.disabled=true;
+  backupStatus.textContent='Checking and importing saves…';
+  try{
+   const {importSaveBackup}=await import('./save-format.js');
+   const root=params.has('stream')?'stream-cop':params.get('save-root');
+   const result=await importSaveBackup(root,file);
+   backupStatus.textContent=`Imported saves: ${result.imported}. Existing saves kept: ${result.skipped}. Select Return to Game, then Load game.`;
+  }catch(error){backupStatus.textContent='Import failed: '+error.message;}
+  finally{importFile.value='';importButton.disabled=false;back.disabled=false;}
+ });
+} else if(managingStorage){
  document.querySelector('#boot-status').textContent='Manage local game data';
  document.querySelector('#load-progress').style.display='none';
  document.querySelector('#load-detail').textContent='Downloaded files can be installed again from this screen.';

@@ -7,6 +7,20 @@ use std::{
     path::Path,
 };
 
+/// Stock shotgun substates. An interrupted insertion sets Close without
+/// starting a new animation, so its current animation ends in Complete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TubeReloadPhase { Open, Insert, Close, Complete }
+
+pub fn tube_reload_after_animation(phase: TubeReloadPhase, insertion_failed: bool) -> TubeReloadPhase {
+    match crate::xray_combat_rules::tube_reload_after_animation(phase as u32, insertion_failed) {
+        0 => TubeReloadPhase::Open, 1 => TubeReloadPhase::Insert,
+        2 => TubeReloadPhase::Close, 3 => TubeReloadPhase::Complete,
+        _ => unreachable!("invalid native tube reload phase"),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum ReloadMotion {
     Magazine {

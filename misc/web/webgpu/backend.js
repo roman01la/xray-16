@@ -1,3 +1,7 @@
+import { FluidRenderer } from "./fluid-renderer.js";
+import { DetailStorage } from "./detail-storage.js";
+import { TessellationCache } from "./tessellation-cache.js";
+import { installDetailInstancing } from "./detail-instancing.js";
 import { initializeShaderCompilerClient } from "./shader-compiler-client.mjs";
 import { installNativeQueues } from "./native-queue.js";
 import { validateNativeGPU } from "./native-selftest.js";
@@ -39,9 +43,11 @@ channel?.addEventListener("message", ({ data }) => {
   if (data.command === "profile") {
     phaseProfileEnabled = !!data.enabled;
     profileEnabled = !!data.enabled && !data.phasesOnly;
+    globalThis.__xrayWebGPU?.syncDetailProfilingFlag();
   }
   if (data.command === "benchmark") {
     profileEnabled = phaseProfileEnabled = false;
+    globalThis.__xrayWebGPU?.syncDetailProfilingFlag();
     benchmark = {
       id: data.id,
       duration: data.durationMs || 30000,
@@ -206,10 +212,25 @@ export class GPUFrontend {
 
   }
   configureNativeQueues(heap, pointers, handles) { installNativeQueues(this, heap, pointers, handles, () => diagnostics.drawBatches++); }
+  configureDetailProfiling(heap, address) {
+    this.detailProfilingFlag={heap,index:address/4};
+    this.syncDetailProfilingFlag();
+  }
+  syncDetailProfilingFlag(enabled = phaseProfileEnabled || profileEnabled) {
+    const flag=this.detailProfilingFlag;
+    if(flag)flag.heap()[flag.index]=enabled?1:0;
+  }
   // Engine CStatTimer results are decaying peaks, not additive per-frame averages.
   // They are gathered only while the engine rs_stats overlay is enabled.
   recordSubsystemTimings(objectsMs, aiThinkMs, aiVisionMs, luaGCms, activeObjects, totalObjects) {
     this.subsystemStats = { objectsMs, aiThinkMs, aiVisionMs, luaGCms, activeObjects, totalObjects };
+  }
+  recordDetailTimings(preparationMs, submissionMs, packedInstances, reusedBatches, changedBatches = 0, membershipChanges = 0, contentChanges = 0) {
+    if (!phaseProfileEnabled && !profileEnabled && !telemetryAdapter) return;
+    for (const [key,value] of Object.entries({detailPreparationMs:preparationMs,
+      detailSubmissionMs:submissionMs,detailPackedInstances:packedInstances,detailReusedBatches:reusedBatches,
+      detailChangedBatches:changedBatches,detailMembershipChanges:membershipChanges,detailContentChanges:contentChanges}))
+      profile[key] = (profile[key] || 0) + value;
   }
   recordEngineTimings(simulation, render, wait, vsync, limitMs) {
     if (!phaseProfileEnabled && !telemetryAdapter) return;
@@ -227,6 +248,13 @@ export class GPUFrontend {
     if (!this.objects.has(o)) this.objects.set(o, {});
     return this.objects.get(o);
   }
+  createFluidVolume(config) {
+    this.fluids ??= new FluidRenderer(this);
+    diagnostics.fluid = this.fluids.diagnostics;
+    return this.fluids.create(config);
+  }
+  destroyFluidVolume(id) { this.fluids?.destroy(id); }
+  renderFluidVolume(id, frame) { this.fluids?.render(id, frame); }
   endPass() {
     if (this.pass) {
       this.occlusion.suspend(this.pass);
@@ -278,7 +306,7 @@ export class GPUFrontend {
     if (!free?.length) diagnostics.streamBufferAllocations++;
     else this.streamPoolBytes=(this.streamPoolBytes || 0)-size;
     const slot = free?.pop() || {size, gpu: this.device.createBuffer({size,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST})};
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST})};
     if (!free?.length) this.streamPool.delete(size);
     i.streamSlot = slot; i.gpu = slot.gpu;
     if (bytes.length) this.device.queue.writeBuffer(i.gpu, 0, bytes);
@@ -286,6 +314,7 @@ export class GPUFrontend {
   }
   bufferData(a, i) {
     if (!i) throw Error("Missing native buffer storage");
+    i.tessellationRevision = (i.tessellationRevision || 0) + 1;
     const data = a[1];
     if (typeof data === "number") {
       if (i.gpu && i.size === align(data)) { i.highWater = 0; return; }
@@ -294,7 +323,7 @@ export class GPUFrontend {
       i.streamSlot = null;
       i.size = align(data); i.highWater = 0; i.cpu = new Uint8Array(i.size);
       i.gpu = this.device.createBuffer({size: Math.max(4,i.size),
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC});
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC});
       return;
     }
     const source = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer,
@@ -306,12 +335,13 @@ export class GPUFrontend {
     if (dynamic) this.streamSnapshot(i, i.cpu.subarray(0,size));
     else {
       i.gpu = this.device.createBuffer({size: Math.max(4,size),
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC});
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC});
       if (size) this.device.queue.writeBuffer(i.gpu,0,i.cpu.subarray(0,size));
     }
   }
   bufferSubData(a, i) {
     if (!i?.gpu) throw Error("Missing native sub-buffer storage");
+    i.tessellationRevision = (i.tessellationRevision || 0) + 1;
     const data = a[2], offset = a[3] || 0, count = a[4] ?? data.length-offset;
     const bytes = new Uint8Array(data.buffer ?? data,(data.byteOffset || 0)+offset*(data.BYTES_PER_ELEMENT || 1),count*(data.BYTES_PER_ELEMENT || 1));
     i.cpu.set(bytes,a[1]);
@@ -373,12 +403,12 @@ export class GPUFrontend {
       label: "X-Ray " + i.format,
       size: [i.width, i.height, i.depth],
       mipLevelCount: i.mips,
+      sampleCount: i.samples || 1,
       dimension: i.dimension,
       format: i.format,
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.COPY_SRC |
+        ((i.samples || 1) === 1 ? GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC : 0) |
         (renderable ? GPUTextureUsage.RENDER_ATTACHMENT : 0),
     });
     i.views = new Map();
@@ -472,6 +502,7 @@ export class GPUFrontend {
   }
   link(program) {
     const meta = program.meta;
+    installDetailInstancing(meta);
     meta.activeSamplerIndices = meta.samplers.map((_,n)=>n).filter(n=>meta.activeBindings.includes(1+n*2));
     meta.activeBindingSet = new Set(meta.activeBindings);
     const vertexBindings = new Set(activeBindings(meta.stages.vert)),
@@ -479,7 +510,8 @@ export class GPUFrontend {
     const layouts = meta.activeBindings.map((binding) => {
       const visibility =
         (vertexBindings.has(binding) ? GPUShaderStage.VERTEX : 0) |
-        (fragmentBindings.has(binding) ? GPUShaderStage.FRAGMENT : 0);
+        (fragmentBindings.has(binding) ? GPUShaderStage.FRAGMENT : 0) |
+        (meta.tessellation ? GPUShaderStage.COMPUTE : 0);
       if (binding === 0)
         return {
           binding,
@@ -503,6 +535,7 @@ export class GPUFrontend {
         binding,
         visibility,
         texture: {
+          multisampled: sm.type.includes("MS"),
           sampleType: sm.type.includes("Shadow")
             ? "depth"
             : meta.activeBindings.includes(binding + 1)
@@ -520,7 +553,7 @@ export class GPUFrontend {
       entries: layouts,
     });
     meta.extraUniformLayouts = (meta.uniformGroups || []).slice(1).map(group => this.device.createBindGroupLayout({entries:[{
-      binding:0,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,
+      binding:0,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT|(meta.tessellation?GPUShaderStage.COMPUTE:0),
       buffer:{type:"uniform",hasDynamicOffset:true,minBindingSize:group.bytes}}]}));
     meta.pipelineLayout = this.device.createPipelineLayout({
       bindGroupLayouts: [meta.bindGroupLayout, ...meta.extraUniformLayouts],
@@ -613,6 +646,17 @@ export class GPUFrontend {
       const source = kind === 2 ? ints : floats;
       const n = Math.min(offsets.length, kind === 1 ? u.columns * u.rows : count);
       if (kind === 1 && count !== 16) throw Error("Invalid batched Fmatrix");
+      if (kind === 4 && u.columns === 1 && u.rows === 4 && u.stride === 16) {
+        // Explicit full replacement. Tight vec4 arrays need no scalar reflection
+        // lookup or duplicate equality scan. Partial writes retain other rows.
+        if (count % 4 || count > offsets.length) throw Error("Invalid vector-array replacement");
+        dst.set(source.subarray(start, start + count), offsets[0]);
+        const block = loc.block || p;
+        block.uniformVersion = (block.uniformVersion || 0) + 1;
+        diagnostics.uniformBulkBytes = (diagnostics.uniformBulkBytes || 0) + count * 4;
+        diagnostics.uniformRecords++; start += count;
+        continue;
+      }
       let dirty = false;
       for (let i = 0; i < n; i++) {
         // Fmatrix already contains the column-major values consumed by WGSL;
@@ -769,11 +813,12 @@ export class GPUFrontend {
     ].find((a) => a?.texture);
     const key = colors.map(a => a ? `${this.id(a.texture)}:${a.level}:${a.layer}` : "-").join(",")
       + "|" + (depth ? `${this.id(depth.texture)}:${depth.level}:${depth.layer}` : "0");
-    const formats = colors.map(c => c ? this.info(c.texture).format : "-").join(",")
+    const samples = this.info((colors.find(Boolean) || depth)?.texture)?.samples || 1;
+    const formats = samples + "|" + colors.map(c => c ? this.info(c.texture).format : "-").join(",")
       + "|" + (depth ? this.info(depth.texture).format : "-");
     const compatibilities = (this.targetCompatibilities ??= new Map());
     let compatibility = compatibilities.get(formats);
-    if (!compatibility) compatibilities.set(formats, compatibility = {formats});
+    if (!compatibility) compatibilities.set(formats, compatibility = {formats, samples});
     return (i.cachedAttachments = { colors, depth, key, compatibility,
       storageGeneration: this.textureStorageGeneration || 0 });
   }
@@ -784,10 +829,13 @@ export class GPUFrontend {
     const {colors, depth} = this.attachments();
     const attachments = [...colors, depth].filter(a => a?.texture);
     if (!attachments.length) throw Error("Native framebuffer has no attachments");
-    let extent;
+    let extent, samples;
     for (const a of attachments) {
       const i = this.info(a.texture);
       if (!i?.gpu || a.texture.deleted) throw Error("Native framebuffer has an invalid attachment");
+      const count = i.samples || 1;
+      if (samples !== undefined && samples !== count) throw Error("Native framebuffer sample counts differ");
+      samples = count;
       const level = a.level || 0;
       if (level < 0 || level >= i.mips) throw Error("Native framebuffer mip level is out of range");
       const size = [Math.max(1, i.width >> level), Math.max(1, i.height >> level)];
@@ -853,11 +901,13 @@ export class GPUFrontend {
   createNativeShader(type, source) { return allocateHandle(this.handles,"shaders",{type,source}); }
   linkNativeProgram(vertex, fragment) { return loadNativeProgram(this,this.handles,vertex,fragment); }
   nativeUniformLocation(program, name) { return nativeUniformLocation(this.handles.programs[program],name); }
-  allocateNativeTexture(token, target, levels, format, width, height, depth) {
+  allocateNativeTexture(token, target, levels, format, width, height, depth, samples = 1) {
     this.flushNativeDraws?.();
     const info = this.info(token);
     info.target = target;
     info.params = new Map([[EngineFormat.TEXTURE_BASE_LEVEL, 0], [EngineFormat.TEXTURE_MAX_LEVEL, levels - 1]]);
+    if (samples !== 1 && samples !== 4) throw Error("Unsupported WebGPU sample count");
+    info.samples = samples;
     this.allocateTexture([target, levels, format, width, height, depth], target === EngineFormat.TEXTURE_3D || target === EngineFormat.TEXTURE_2D_ARRAY, info);
     diagnostics.nativeTextureAllocations++;
   }
@@ -869,6 +919,7 @@ export class GPUFrontend {
     if (!compressed) args.push(type);
     args.push(bytes);
     this.uploadTexture(args, is3, compressed, this.info(token));
+    const info = this.info(token); info.tessellationContentRevision = (info.tessellationContentRevision || 0) + 1;
     diagnostics.nativeTextureUploads++;
   }
   deleteNativeTexture(token) {
@@ -894,11 +945,27 @@ export class GPUFrontend {
     }
     diagnostics.nativeBufferUploads++;
   }
+  updateDetailRecords(token, descriptors, heap, words, visible) {
+    this.flushNativeDraws?.();
+    this.detailArena??=new DetailStorage(this);
+    this.detailArena.upload(token,descriptors,heap,words,visible);
+  }
+  gatherDetailRanges(token, ranges, count, changed) {
+    this.flushNativeDraws?.();
+    this.detailArena??=new DetailStorage(this);
+    this.detailArena.gatherRanges(token,ranges,count,changed);
+  }
+  gatherDetailSet(token, indices, changed) {
+    this.flushNativeDraws?.();
+    this.detailArena??=new DetailStorage(this);
+    this.detailArena.gather(token,indices,changed);
+  }
   deleteNativeBuffer(token) {
     this.flushNativeDraws?.();
     if (!token) return;
     this.flush();
     const info = this.info(token);
+    if(this.detailArena?.release(info))this.detailArena=null;
     info?.gpu?.destroy();
     if (this.vao.element === token) this.vao.element = null;
     token.deleted = true;
@@ -921,7 +988,12 @@ export class GPUFrontend {
     const src = this.info(source), dst = this.info(destination);
     if (!src?.gpu || !dst?.gpu) throw Error("Missing native copy texture");
     this.endPass();
-    this.enc().copyTextureToTexture({texture: src.gpu}, {texture: dst.gpu}, [width, height, 1]);
+    if ((src.samples || 1) > 1) {
+      if ((dst.samples || 1) !== 1 || src.format !== dst.format || src.format.startsWith('depth'))
+        throw Error("Invalid multisample color resolve");
+      this.enc().beginRenderPass({colorAttachments:[{view:this.view(source),resolveTarget:this.view(destination),loadOp:'load',storeOp:'store'}]}).end();
+    } else this.enc().copyTextureToTexture({texture: src.gpu}, {texture: dst.gpu}, [width, height, 1]);
+    dst.tessellationContentRevision = (dst.tessellationContentRevision || 0) + 1;
     diagnostics.nativeTextureCopies++;
   }
   selectNativeProgram(program) {
@@ -946,35 +1018,50 @@ export class GPUFrontend {
   }
   clearNativeTarget(texture, mask, r, g, b, a, depth, stencil) {
     this.flushNativeStates?.();
-    const s = this.state;
+    this.endPass();
+    const info=this.info(texture);
+    if (!info?.gpu) throw Error("Missing native clear texture");
+    const s=this.state, descriptor={colorAttachments:[]};
     if (mask & EngineFormat.COLOR_BUFFER_BIT) {
-      this.setNativeAttachment(this.fbo, EngineFormat.COLOR_ATTACHMENT0, texture);
-      if (s.colorMask !== 15) this.pipelineStateKey = null;
-      s.colorMask = 15;
-
-      s.clearColor = [r,g,b,a];
+      if (s.colorMask !== 15) this.pipelineStateKey=null;
+      s.colorMask=15; s.clearColor=[r,g,b,a];
+      descriptor.colorAttachments=[{view:this.view(texture),loadOp:'clear',storeOp:'store',clearValue:[r,g,b,a]}];
     } else {
-      this.setNativeAttachment(this.fbo, EngineFormat.DEPTH_STENCIL_ATTACHMENT, texture);
-      if (!s.depthWrite) this.pipelineStateKey = null;
-      s.depthWrite = true;
-      s.clearDepth = depth;
-      if (mask & EngineFormat.STENCIL_BUFFER_BIT) {
-        if (s.stencilMask !== 0xffffffff) this.pipelineStateKey = null;
-        s.stencilMask = 0xffffffff;
-        s.clearStencil = stencil;
+      if (!s.depthWrite) this.pipelineStateKey=null;
+      s.depthWrite=true; s.clearDepth=depth;
+      const attachment={view:this.view(texture),depthLoadOp:mask & EngineFormat.DEPTH_BUFFER_BIT ? 'clear' : 'load',depthStoreOp:'store',depthClearValue:depth};
+      if (info.format.includes('stencil')) {
+        attachment.stencilLoadOp=mask & EngineFormat.STENCIL_BUFFER_BIT ? 'clear' : 'load';
+        attachment.stencilStoreOp='store'; attachment.stencilClearValue=stencil;
       }
+      if (mask & EngineFormat.STENCIL_BUFFER_BIT) {
+        if(s.stencilMask!==0xffffffff)this.pipelineStateKey=null;
+        s.stencilMask=0xffffffff; s.clearStencil=stencil;
+      }
+      descriptor.depthStencilAttachment=attachment;
     }
-    diagnostics.nativeClears++;
-    this.begin(mask);
+    // Clear the named resource independently of currently bound attachments.
+    // They can have different sizes/sample counts, and engine state is unchanged.
+    this.enc().beginRenderPass(descriptor).end();
+    diagnostics.nativeClears++; diagnostics.renderPasses++;
   }
   presentNative(framebuffer, width, height) {
     this.flushNativeBindings?.();
     this.flushNativeStates?.();
     this.flushNativeUniforms?.();
+    // The canvas blit uses temporary bindings. Keep the engine's bindings in
+    // sync with its cached state so later queued attachments still have a target,
+    // including when resource deletion drains the queue between frames.
+    const drawFramebuffer = this.fbo, readFramebuffer = this.readFbo;
     this.readFbo = framebuffer;
     this.fbo = null;
     diagnostics.nativePresents++;
-    this.blit([0,0,width,height,0,0,width,height,EngineFormat.COLOR_BUFFER_BIT,EngineFormat.NEAREST]);
+    try {
+      this.blit([0,0,width,height,0,0,width,height,EngineFormat.COLOR_BUFFER_BIT,EngineFormat.NEAREST]);
+    } finally {
+      this.fbo = drawFramebuffer;
+      this.readFbo = readFramebuffer;
+    }
   }
   clear(mask) {
     this.flushNativeStates?.();
@@ -1004,23 +1091,43 @@ export class GPUFrontend {
   }
   // One typed engine call; no EngineFormat draw wrapper, proxy dispatch, VAO binding or
   // attribute-pointer emulation. Resource tokens retain allocation identity.
-  submitDraw(declaration, vertexBuffer, indexBuffer, stride, program, primitive, indexed, count, first, baseVertex) {
+  submitDraw(declaration, vertexBuffer, indexBuffer, stride, program, primitive, indexed, count, first, baseVertex, instanceBuffer = null, instances = 1) {
     const d = this.directDeclarations?.get(declaration);
     if (!d) throw Error("Unregistered direct draw declaration");
     if (!vertexBuffer || (indexed && !indexBuffer)) throw Error("Missing direct draw buffer");
     let strides = d.geometries.get(vertexBuffer);
     if (!strides) d.geometries.set(vertexBuffer, strides = new Map());
-    let geometry = strides.get(stride);
-    if (!geometry) {
-      geometry = { attrs: new Map(d.attributes.map(a => [a.location, {...a, stride, buffer: vertexBuffer}])) };
-      strides.set(stride, geometry);
+    let base = strides.get(stride);
+    if (!base) {
+      base = { attrs: new Map(d.attributes.map(a => [a.location, {...a, stride, buffer: vertexBuffer}])) };
+      strides.set(stride, base);
     }
+    let geometry = base;
+    const meta = this.programs.get(program);
+    if (instanceBuffer) {
+      if (!meta?.detailInstancing || !Number.isInteger(instances) || instances < 1)
+        throw Error("Invalid native detail instance draw");
+      const instanced = (base.instanced ??= new WeakMap());
+      geometry = instanced.get(instanceBuffer);
+      if (!geometry) {
+        geometry = {attrs: new Map(base.attrs)};
+        for (let i=0;i<4;i++) geometry.attrs.set(12+i, {location:12+i,size:4,type:EngineFormat.FLOAT,
+          normalized:false,enabled:true,divisor:1,stride:64,offset:i*16,buffer:instanceBuffer});
+        instanced.set(instanceBuffer, geometry);
+      }
+      diagnostics.detailDraws = (diagnostics.detailDraws || 0) + 1;
+      diagnostics.detailInstances = (diagnostics.detailInstances || 0) + instances;
+    } else if (meta?.detailInstancing) throw Error("Detail shader requires instance data");
     // Consumed synchronously; changing the index buffer does not change layout.
     geometry.element = indexBuffer;
     const start = profileEnabled ? performance.now() : 0;
     diagnostics.directDraws++;
-    this.encodeDraw(this.programs.get(program), geometry, primitive, indexed ? "uint16" : undefined,
-      count, 1, first, baseVertex, 0);
+    this.encodeDraw(meta, geometry, primitive, indexed ? "uint16" : undefined,
+      count, instances, first, baseVertex, 0);
+    if (instanceBuffer) {
+      const info=this.objects?.get(instanceBuffer);
+      if (info) info.detailEncoder=this.encoder;
+    }
     if (profileEnabled) profile.directSubmissionMs = (profile.directSubmissionMs || 0) + performance.now() - start;
     return true;
   }
@@ -1099,6 +1206,7 @@ export class GPUFrontend {
           set(s, "blendOpA", nativeBlendOp[b] || "add");
           break;
         case 10: set(s, "colorMask", a & 15); break;
+        case 18: set(s, "alphaToCoverage", !!a); break;
         case 11:
           set(s, "cull", a !== 1);
           if (a !== 1) set(s, "cullFace", a === 2 ? "back" : a === 3 ? "front" : "both");
@@ -1237,7 +1345,7 @@ export class GPUFrontend {
             g.UNSIGNED_INT_VEC4,
           ].includes(at.type) &&
           !v.integer &&
-          !v.normalized &&
+          !v.normalized && !v.integerInput &&
           v.type !== g.FLOAT &&
           v.type !== g.HALF_FLOAT
         ) {
@@ -1281,6 +1389,14 @@ export class GPUFrontend {
       layout = { vertexBuffers, bindings, conversions, dependencies,
         revision: geometry.revision || 0, generation: this.bufferGeneration,
         key: JSON.stringify(vertexBuffers) };
+      if (p.tessellation) {
+        this.tessellationCache ??= new TessellationCache(this);
+        diagnostics.tessellation = this.tessellationCache.metrics;
+        layout.tessellation = this.tessellationCache.prepare(p, geometry, indexFormat);
+        layout.vertexBuffers = [layout.tessellation.vertexLayout];
+        layout.bindings = []; layout.conversions = [];
+        layout.key += ":tessellation-v1";
+      }
       layouts.set(p, layout);
     }
     if (profileEnabled) {
@@ -1291,12 +1407,19 @@ export class GPUFrontend {
     const { vertexBuffers, bindings, conversions } = layout;
     const target = this.attachments();
     const { colors, depth } = target;
+    if (!target.validatedSamples) {
+      for (const attachment of [...colors, depth]) {
+        if (attachment && (this.info(attachment.texture).samples || 1) !== target.compatibility.samples)
+          throw Error(`Native draw ${p.key} has incompatible attachment sample counts (${target.key})`);
+      }
+      target.validatedSamples = true;
+    }
     // Cache immutable pipeline descriptions before allocating their nested objects.
     this.pipelineStateKey ??= JSON.stringify([
       s.colorMask, s.blend, s.blendSrc, s.blendDst, s.blendOp,
       s.blendSrcA, s.blendDstA, s.blendOpA, s.frontFace, s.cull, s.cullFace,
       s.depthTest, s.depthWrite, s.depthFunc, s.stencil, s.stencilFront,
-      s.stencilBack, s.stencilReadMask, s.stencilMask, s.polygonOffset, s.bias, s.slope]);
+      s.stencilBack, s.stencilReadMask, s.stencilMask, s.polygonOffset, s.bias, s.slope, s.alphaToCoverage]);
     let record, preparedKinds;
     const drawKind = primitive * 3 + (indexFormat === "uint16" ? 1 : indexFormat === "uint32" ? 2 : 0);
     if (this.preparedEnabled !== false) {
@@ -1373,7 +1496,7 @@ export class GPUFrontend {
                 depthBiasSlopeScale: s.polygonOffset ? s.slope : 0,
               }
             : undefined;
-          let vertexModule = p.modules.vert;
+          let vertexModule = layout.tessellation?.renderModule || p.modules.vert;
           if (conversions.length) {
             const conversionKey = JSON.stringify(conversions);
             p.vertexVariants ??= new Map();
@@ -1398,6 +1521,7 @@ export class GPUFrontend {
             },
             fragment: { module: p.modules.frag, entryPoint: "main", targets },
             primitive,
+            multisample: {count: target.compatibility.samples || 1, alphaToCoverageEnabled: !!s.alphaToCoverage && target.compatibility.samples > 1},
             ...(ds ? { depthStencil: ds } : {}),
           });
           this.pipelineCache.set(key, pipe);
@@ -1414,7 +1538,7 @@ export class GPUFrontend {
     }
     const bytes = p.uniformData;
     const hasUniform = p.activeBindings.includes(0);
-    const needed = (p.uniformBlocks || [p]).reduce((n,block)=>n+align(block.uniformData.length,256),0);
+    const needed = (p.uniformBlocks || [p]).reduce((n,block)=>n+align(block.uniformData.length,256),0) + (layout.tessellation ? 256 : 0);
     if(this.uniformOffset+needed>this.uniformBuffer.size){
       this.flush(); this.uniformOffset=this.uniformUploaded=0; this.uniformEpoch=(this.uniformEpoch || 0)+1;
     }
@@ -1440,7 +1564,7 @@ export class GPUFrontend {
         const sm = p.samplers[n];
         if (!p.activeBindings.includes(1 + n * 2)) continue;
         const unit = p.values.get(sm.name)?.[0] ?? 0;
-        const target = sm.type.includes("Cube")
+        const target = sm.type.includes("MS") ? g.TEXTURE_2D_MULTISAMPLE : sm.type.includes("Cube")
           ? g.TEXTURE_CUBE_MAP
           : sm.type.includes("3D")
             ? g.TEXTURE_3D
@@ -1573,7 +1697,17 @@ export class GPUFrontend {
       drawMark = now;
     }
     record.material = material;
-    this.encodePreparedDraw(record, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase);
+    if (layout.tessellation) {
+      if (primitive !== EngineFormat.TRIANGLES || instances !== 1) throw Error("Unsupported tessellated draw kind");
+      const generated = this.tessellationCache.generate(layout.tessellation, p, geometry, count, first, baseVertex,
+        this.tessellationFactor || 8, record, uniformBase);
+      if (generated) this.encodePreparedDraw({...record,bindings:generated.bindings}, generated.geometry, "uint32", generated.count, 1, 0, 0, 0, uniformBase);
+      else {
+        // Capacity fallback keeps the surface visible and exposes a diagnostic.
+        const fallback = (p.tessellationFallback ??= {...p,key:p.key+":tessellation-budget-fallback",tessellation:null});
+        this.encodeDraw(fallback, geometry, primitive, indexFormat, count, instances, first, baseVertex, firstInstance);
+      }
+    } else this.encodePreparedDraw(record, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase);
     if (profileEnabled) profile.drawEncodingMs = (profile.drawEncodingMs || 0) + performance.now() - drawMark;
   }
   encodePreparedDraw(record, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase) {
@@ -1880,6 +2014,9 @@ export class GPUFrontend {
         this.engineProfile = null;
       }
       for (const k in profile) profile[k] = 0;
+      if(this.detailArena)Object.assign(diagnostics,{detailStorageBytes:this.detailArena.bytes,
+        detailStorageSlots:this.detailArena.entries.size,detailRecordUploadBytes:this.detailArena.metrics.recordBytes,
+        detailIndexUploadBytes:this.detailArena.metrics.indexBytes,detailStorageEvictions:this.detailArena.metrics.evictions});
       diagnostics.passBatchEnabled = this.passBatchEnabled;
       diagnostics.bindingBatchEnabled = this.bindingBatchEnabled;
       diagnostics.stateBatchEnabled = this.stateBatchEnabled;

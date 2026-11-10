@@ -1,3 +1,4 @@
+import { applyMipBias } from "./mip-bias.mjs";
 import { packUniforms } from "./pack-uniforms.mjs";
 import { reflectProgram, shaderValueType } from "./reflection.mjs";
 import { shaderKey } from "./shader-key.js";
@@ -33,10 +34,12 @@ function prepare(source, stage, attributes, varyings, uniforms, samplers) {
   const textures = samplers
     .map((u, i) => {
       const type = u.type.replace("sampler", "texture").replace("Shadow", "");
+      if (u.type.includes("MS"))
+        return `layout(set=0,binding=${1+i*2}) uniform ${type} ${u.name};`;
       return `layout(set=0,binding=${1 + i * 2}) uniform ${type} ${u.name}_texture;\nlayout(set=0,binding=${2 + i * 2}) uniform ${u.type.includes("Shadow") ? "samplerShadow" : "sampler"} ${u.name}_sampler;\n#define ${u.name} ${u.type}(${u.name}_texture,${u.name}_sampler)`;
     })
     .join("\n");
-  s = s.replace(/^#version[^\n]*\n/, `#version 450\n${block}${textures}\n`);
+  s = s.replace(/^#version[^\n]*\n/, `#version 450\n#extension GL_EXT_samplerless_texture_functions : require\n${block}${textures}\n`);
   if (stage === "vert") {
     s = s.replace(/\bvoid\s+main\s*\(/, "void xray_main(");
     s +=
@@ -132,6 +135,7 @@ export async function compileProgram(request, toolchain) {
         .join("\n"),
     );
   }
+  if (sources.frag) sources.frag = applyMipBias(sources.frag);
   const reflectedAttributes = [];
   for (const m of sources.vert.matchAll(
     /(?:layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*)?\bin\s+(\w+)\s+(\w+)\s*;/g,
@@ -191,6 +195,7 @@ export async function compileProgram(request, toolchain) {
     uniforms,
     samplers,
     uniformBytes: Math.max(16, offset),
+    varyings,
     stages: {},
     key,
   };
@@ -206,6 +211,19 @@ export async function compileProgram(request, toolchain) {
     ),
   ];
   reflectProgram(result, reflectedAttributes);
+  const tess=/WEB_TESS_([123])(_DB)?(_SHADOW)?/.exec(request.sources.vert);
+  if(tess) {
+    result.tessellation={method:Number(tess[1]),detailBump:!!tess[2],shadow:!!tess[3],detail:(varyings.v2p_bumped_tcdbump??varyings.xr_v2p_13)!==undefined};
+    // Displacement runs in compute after the stock VS. Its textures must remain
+    // reflected even when they are not sampled by the original render stages.
+    if((result.tessellation.method&2)&&result.tessellation.detail) {
+      for(const name of ['s_bumpX',...(result.tessellation.detailBump?['s_detailBumpX']:[])]) {
+        const index=samplers.findIndex(s=>s.name===name);if(index<0)throw Error('Missing tessellation sampler '+name);
+        for(const binding of [1+index*2,2+index*2])if(!result.activeBindings.includes(binding))result.activeBindings.push(binding);
+        if(!result.activeUniforms.some(u=>u.name===name))result.activeUniforms.push({name,size:1,type:shaderValueType(samplers[index].type)});
+      }
+    }
+  }
   packUniforms(result);
   return result;
 }

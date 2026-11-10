@@ -209,6 +209,16 @@ void uber_deffer(CBlender_Compile& C, bool hq, LPCSTR _vspec, LPCSTR _pspec, BOO
         C.r_dx11Sampler("smp_rtlinear");
     }
 #elif defined(USE_OGL)
+#ifdef XR_PLATFORM_WEB
+    if (bump && hq && RImplementation.o.tessellation && C.TessMethod != 0)
+    {
+        string64 tessTag;
+        xr_sprintf(tessTag, "(WEB_TESS_%u%s%s)", C.TessMethod, bHasDetailBump ? "_DB" : "",
+            C.iElement == SE_R2_SHADOW ? "_SHADOW" : "");
+        xr_strcat(vs, tessTag);
+    }
+    if (C.iElement == SE_R2_SHADOW) xr_strcpy(ps, "null");
+#endif
     C.r_Pass(vs, ps, FALSE);
     VERIFY(C.L_textures[0].size());
     if (bump)

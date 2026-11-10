@@ -1,8 +1,9 @@
 # Rust multiplayer foundation
 
 The unified Call of Pripyat browser game uses one optimized WebGPU engine for
-single player and the multiplayer alpha. Rust owns the multiplayer simulation
-and the browser engine renders map assets and presentation actors. Single-player
+single player and the multiplayer alpha. Rust owns WebRTC, durable state and
+player simulation. A native X-Ray host runs A-Life on each campaign map. The
+browser renders replicated actors and predicts local movement. Single-player
 saves and simulation remain local to the browser. [Unified web build](../misc/web/README.md)
 
 The synthetic harness and isolated Zaton preview below exercise movement,
@@ -100,13 +101,21 @@ native ALife/server or local actor simulation.
   actors and uses server XYZ directly.
 - A roughly 544 KB wasm32 sidecar compiles the exact server motor modules and
   reuses verified engine bytes. It has a separate memory/BVH from the wasm64
-  engine, without another asset download. Local replay is bounded to eight steps;
-  stale/backlogged state falls back to authority.
+  engine, without another asset download. Local replay is bounded to sixteen
+  steps. Rendering fills in at most one additional tick and eases small
+  corrections. Stale or excessively backlogged state falls back to authority.
 
 Actual terrain, crouch, jump, landing, mutual movement and despawn have passed
 browser checks. Native/WASM route and idle probes match exactly. This is not
 complete map/controller acceptance: dynamic doors/props, player collision,
 moving platforms, water/hazards, broad stairs/corners and WAN testing remain.
+
+Set `ZONE_NATIVE_PLAYER_MOVEMENT=1` on a Rust server with a matching native
+A-Life host, map collision, a persistence database and an item catalog for
+every map. The browser learns this mode at sign-in and uses the original
+X-Ray actor and `CPHMovementControl`. The native host uses the same controller,
+and its acknowledged poses drive Rust's movement snapshots and combat rewind.
+The capsule controller remains available for existing server instances.
 
 ## Replication and transport
 

@@ -1,7 +1,8 @@
 //! Server-owned firearm traces, bounded rewind and ammunition.
-use crate::{alife_attacks::{NativeAttack, NativeDamage}, alife_npcs::{NativeBounds, NativeTarget, rotate_yaw}, projectile::{LaunchPose, Projectiles}, world::{CharacterKey, Kind, Vec3, World}};
+use crate::{alife_attacks::{NativeAttack, NativeDamage, NativeHitKind, NativeRay}, alife_npcs::{NativeBounds, NativeTarget, rotate_yaw}, projectile::{LaunchPose, Projectiles}, world::{CharacterKey, Kind, Vec3, World}};
 use crate::ballistics::{Flight, MAX_SURFACE_CONTACTS, MaterialFlight, RoundProfile, Spread};
 pub use crate::projectile::{DamageContact, Detonation, LaunchSpec};
+pub use crate::alife_weapon::NativeWeaponRules;
 use parry3d::{
     math::Vector,
     query::{PointQuery, Ray, RayCast},
@@ -67,6 +68,7 @@ struct Pose {
     combat_locked: bool,
     raised_aim: Option<crate::survival::AimProfile>,
     native: Option<(NativeTarget, NativeBounds)>,
+    hitboxes: Option<Arc<crate::alife_hitboxes::Hitboxes>>,
 }
 struct Frame {
     tick: u32,
@@ -108,10 +110,11 @@ pub struct ChargedShot {
 
 fn is_zero(value: &f32) -> bool { *value == 0.0 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct FireState {
     pub queue_index: Option<u32>,
     pub traced: Option<RoundProfile>,
+    pub native_rules: Option<NativeWeaponRules>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -137,7 +140,7 @@ pub enum ArmourImpact {
 #[derive(Clone)]
 pub struct ShotTarget {
     pub character: CharacterKey,
-    pub bone: &'static str,
+    pub bone: Arc<str>,
     pub distance: f32,
     pub speed_factor: f32,
     pub penetration: Option<f32>,
@@ -147,11 +150,11 @@ enum Impact {
     Miss,
     Blocked,
     Protected,
-    Native { id: u32, target: NativeTarget, direction: Vector, offset: Vector },
+    Native { id: u32, target: NativeTarget, direction: Vector, offset: Vector, ray: NativeRay },
     Hit {
         target: u32,
         incarnation: u32,
-        bone: &'static str,
+        bone: Arc<str>,
     },
 }
 
@@ -164,10 +167,12 @@ struct TraceContact {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VolleyImpact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_state: Option<crate::survival::State>,
     pub applied_pellets: u8,
     pub damaged: bool,
     pub health: f32,
-    pub bleeding: f32,
+    pub(crate) wounds: Vec<(String, f32)>,
     pub field_armour: Option<crate::environment::Armour>,
     pub commit: crate::survival::ImpactCommit,
 }
@@ -209,7 +214,7 @@ impl TracedShot {
     }
 
     fn native_attack(&self, world: &World, charge: &ChargedShot, contact: &TraceContact) -> Option<NativeAttack> {
-        let Impact::Native { id, target, direction, offset } = contact.impact else { return None; };
+        let Impact::Native { id, target, direction, offset, ray } = contact.impact else { return None; };
         if charge.launcher.is_some() || contact.distance > charge.range { return None; }
         let entity = world.entities.get(&id)?;
         if entity.health == 0 || entity.native.as_ref()?.target != target || world.is_protected(entity) { return None; }
@@ -217,8 +222,10 @@ impl TracedShot {
         damage.power = damage.power.map(|power| power * contact.speed_factor);
         damage.impulse *= contact.speed_factor;
         if let Some(penetration) = contact.penetration { damage.penetration = penetration; }
+        let ray = (world.native_player_movement && self.ballistics.is_some()
+            && matches!(damage.kind, crate::alife_attacks::NativeHitKind::Bullet)).then_some(ray);
         Some(NativeAttack { target_id: id, target, shooter: self.shooter, life: self.shooter_life,
-            damage, direction: direction.to_array(), offset: offset.to_array() })
+            damage, direction: direction.to_array(), offset: offset.to_array(), ray })
     }
 
     pub fn armour_target(&self, world: &World) -> Option<ShotTarget> {
@@ -227,10 +234,10 @@ impl TracedShot {
 
     pub fn armour_targets<'a>(&'a self, world: &'a World) -> impl Iterator<Item = (u32, ShotTarget)> + 'a {
         self.contacts().filter_map(|contact| {
-            let Impact::Hit { target, incarnation, bone } = contact.impact else { return None; };
-            let actor = world.entities.get(&target)?;
-            if actor.incarnation != incarnation || actor.health == 0 || actor.travelling { return None; }
-            Some((target, ShotTarget { character: actor.character_key.clone()?, bone,
+            let Impact::Hit { target, incarnation, bone } = &contact.impact else { return None; };
+            let actor = world.entities.get(target)?;
+            if actor.incarnation != *incarnation || actor.health == 0 || actor.travelling { return None; }
+            Some((*target, ShotTarget { character: actor.character_key.clone()?, bone: bone.clone(),
                 distance: contact.distance, speed_factor: contact.speed_factor, penetration: contact.penetration }))
         })
     }
@@ -337,6 +344,9 @@ impl Combat {
                     combat_locked: e.combat_locked(world.tick, world.combat_lock_ticks),
                     raised_aim: world.raised_aim(e.id),
                     native: e.native.as_ref().map(|npc| (npc.target, npc.bounds)),
+                    hitboxes: e.hitboxes.as_ref().filter(|(tick, _)|
+                        world.tick.wrapping_sub(*tick) <= crate::alife_hitboxes::MAX_AGE)
+                        .map(|(_, boxes)| boxes.clone()),
                 })
                 .collect(),
         });
@@ -533,17 +543,29 @@ impl Combat {
         Ok(shot)
     }
 
-    pub fn trace_owned_round(&self, world: &World, shooter: u32, aim: Aim, followup: bool) -> Result<TracedShot, &'static str> {
+    pub fn trace_owned_round(
+        &self, world: &World, shooter: u32, aim: Aim, index: u32, native: Option<&NativeWeaponRules>,
+    ) -> Result<TracedShot, &'static str> {
         let round = world.entities.get(&shooter).and_then(|actor| actor.loadout.ballistics.map(|profile| (actor, profile)));
         let Some((actor, profile)) = round else {
             let shot = self.prepare_owned_shot(world, shooter, aim)?;
             return Ok(self.trace_shot(world, shot, MAX_OWNED_RANGE));
         };
+        let profile = match native.and_then(|rules| rules.launch_profile(profile, index)) {
+            Some(native) => {
+                tracing::trace!(shooter, index, native.revision, native.speed, native.range, native.drag,
+                    native.pellets, penetration = native.surface.penetration,
+                    native.gravity, energy_min = native.surface.energy_min, energy_max = native.surface.energy_max,
+                    "tracing X-Ray cartridge");
+                native
+            }
+            None => profile,
+        };
         let mut shot = self.rewind_aim(world, shooter, aim)?;
         let origin = shot.origin;
         let direction = shot.direction;
         let turn_speed = actor.shot_turn_speed(world.tick, direction);
-        let cone = profile.spread.cone(shot.speed, turn_speed, shot.crouched, followup, shot.aimed);
+        let cone = profile.spread.cone(shot.speed, turn_speed, shot.crouched, index > 0, shot.aimed);
         tracing::trace!(shooter, tick=world.tick, shot.aimed, turn_speed, cone, "traced firearm dispersion");
         let mut spread = Spread::new(RandomState::new().hash_one((shooter, world.tick, profile.revision)));
         let contact = self.trace_flight(world, &mut shot, origin, spread.direction(direction, cone), profile, &mut spread)?;
@@ -571,7 +593,7 @@ impl Combat {
             shot.direction = segment.direction;
             let surface = world.bullet_surface(segment.start, segment.direction, segment.range).map_err(|_| "collision_error")?;
             shot.wall = surface.map(|hit| hit.distance);
-            let (distance, mut impact) = self.trace(shot, world, segment.range);
+            let (distance, mut impact) = self.trace(shot, world, segment.range, true);
             if !matches!(impact, Impact::Miss) {
                 let velocity = segment.impact_velocity(distance);
                 if matches!(impact, Impact::Blocked) && contacts < MAX_SURFACE_CONTACTS
@@ -583,12 +605,13 @@ impl Combat {
                     contacts += 1;
                     continue;
                 }
-                if let Impact::Native { direction, .. } = &mut impact {
+                if let Impact::Native { direction, ray, .. } = &mut impact {
                     *direction = velocity.try_normalize().unwrap_or(segment.direction);
+                    ray.range = ray.range.min(profile.range - travelled);
                 }
                 return Ok(TraceContact { distance: (travelled + distance).min(profile.range),
                     speed_factor: velocity.length() / profile.speed,
-                    penetration: profile.surface.magnetic.then_some(material.penetration), impact });
+                    penetration: profile.surface.magnetic.then_some(material.penetration.max(0.0)), impact });
             }
             if world.bullet_outside_level(segment.start + segment.direction * segment.range) { break; }
             travelled += segment.range;
@@ -619,7 +642,7 @@ impl Combat {
         &self, world: &World, shooter: u32, aim: Aim, profile: &crate::knife::Profile,
     ) -> Result<TracedShot, &'static str> {
         let mut shot = self.prepare_shot(world, shooter, aim, profile.range())?;
-        let direct = self.trace(&shot, world, profile.reach);
+        let direct = self.trace(&shot, world, profile.reach, false);
         if matches!(direct.1, Impact::Hit { .. } | Impact::Native { .. } | Impact::Protected) {
             return Ok(Self::traced(shot, direct));
         }
@@ -654,13 +677,13 @@ impl Combat {
         {
             shot.direction = direction;
             shot.wall = world.static_ray(shot.origin, direction, profile.range()).map_err(|_| "collision_error")?;
-            let contact = self.trace(&shot, world, profile.range());
+            let contact = self.trace(&shot, world, profile.range(), false);
             let splash = matches!(contact.1, Impact::Hit { target, .. } | Impact::Native { id: target, .. } if target == id);
             let mut result = Self::traced(shot, contact);
             result.knife_splash = splash;
             return Ok(result);
         }
-        let fallback = self.trace(&shot, world, profile.range());
+        let fallback = self.trace(&shot, world, profile.range(), false);
         Ok(Self::traced(shot, fallback))
     }
 
@@ -675,7 +698,7 @@ impl Combat {
     }
 
     pub fn trace_shot(&self, world: &World, shot: PreparedShot, range: f32) -> TracedShot {
-        let contact = self.trace(&shot, world, range);
+        let contact = self.trace(&shot, world, range, false);
         Self::traced(shot, contact)
     }
 
@@ -700,17 +723,26 @@ impl Combat {
             && world.entities.get(&pose.id).is_some_and(|e| e.health > 0 && !e.travelling && e.incarnation == pose.incarnation)
     }
 
-    fn trace(&self, shot: &PreparedShot, world: &World, range: f32) -> (f32, Impact) {
-        let mut hit: Option<(f32, &Pose)> = None;
+    fn trace(&self, shot: &PreparedShot, world: &World, range: f32, native_hitboxes: bool) -> (f32, Impact) {
+        let mut hit: Option<(f32, &Pose, Option<Arc<str>>)> = None;
         let limit = range.min(shot.wall.unwrap_or(range));
+        let ray = Ray::new(shot.origin, shot.direction);
         for pose in shot.poses.iter().filter(|pose| pose.alive && pose.id != shot.shooter) {
+            let distance = hit.as_ref().map_or(limit, |(nearest, _, _)| *nearest);
             let origin = Vector::new(pose.feet.x, pose.feet.y, pose.feet.z);
+            if native_hitboxes && let Some(boxes) = &pose.hitboxes {
+                if let Some((distance, bone)) = boxes.cast(&ray, distance, origin)
+                    && Self::targetable(world, shot.shooter, pose)
+                {
+                    hit = Some((distance, pose, Some(bone)));
+                }
+                continue;
+            }
             let (center, radius_squared) = match pose.native {
                 Some((_, bounds)) => (bounds.world_center(origin, pose.yaw), Vector::from_array(bounds.half).length_squared()),
                 None => (origin + Vector::Y * pose.height * 0.5, (pose.height * 0.5).powi(2)),
             };
             let to_center = center - shot.origin;
-            let distance = hit.map_or(limit, |(nearest, _)| nearest);
             let closest = shot.direction * to_center.dot(shot.direction).clamp(0.0, distance);
             if to_center.distance_squared(closest) > radius_squared + 0.0001
                 || !Self::targetable(world, shot.shooter, pose)
@@ -724,17 +756,17 @@ impl Combat {
                 Capsule::new_y(pose.height / 2. - 0.35, 0.35)
                     .cast_local_ray(&Ray::new(-to_center, shot.direction), distance, true)
             };
-            if let Some(distance) = contact && hit.as_ref().is_none_or(|(old, _)| distance < *old)
+            if let Some(distance) = contact && hit.as_ref().is_none_or(|(old, _, _)| distance < *old)
             {
-                hit = Some((distance, pose));
+                hit = Some((distance, pose, None));
             }
         }
         if let Some(distance) = shot.wall.filter(|&distance| {
-            distance <= range && hit.as_ref().is_none_or(|(body, _)| distance <= *body)
+            distance <= range && hit.as_ref().is_none_or(|(body, _, _)| distance <= *body)
         }) {
             return (distance, Impact::Blocked);
         }
-        let Some((distance, target)) = hit else {
+        let Some((distance, target, bone)) = hit else {
             return (f32::INFINITY, Impact::Miss);
         };
         if (world.is_safe(target.feet) && !target.combat_locked)
@@ -743,12 +775,18 @@ impl Combat {
             return (distance, Impact::Protected);
         }
         let contact = shot.origin + shot.direction * distance;
-        if let Some((native, _)) = target.native {
+        if let Some((native, bounds)) = target.native {
             let origin = Vector::new(target.feet.x, target.feet.y, target.feet.z);
             return (distance, Impact::Native { id: target.id, target: native, direction: shot.direction,
-                offset: rotate_yaw(contact - origin, -target.yaw) });
+                offset: rotate_yaw(contact - origin, -target.yaw),
+                ray: NativeRay { origin: shot.origin.to_array(), direction: shot.direction.to_array(),
+                    range: (distance + 2.0 * Vector::from_array(bounds.half).length()).min(MAX_OWNED_RANGE) },
+            });
         }
-        let bone = hit_bone(target, contact);
+        if let Some(bone) = &bone {
+            tracing::trace!(target = target.id, %bone, "hit rewound X-Ray player collision form");
+        }
+        let bone = bone.unwrap_or_else(|| hit_bone(target, contact).into());
         (
             distance,
             Impact::Hit {
@@ -802,15 +840,15 @@ impl Combat {
         if shot.contact.distance > charge.range {
             return ShotResult::Miss { ammo };
         }
-        let (target, incarnation) = match shot.contact.impact {
+        let (target, incarnation, bone) = match shot.contact.impact {
             Impact::Miss | Impact::Native { .. } => return ShotResult::Miss { ammo },
             Impact::Blocked => return ShotResult::Blocked { ammo },
             Impact::Protected => return ShotResult::Protected { ammo },
             Impact::Hit {
                 target,
                 incarnation,
-                ..
-            } => (target, incarnation),
+                bone,
+            } => (target, incarnation, bone),
         };
         if world
             .entities
@@ -839,7 +877,12 @@ impl Combat {
         if let Some(armour) = field_armour {
             entity.loadout.fields.armour.take_newer(armour);
         }
-        entity.apply_hit(power, wound);
+        let kind = if charge.native_damage.is_some_and(|damage| matches!(damage.kind, NativeHitKind::Wound)) {
+            crate::survival::WoundKind::Cut
+        } else {
+            crate::survival::WoundKind::Bullet
+        };
+        entity.apply_hit_at(power, wound.then_some((kind, &bone)));
         if let Some(condition) = &mut entity.condition {
             condition.power = (condition.power - charge.power_loss).max(0.0);
         }
@@ -875,8 +918,14 @@ impl Combat {
             actor.loadout.fields.armour.take_newer(armour);
         }
         let condition = actor.condition.as_mut()?;
-        condition.health = impact.health;
-        condition.bleeding = impact.bleeding;
+        if let Some(state) = impact.native_state {
+            *condition = state;
+        } else {
+            condition.health = impact.health;
+            for (bone, power) in impact.wounds {
+                condition.add_wound(crate::survival::WoundKind::Bullet, &bone, power);
+            }
+        }
         actor.health = condition.health_points();
         if !impact.commit.alive {
             actor.loadout = crate::survival::Loadout::default();
@@ -1004,15 +1053,15 @@ mod tests {
         let (mut world, mut combat, shooter, target) = setup();
         world.entities.get_mut(&target).unwrap().position.z = 100.0;
         world.entities.get_mut(&shooter).unwrap().loadout.ballistics = Some(RoundProfile {
-            revision: 7, range: 120.0, speed: 220.0, drag: 0.8, gravity: 9.81,
+            revision: 7, key: None, range: 120.0, speed: 220.0, drag: 0.8, gravity: 9.81,
             pellets: 1, spread: Default::default(), surface: Default::default(),
         });
         world.tick = 1;
         combat.capture(&world);
         let flat = combat.prepare_shot(&world, shooter, aim(1), 120.0).unwrap();
         assert_eq!(combat.trace_shot(&world, flat, 120.0).target(), Some(target));
-        assert!(matches!(combat.trace_owned_round(&world, shooter, aim(1), false).unwrap().contact.impact, Impact::Miss));
-        let elevated = combat.trace_owned_round(&world, shooter, Aim { pitch: 0.016, ..aim(1) }, false).unwrap();
+        assert!(matches!(combat.trace_owned_round(&world, shooter, aim(1), 0, None).unwrap().contact.impact, Impact::Miss));
+        let elevated = combat.trace_owned_round(&world, shooter, Aim { pitch: 0.016, ..aim(1) }, 0, None).unwrap();
         assert_eq!(elevated.target(), Some(target));
         assert_eq!(elevated.ballistics.unwrap().revision, 7);
         assert!((0.50..0.55).contains(&elevated.contact.speed_factor));
@@ -1027,13 +1076,13 @@ mod tests {
             let shooter = world.spawn(Kind::Player, Vec3::default());
             let target = world.spawn(Kind::Player, Vec3 { x: 4.0, y: 0.0, z: 0.0 });
             world.entities.get_mut(&shooter).unwrap().loadout.ballistics = Some(RoundProfile {
-                revision: 0, range, speed: 300.0, drag: 0.0, gravity: 0.0, pellets: 1, spread: Default::default(),
+                revision: 0, key: None, range, speed: 300.0, drag: 0.0, gravity: 0.0, pellets: 1, spread: Default::default(),
                 surface: crate::ballistics::SurfaceProfile { penetration, ..Default::default() },
             });
             let mut combat = Combat::default();
             combat.capture(&world);
             let result = combat.trace_owned_round(&world, shooter,
-                Aim { yaw: std::f32::consts::FRAC_PI_2, ..aim(0) }, false).unwrap();
+                Aim { yaw: std::f32::consts::FRAC_PI_2, ..aim(0) }, 0, None).unwrap();
             (result, target)
         };
         let (stopped, _) = trace(0.3, 0.15, 10.0);
@@ -1133,11 +1182,45 @@ mod tests {
             Aim { tick: 1, yaw: 0.0, pitch: (-1.15_f32 / 10.0).atan() },
             RANGE,
         ).unwrap();
-        let (distance, impact) = combat.trace(&shot, &world, RANGE);
+        let (distance, impact) = combat.trace(&shot, &world, RANGE, false);
         assert!((9.0..10.0).contains(&distance));
         assert!(matches!(impact, Impact::Native { id, target, offset, .. }
             if id == npc && target == native && (offset.z - 0.7).abs() < 1e-5));
     }
+    #[test]
+    fn native_npc_skeleton_replaces_coarse_bounds_in_rewind() {
+        let (mut world, mut combat, shooter, player) = setup();
+        world.remove(player);
+        let npc = world.spawn(Kind::Npc, Vec3 { x: 0.0, y: 0.0, z: 10.0 });
+        world.entities.get_mut(&npc).unwrap().native = Some(crate::alife_npcs::NativeNpc {
+            target: NativeTarget { host: 8, id: 9, spawn: 1 }, model: "stalker".into(),
+            bounds: NativeBounds { center: [0.0, 1.0, 0.0], half: [1.0, 1.0, 1.0] }, motion: None,
+        });
+        let mut row = [0u8; 96];
+        row[0] = 2;
+        row[4..8].copy_from_slice(b"head");
+        for (i, value) in [0.7f32, 1.55, 10.0, 0.1].into_iter().enumerate() {
+            row[36 + i * 4..40 + i * 4].copy_from_slice(&value.to_le_bytes());
+        }
+        world.tick = 1;
+        world.entities.get_mut(&npc).unwrap().hitboxes = Some((1, Arc::new(
+            crate::alife_hitboxes::Hitboxes::decode(Vector::Z * 10.0, &row).unwrap())));
+        combat.capture(&world);
+        let shot = combat.prepare_shot(&world, shooter, aim(1), RANGE).unwrap();
+        assert!(matches!(combat.trace(&shot, &world, RANGE, false).1, Impact::Native { .. }));
+        assert!(matches!(combat.trace(&shot, &world, RANGE, true).1, Impact::Miss));
+        row[36..40].copy_from_slice(&0.0f32.to_le_bytes());
+        world.tick = 2;
+        world.entities.get_mut(&npc).unwrap().hitboxes = Some((2, Arc::new(
+            crate::alife_hitboxes::Hitboxes::decode(Vector::Z * 10.0, &row).unwrap())));
+        combat.capture(&world);
+        world.entities.get_mut(&npc).unwrap().position.x = 20.0;
+        let shot = combat.prepare_shot(&world, shooter, aim(2), RANGE).unwrap();
+        let (distance, impact) = combat.trace(&shot, &world, RANGE, true);
+        assert!((distance - 9.9).abs() < 0.001);
+        assert!(matches!(impact, Impact::Native { id, .. } if id == npc));
+    }
+
     #[test]
     fn nearest_body_blocks_far_target_and_invalid_aim_does_not_spend_ammo() {
         let (mut w, mut c, a, b) = setup();

@@ -174,7 +174,7 @@ surface_bumped sload_i( p_bumped I, float2 pixeloffset )
    
    // apply offset
 #ifdef	MSAA_ALPHATEST_DX10_1
-   I.tcdh.xy += pixeloffset.x * ddx(I.tcdh.xy) + pixeloffset.y * ddy(I.tcdh.xy);
+   I.tcdh.xy += pixeloffset.x * dFdx(I.tcdh.xy) + pixeloffset.y * dFdy(I.tcdh.xy);
 #endif
 
 	UpdateTC(I);	//	All kinds of parallax are applied here.
@@ -192,7 +192,7 @@ surface_bumped sload_i( p_bumped I, float2 pixeloffset )
 #ifdef        USE_TDETAIL_BUMP
 #ifdef MSAA_ALPHATEST_DX10_1
 #if ( (!defined(ALLOW_STEEPPARALLAX) ) && defined(USE_STEEPPARALLAX) )
-   I.tcdbump.xy += pixeloffset.x * ddx(I.tcdbump.xy) + pixeloffset.y * ddy(I.tcdbump.xy);
+   I.tcdbump.xy += pixeloffset.x * dFdx(I.tcdbump.xy) + pixeloffset.y * dFdy(I.tcdbump.xy);
 #endif
 #endif
 
@@ -208,7 +208,7 @@ surface_bumped sload_i( p_bumped I, float2 pixeloffset )
 //	S.base.rgb			= float3(1,0,0);
 #else        //	USE_TDETAIL_BUMP
 #ifdef MSAA_ALPHATEST_DX10_1
-	I.tcdbump.xy += pixeloffset.x * ddx(I.tcdbump.xy) + pixeloffset.y * ddy(I.tcdbump.xy);
+	I.tcdbump.xy += pixeloffset.x * dFdx(I.tcdbump.xy) + pixeloffset.y * dFdy(I.tcdbump.xy);
 #endif
 	float4 detail		= tex2D( s_detail, I.tcdbump);
 	S.base.rgb			= S.base.rgb * detail.rgb * 2.0;

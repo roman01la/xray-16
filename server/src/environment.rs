@@ -97,6 +97,7 @@ pub(crate) fn resolve(
         mut before,
         location,
     } = exposure;
+    ensure!(before.state.native_checkpoint().is_none(), "native condition field proposal required");
     if !crate::survival::impact_current(tx, context, &before)? {
         return Ok(None);
     }
@@ -215,6 +216,7 @@ pub struct Armour {
 }
 
 impl Armour {
+    pub fn generation(&self) -> Option<u64> { u64::try_from(self.generation).ok() }
     pub(crate) fn add(
         &mut self,
         catalog: &Catalog,
@@ -324,15 +326,17 @@ impl Factors {
     }
 
     pub(crate) fn apply(self, state: &mut State, protection: &mut Protection, pulse: Pulse) {
-        let power = (protection.absorb(pulse) - state.field_boost(pulse.kind)).max(0.0)
-            * self.immunity[pulse.kind as usize];
+        let [health, power, radiation, psy] = crate::xray_combat_rules::field_damage(pulse.kind, [
+            protection.absorb(pulse), state.field_boost(pulse.kind),
+            self.immunity[pulse.kind as usize], 0.0, self.health, self.power, 1.0,
+        ]);
         if pulse.kind == Kind::Radiation {
-            state.radiation = (state.radiation + power).min(1.0);
+            state.radiation = (state.radiation + radiation).min(1.0);
         } else {
-            state.health = (state.health - power * self.health).max(0.0);
-            state.power = (state.power - power * self.power).max(0.0);
+            state.health = (state.health - health).max(0.0);
+            state.power = (state.power - power).max(0.0);
             if pulse.kind == Kind::Psy {
-                state.psy_health = (state.psy_health - power).max(0.0);
+                state.psy_health = (state.psy_health - psy).max(0.0);
             }
         }
     }
@@ -856,6 +860,18 @@ impl Field {
             power,
             ..self.pulse
         })
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn native_field_fixture() -> Fields {
+    Fields {
+        fields: [Kind::Heat,Kind::Radiation].into_iter().map(|kind|Field {
+            volumes:vec![Volume::new(Shape::Sphere{center:[0.0;3],radius:10.0},[0.0;3],[0.0;3]).unwrap()],
+            center:Vector::ZERO,radius_squared:100.0,pulse:Pulse{kind,power:0.2},attenuation:0.0,
+        }).collect(),
+        electras:Vec::new(),detector_zones:None,
+        factors:Factors{immunity:[1.0;KIND_COUNT],health:1.0,power:1.0},
     }
 }
 

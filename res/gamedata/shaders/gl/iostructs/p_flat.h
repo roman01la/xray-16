@@ -58,6 +58,6 @@ void main()
 	SV_Target2 = O.C;
 #endif
 #ifdef EXTEND_F_DEFFER
-	gl_SampleMask[0] = O.mask;
+	gl_SampleMask[0] = int(O.mask);
 #endif
 }

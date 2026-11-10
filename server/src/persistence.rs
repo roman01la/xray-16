@@ -47,17 +47,24 @@ pub enum Operation {
     CorpseItems(String, String, Option<u64>, crate::inventory::Context),
     WorldItems(String, crate::inventory::Context, crate::inventory::DetectorScan),
     MoveInventory(crate::inventory::Move, crate::inventory::Context),
-    TimedReload(crate::inventory::Move, Option<std::sync::Arc<crate::reload_timing::ReloadTimings>>),
+    TimedReload(crate::inventory::Move, Option<std::sync::Arc<crate::reload_timing::ReloadTimings>>,
+        Option<crate::combat::NativeWeaponRules>),
     // Internal operation; never route a client command to this variant.
     InventoryDeath(crate::inventory::Context),
     AuthorizeNativeWorld(String, crate::alife_checkpoint::Checkpoint),
     ImportNativeCorpse(crate::alife_corpse::Corpse, crate::alife_checkpoint::Checkpoint),
+    ReadNativeEquipment(Vec<(u32, u32, crate::world::CharacterKey)>),
     ResolveImpact(crate::survival::Impact),
+    CommitNativeCondition(crate::native_condition::Commit),
+    CommitNativeReload(crate::native_weapon_action::Reply),
+    CommitNativeImpact(crate::native_condition::Impact),
+    ConsumeNative(crate::inventory::Move, crate::native_condition::Consumption),
+    PrepareNativeConsume(crate::inventory::Move),
     ResolveFields(crate::environment::Exposure),
     FireWeapon(String, Vec<crate::survival::FireVictim>, crate::combat::FireState),
     ThrowGrenade(String, crate::hand_grenade::Force),
     ThrowBolt(String, crate::hand_grenade::Force),
-    StrikeKnife(String, crate::knife::Mode, Option<Box<crate::survival::ShotVictim>>, bool),
+    StrikeKnife(String, crate::knife::Mode, Option<Box<crate::survival::FireVictim>>, bool),
     SelectWeapon { life: u32, slot: u8 },
     SelectDetector { life: u32, active: bool },
     LoadCondition,
@@ -228,6 +235,7 @@ impl Persistence {
                     let result = match (job.session, operation) {
                         (None, Operation::AuthorizeNativeWorld(world, checkpoint)) => db.authorize_native_world(&world, checkpoint),
                         (None, Operation::ImportNativeCorpse(corpse, checkpoint)) => db.import_native_corpse(corpse, checkpoint),
+                        (None, Operation::ReadNativeEquipment(players)) => db.read_native_equipment(players),
                         (Some(context), operation) => db.execute_session(&context, operation),
                         (None, operation) => db.execute(&job.secret, operation),
                     }.map_err(|error| {
@@ -309,7 +317,7 @@ impl Persistence {
         self.updates.subscribe()
     }
     pub async fn execute(&self, secret: String, operation: Operation) -> Result<Value, String> {
-        if !valid_secret(&secret) || matches!(operation, Operation::AuthorizeNativeWorld(..) | Operation::ImportNativeCorpse(..)) {
+        if !valid_secret(&secret) || matches!(operation, Operation::AuthorizeNativeWorld(..) | Operation::ImportNativeCorpse(..) | Operation::ReadNativeEquipment(..)) {
             return Err("invalid identity credential".into());
         }
         let rx=self.enqueue(secret,None,operation)?;
@@ -329,6 +337,9 @@ impl Persistence {
     }
     pub fn native_corpse_request(&self, corpse: crate::alife_corpse::Corpse, checkpoint: crate::alife_checkpoint::Checkpoint) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
         self.enqueue(String::new(), None, Operation::ImportNativeCorpse(corpse, checkpoint))
+    }
+    pub(crate) fn native_equipment_request(&self, players: Vec<(u32, u32, crate::world::CharacterKey)>) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
+        self.enqueue(String::new(), None, Operation::ReadNativeEquipment(players))
     }
     fn enqueue(&self,secret:String,session:Option<crate::inventory::Context>,operation:Operation)->Result<oneshot::Receiver<Result<Value,String>>,String>{
         validate_operation(&operation).map_err(|_| "invalid mutation")?;
@@ -354,7 +365,7 @@ impl Persistence {
     }
 }
 fn validate_session_operation(operation:&Operation)->Result<()> {
-    ensure!(matches!(operation,Operation::Corpses(..)|Operation::CorpseItems(..)|Operation::WorldItems(..)|Operation::ListInventory(..)|Operation::MoveInventory(..)|Operation::TimedReload(..)|Operation::InventoryDeath(..)|Operation::InventoryRespawn(..)|Operation::ResolveImpact(..)|Operation::ResolveFields(..)|Operation::FireWeapon(..)|Operation::ThrowGrenade(..)|Operation::ThrowBolt(..)|Operation::StrikeKnife(..)|Operation::SelectWeapon{..}|Operation::SelectDetector{..}|Operation::LoadCondition|Operation::PowerLabLift|Operation::Travel(..)|Operation::SaveCondition(..)|Operation::Consume(..)),"not an inventory session operation");Ok(())
+    ensure!(matches!(operation,Operation::Corpses(..)|Operation::CorpseItems(..)|Operation::WorldItems(..)|Operation::ListInventory(..)|Operation::MoveInventory(..)|Operation::TimedReload(..)|Operation::InventoryDeath(..)|Operation::InventoryRespawn(..)|Operation::ResolveImpact(..)|Operation::CommitNativeCondition(..)|Operation::CommitNativeReload(..)|Operation::CommitNativeImpact(..)|Operation::ConsumeNative(..)|Operation::PrepareNativeConsume(..)|Operation::ResolveFields(..)|Operation::FireWeapon(..)|Operation::ThrowGrenade(..)|Operation::ThrowBolt(..)|Operation::StrikeKnife(..)|Operation::SelectWeapon{..}|Operation::SelectDetector{..}|Operation::LoadCondition|Operation::PowerLabLift|Operation::Travel(..)|Operation::SaveCondition(..)|Operation::Consume(..)),"not an inventory session operation");Ok(())
 }
 fn valid_secret(s: &str) -> bool {
     s.len() == 64
@@ -397,8 +408,8 @@ fn validate_operation(operation: &Operation) -> Result<()> {
         Operation::Transfer(m) | Operation::TransferWithContext(m, _) => {
             crate::ownership::validate(m)
         }
-        Operation::MoveInventory(command, _) | Operation::TimedReload(command, _) => command.validate(),
-        Operation::Consume(command, _, _) => {
+        Operation::MoveInventory(command, _) | Operation::TimedReload(command, ..) => command.validate(),
+        Operation::Consume(command, _, _) | Operation::ConsumeNative(command, _) | Operation::PrepareNativeConsume(command) => {
             ensure!(matches!(command.action, crate::inventory::MoveAction::Consume), "expected consume action");
             command.validate()
         }
@@ -424,12 +435,26 @@ fn validate_operation(operation: &Operation) -> Result<()> {
         Operation::StrikeKnife(item, _, target, _) => {
             ensure!(crate::ownership::valid_id(item), "invalid weapon id");
             if let Some(victim) = target {
-                validate_shot_target(&victim.target)?;
+                validate_shot_target(&victim.authority.target)?;
             }
             Ok(())
         }
         Operation::ThrowGrenade(item, _) | Operation::ThrowBolt(item, _) => {
             ensure!(crate::ownership::valid_id(item), "invalid grenade id");
+            Ok(())
+        }
+        Operation::CommitNativeImpact(proposal) => {
+            ensure!(proposal.combat_until_ms>=0 && proposal.condition.equipment<=9_007_199_254_740_991
+                && proposal.wear.iter().flatten().all(|value| (0.0..=1.0).contains(value)), "invalid native hit proposal");
+            Ok(())
+        }
+        Operation::CommitNativeReload(reply) => {
+            ensure!(reply.phase==crate::native_weapon_action::Phase::Complete && reply.state.is_some(), "invalid native reload result");
+            Ok(())
+        }
+        Operation::CommitNativeCondition(proposal) => {
+            ensure!(proposal.equipment <= 9_007_199_254_740_991
+                && proposal.checkpoint.projection().is_some(), "invalid native condition proposal");
             Ok(())
         }
         Operation::ResolveImpact(impact) => {
@@ -489,7 +514,7 @@ impl Database {
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(version <= 22, "unsupported persistence schema {version}");
+        ensure!(version <= 23, "unsupported persistence schema {version}");
         if version == 0 {
             let tx = connection.transaction()?;
             tx.execute_batch("CREATE TABLE principals (id TEXT PRIMARY KEY, credential_hash TEXT NOT NULL UNIQUE);
@@ -611,8 +636,50 @@ impl Database {
             tx.execute_batch(crate::alife_checkpoint::SCHEMA)?;
             tx.commit()?;
         }
+        if version < 23 {
+            let tx=connection.transaction()?;
+            tx.execute_batch(crate::native_condition::SCHEMA)?;
+            tx.commit()?;
+        }
         Ok(Self { connection, catalog: None, rules:None })
     }
+    fn read_native_equipment(&self, players: Vec<(u32, u32, crate::world::CharacterKey)>) -> Result<Value> {
+        let tx = self.connection.unchecked_transaction()?;
+        let mut query = tx.prepare_cached(
+            "SELECT i.place,i.section,i.state,a.generation FROM inventory_characters a
+             JOIN item_containers c ON c.owner=a.principal AND c.kind='carried'
+             LEFT JOIN inventory_items i ON i.container=c.id
+               AND (i.place IN ('slot:7','slot:12') OR i.place GLOB 'belt:[0-4]')
+             WHERE a.principal=?1 AND a.life=?2 AND a.alive=1
+             ORDER BY i.place GLOB 'belt:*',i.place='slot:12',i.place",
+        )?;
+        let mut snapshots = Vec::with_capacity(players.len());
+        for (id, incarnation, key) in players {
+            let mut rows = query.query(params![key.principal, key.life])?;
+            let Some(mut row) = rows.next()? else { continue };
+            let generation = u64::try_from(row.get::<_, i64>(3)?)?;
+            let mut equipment = Vec::new();
+            loop {
+                if let Some(place) = row.get::<_, Option<String>>(0)? {
+                    let slot = match place.as_str() {
+                        "slot:7" => 7,
+                        "slot:12" => 12,
+                        cell => crate::alife_interests::ARMOUR_BELT_START +
+                            cell.strip_prefix("belt:").context("invalid native belt placement")?.parse::<u8>()?,
+                    };
+                    let section: String = row.get(1)?;
+                    let state: crate::inventory::ItemState = serde_json::from_str(&row.get::<_, String>(2)?)?;
+                    equipment.push((slot, section, state.condition, state.upgrades));
+                }
+                let Some(next) = rows.next()? else { break };
+                row = next;
+            }
+            let weapon = crate::alife_weapon::read(&tx, &key.principal, self.catalog.as_deref(), generation)?;
+            snapshots.push((id, incarnation, generation, equipment, weapon));
+        }
+        Ok(serde_json::to_value(snapshots)?)
+    }
+
     fn authorize_native_world(&mut self, world: &str, checkpoint: crate::alife_checkpoint::Checkpoint) -> Result<Value> {
         let tx = self.connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let accepted = checkpoint.admit(&tx, world)?;
@@ -778,9 +845,9 @@ impl Database {
         }
         tx.execute("INSERT INTO records(principal,revision,value) VALUES(?1,0,'null') ON CONFLICT DO NOTHING", [&principal])?;
         let loadout_update = session.is_some() && matches!(operation,
-            Operation::MoveInventory(..) | Operation::TimedReload(..) | Operation::InventoryDeath(..) | Operation::InventoryRespawn(..) | Operation::Consume(..) | Operation::SelectWeapon { .. } | Operation::SelectDetector { .. });
+            Operation::MoveInventory(..) | Operation::TimedReload(..) | Operation::InventoryDeath(..) | Operation::InventoryRespawn(..) | Operation::Consume(..) | Operation::ConsumeNative(..) | Operation::CommitNativeImpact(..) | Operation::CommitNativeReload(..) | Operation::SelectWeapon { .. } | Operation::SelectDetector { .. });
         let mut result = match operation {
-            Operation::AuthorizeNativeWorld(..) | Operation::ImportNativeCorpse(..) => bail!("native world requires the private host"),
+            Operation::AuthorizeNativeWorld(..) | Operation::ImportNativeCorpse(..) | Operation::ReadNativeEquipment(..) => bail!("native world requires the private host"),
             Operation::Register | Operation::Resume => {
                 let epoch: i64 =
                     tx.query_row("SELECT auth_epoch FROM runtime_meta WHERE id=1", [], |r| {
@@ -829,11 +896,11 @@ impl Database {
                 crate::inventory::initialize_with_rules(&tx, &principal,self.catalog.as_deref(),self.rules.as_deref())?;
                 crate::inventory::move_item(&tx, &principal, &command, session.unwrap_or(&context), self.catalog.as_deref(),self.rules.as_deref(),None)?
             }
-            Operation::TimedReload(command, timings) => {
+            Operation::TimedReload(command, timings, native_rules) => {
                 let context = session.context("timed reload requires a live session")?;
                 crate::inventory::timed_reload(&tx, context, &command,
                     self.catalog.as_deref().context("timed reload requires an item catalog")?,
-                    self.rules.as_deref(), timings.as_deref())?
+                    self.rules.as_deref(), timings.as_deref(), native_rules.as_ref())?
             }
             Operation::LoadCondition => {
                 let context = session.context("condition requires a live session")?;
@@ -856,6 +923,16 @@ impl Database {
                 let context = session.context("condition requires a live session")?;
                 ensure!(campaign_visit.is_none() || location.world == context.world, "checkpoint world differs from campaign visit");
                 json!({"saved":crate::survival::checkpoint(&tx, &principal, context.life, &record, &location)?})
+            }
+            Operation::PrepareNativeConsume(command) => {
+                let context=session.context("native consumption requires a live session")?;
+                crate::inventory::prepare_native_consumption(&tx,context,&command,
+                    self.catalog.as_deref().context("consumption requires item catalog")?)?
+            }
+            Operation::ConsumeNative(command, proposal) => {
+                let context = session.context("native consumption requires a live session")?;
+                crate::inventory::consume_native(&tx, context, &command,
+                    self.catalog.as_deref(), self.rules.as_deref(), proposal)?
             }
             Operation::Consume(command, _, record) => {
                 let context = session.context("consumption requires a live session")?;
@@ -893,6 +970,20 @@ impl Database {
                 let context = session.context("detector selection requires a live session")?;
                 crate::artefact::select(&tx, context, life, active,
                     self.catalog.as_deref().context("detector selection requires item catalog")?)?
+            }
+            Operation::CommitNativeImpact(proposal) => {
+                let context=session.context("native hit requires a live session")?;
+                crate::native_condition::commit_impact(&tx,context,
+                    self.catalog.as_deref().context("native hit requires item catalog")?,self.rules.as_deref(),proposal)?
+            }
+            Operation::CommitNativeReload(reply) => {
+                let context=session.context("native reload requires a live session")?;
+                crate::native_weapon_action::commit_reload(&tx,context,
+                    self.catalog.as_deref().context("native reload requires item catalog")?,reply)?
+            }
+            Operation::CommitNativeCondition(proposal) => {
+                let context = session.context("native condition requires a live session")?;
+                crate::native_condition::commit(&tx, context, self.rules.as_deref(), proposal)?
             }
             Operation::ResolveImpact(impact) => {
                 let context = session.context("impact requires a live session")?;
@@ -991,6 +1082,27 @@ mod tests {
             expected_revision: revision,
             value: json!({"test":n}),
         })
+    }
+
+    #[test]
+    fn native_armour_reads_equipped_items_only_for_the_current_life() {
+        use crate::{inventory::{ItemPayload, ItemState}, world::CharacterKey};
+        let mut db = Database::open(Path::new(":memory:")).unwrap();
+        let principal = db.execute(&secret('e'), Operation::Register).unwrap()["principalId"]
+            .as_str().unwrap().to_owned();
+        let carry = db.initialize_inventory(&principal).unwrap()["carried"].as_str().unwrap().to_owned();
+        let state = ItemState { condition: 0.75, upgrades: vec!["outfit_upgrade".into()], payload: ItemPayload::Equipment };
+        let players = |life| vec![(2, 9, CharacterKey { principal: principal.clone(), life })];
+        assert_eq!(db.read_native_equipment(players(0)).unwrap(), json!([[2, 9, 0, [], null]]));
+        db.provision_inventory_item(&carry, "stalker_outfit", &state, "slot:7").unwrap();
+        db.provision_inventory_item(&carry, "helm_respirator", &state, "rucksack").unwrap();
+        let artefact = ItemState { condition: 0.5, upgrades: vec![], payload: ItemPayload::Equipment };
+        db.provision_inventory_item(&carry, "af_medusa", &artefact, "belt:1").unwrap();
+        assert_eq!(db.read_native_equipment(players(0)).unwrap(),
+            json!([[2, 9, 3, [[7, "stalker_outfit", 0.75, ["outfit_upgrade"]], [17, "af_medusa", 0.5, []]], null]]));
+        assert_eq!(db.read_native_equipment(players(1)).unwrap(), json!([]));
+        db.connection.execute("UPDATE inventory_characters SET alive=0 WHERE principal=?1", [&principal]).unwrap();
+        assert_eq!(db.read_native_equipment(players(0)).unwrap(), json!([]));
     }
 
     fn campaign_context(principal: String, level: &str, visit: u32) -> crate::inventory::Context {

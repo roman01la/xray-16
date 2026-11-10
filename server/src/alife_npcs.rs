@@ -83,6 +83,7 @@ pub struct NpcRoster {
     last: Option<u32>,
     active: BTreeMap<NativeTarget, u32>,
     confirmed_deaths: BTreeMap<NativeTarget, u32>,
+    poses: BTreeMap<NativeTarget, (u32, Arc<[u8]>)>,
 }
 
 fn word(bytes: &[u8], at: usize) -> u32 {
@@ -132,6 +133,65 @@ fn decode_row(row: &[u8], host: u64) -> Option<Npc> {
         health,
         motion,
         model: model.to_owned(),
+    })
+}
+
+pub const NPC_POSE_OPCODE: u8 = 33;
+pub const NPC_SOUND_OPCODE: u8 = 34;
+pub const POSE_HEADER: usize = 32;
+pub const BONE_BYTES: usize = 10;
+const SHOT: u8 = 8;
+const SHOT_LAUNCHER: u8 = 16;
+const WEAPON_FLAGS: u8 = 31;
+const SHOT_BYTES: usize = 4 + BONE_BYTES;
+
+fn model_key(model: &str) -> u32 {
+    model.bytes().fold(2166136261, |hash, byte| (hash ^ u32::from(byte)).wrapping_mul(16777619))
+}
+
+fn valid_pose(data: &[u8]) -> bool {
+    if data.len() < POSE_HEADER || data[4] > 1 || !(1..=64).contains(&data[5]) {
+        return false;
+    }
+    let weapon_at = POSE_HEADER + usize::from(data[5]) * BONE_BYTES;
+    let weapon_bytes = usize::from(data[6]);
+    let flags = data[7];
+    let weapon_end = weapon_at + if weapon_bytes == 0 { 0 } else { BONE_BYTES + weapon_bytes };
+    let expected = weapon_end + if flags & SHOT != 0 { SHOT_BYTES } else { 0 };
+    if expected != data.len() || weapon_bytes > 127 || flags & !WEAPON_FLAGS != 0 ||
+        (weapon_bytes == 0 && flags != 0) || (flags & SHOT_LAUNCHER != 0 && flags & SHOT == 0) ||
+        ![16, 20, 24].into_iter().all(|offset| f32::from_bits(word(data, offset)).abs() <= 100_000.0)
+    {
+        return false;
+    }
+    weapon_bytes == 0 || data[weapon_at + BONE_BYTES..weapon_end].iter()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'.' | b'-'))
+}
+
+pub struct NativeSound {
+    pub host: u64,
+    pub tick: u32,
+    pub sequence: u32,
+    pub position: Vec3,
+    pub range: f32,
+    pub data: Vec<u8>,
+}
+
+pub fn native_sounds(rows: &[u8], host: u64, tick: u32) -> impl Iterator<Item = NativeSound> + '_ {
+    rows.chunks_exact(160).take(32).filter_map(move |row| {
+        let [x, y, z, volume, frequency, range] = [4, 8, 12, 16, 20, 24]
+            .map(|at| f32::from_bits(word(row, at)));
+        let end = row[28..].iter().position(|byte| *byte == 0)? + 28;
+        let name = std::str::from_utf8(&row[28..end]).ok()?;
+        if ![x, y, z].iter().all(|v| v.abs() <= 100_000.0)
+            || !(0.0..=4.0).contains(&volume) || !(0.1..=4.0).contains(&frequency)
+            || !(1.0..=100.0).contains(&range) || name.len() > 127
+            || !valid_model(&name.replace('/', "\\").replace(' ', "_"))
+        {
+            return None;
+        }
+        Some(NativeSound { host, tick, sequence: word(row, 0), position: Vec3 { x, y, z }, range,
+            data: row[4..end].to_vec() })
     })
 }
 
@@ -228,6 +288,7 @@ impl NpcRoster {
             world.remove(*local);
             false
         });
+        self.poses.retain(|target, _| self.active.contains_key(target));
         for row in rows {
             let local = *self
                 .active
@@ -267,12 +328,55 @@ impl NpcRoster {
         }
     }
 
+    pub fn ingest_hitboxes(&self, bytes: &[u8], epoch: u64, host: u64, world: &mut World) {
+        if bytes.len() < 44 || &bytes[..4] != b"ZBN1"
+            || u64::from_le_bytes(bytes[8..16].try_into().unwrap()) != epoch
+            || u64::from_le_bytes(bytes[16..24].try_into().unwrap()) != host
+        { return; }
+        let tick = word(bytes, 4);
+        if world.tick.wrapping_sub(tick) > crate::alife_hitboxes::MAX_AGE { return; }
+        let Ok(id) = u16::try_from(word(bytes, 24)) else { return; };
+        let target = NativeTarget { host, id, spawn: word(bytes, 28) };
+        let Some(local) = self.active.get(&target) else { return; };
+        let Some(npc) = world.entities.get_mut(local) else { return; };
+        if npc.kind != Kind::Npc || npc.health == 0 || npc.travelling
+            || npc.native.as_ref().is_none_or(|n| n.target != target)
+            || npc.hitboxes.as_ref().is_some_and(|(previous, _)| !newer(tick, *previous))
+        { return; }
+        let feet = parry3d::math::Vector::from_array([32, 36, 40].map(|at| f32::from_bits(word(bytes, at))));
+        if let Some(boxes) = crate::alife_hitboxes::Hitboxes::decode(feet, &bytes[44..]) {
+            npc.hitboxes = Some((tick, Arc::new(boxes)));
+        }
+    }
+
+    pub fn ingest_poses(&mut self, mut rows: &[u8], host: u64, tick: u32) {
+        while let Some((header, rest)) = rows.split_at_checked(12) {
+            let Some((data, remainder)) = rest.split_at_checked(word(header, 8) as usize) else { return };
+            rows = remainder;
+            let Ok(id) = u16::try_from(word(header, 0)) else { continue };
+            let target = NativeTarget { host, id, spawn: word(header, 4) };
+            if !self.active.contains_key(&target) || !valid_pose(data) {
+                continue;
+            }
+            if self.poses.get(&target).is_none_or(|(old, _)| newer(tick, *old)) {
+                self.poses.insert(target, (tick, Arc::from(data)));
+            }
+        }
+    }
+
+    pub fn pose(&self, npc: &NativeNpc) -> Option<(u32, &[u8])> {
+        let (tick, data) = self.poses.get(&npc.target)?;
+        // Visual changes can cross the pose stream in either order.
+        (word(data, 0) == model_key(&npc.model)).then_some((*tick, data))
+    }
+
     pub fn expire(&mut self, world: &mut World) {
         if self
             .last
             .is_some_and(|last| world.tick.wrapping_sub(last) > LEASE)
         {
             self.confirmed_deaths.clear();
+            self.poses.clear();
             for (_, local) in std::mem::take(&mut self.active) {
                 world.remove(local);
             }
@@ -283,6 +387,25 @@ impl NpcRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pose_validates_stock_weapon_section_and_optional_shot() {
+        let weapon = b"wpn_ak74";
+        let section_start = POSE_HEADER + 2 * BONE_BYTES;
+        let mut pose = vec![0; section_start + weapon.len()];
+        pose[5] = 1;
+        pose[6] = weapon.len() as u8;
+        pose[7] = 1;
+        pose[section_start..].copy_from_slice(weapon);
+        assert!(valid_pose(&pose));
+
+        pose[7] = SHOT | SHOT_LAUNCHER;
+        assert!(!valid_pose(&pose));
+        pose.extend_from_slice(&[0; SHOT_BYTES]);
+        assert!(valid_pose(&pose));
+        pose[section_start] = b'\\';
+        assert!(!valid_pose(&pose));
+    }
 
     fn packet(tick: u32, part: usize, total: usize, first_id: u32, x: f32) -> Vec<u8> {
         let count = (total - part * PER_PACKET).min(PER_PACKET);
@@ -316,6 +439,53 @@ mod tests {
             row[60..60 + model.len()].copy_from_slice(model);
         }
         bytes
+    }
+
+    #[test]
+    fn npc_hitboxes_are_bound_to_host_spawn_freshness_and_liveness() {
+        use parry3d::{math::Vector, query::Ray};
+        let mut world = World::new();
+        world.tick = 10;
+        let mut roster = NpcRoster::default();
+        roster.ingest(&packet(10, 0, 1, 0, 0.0), 9, &mut world);
+        let target = NativeTarget { host: 5, id: 0, spawn: 1 };
+        let local = roster.active[&target];
+        let mut shapes = vec![0u8; 44 + 96];
+        shapes[..4].copy_from_slice(b"ZBN1");
+        shapes[4..8].copy_from_slice(&10u32.to_le_bytes());
+        shapes[8..16].copy_from_slice(&9u64.to_le_bytes());
+        shapes[16..24].copy_from_slice(&5u64.to_le_bytes());
+        shapes[28..32].copy_from_slice(&1u32.to_le_bytes());
+        shapes[44] = 2;
+        shapes[48..52].copy_from_slice(b"head");
+        shapes[88..92].copy_from_slice(&5.0f32.to_le_bytes());
+        shapes[92..96].copy_from_slice(&0.5f32.to_le_bytes());
+        for (epoch, host) in [(8, 5), (9, 6)] {
+            roster.ingest_hitboxes(&shapes, epoch, host, &mut world);
+            assert!(world.entities[&local].hitboxes.is_none());
+        }
+        let mut wrong_spawn = shapes.clone();
+        wrong_spawn[28..32].copy_from_slice(&2u32.to_le_bytes());
+        roster.ingest_hitboxes(&wrong_spawn, 9, 5, &mut world);
+        assert!(world.entities[&local].hitboxes.is_none());
+        roster.ingest_hitboxes(&shapes, 9, 5, &mut world);
+        let (_, boxes) = world.entities[&local].hitboxes.as_ref().unwrap();
+        let (distance, bone) = boxes.cast(&Ray::new(Vector::ZERO, Vector::Z), 10.0, Vector::ZERO).unwrap();
+        assert!((distance - 4.5).abs() < 0.0001);
+        assert_eq!(&*bone, "head");
+        // Duplicate or old packets must not replace newer geometry.
+        shapes[88..92].copy_from_slice(&7.0f32.to_le_bytes());
+        roster.ingest_hitboxes(&shapes, 9, 5, &mut world);
+        assert!((world.entities[&local].hitboxes.as_ref().unwrap().1
+            .cast(&Ray::new(Vector::ZERO, Vector::Z), 10.0, Vector::ZERO).unwrap().0 - 4.5).abs() < 0.0001);
+        world.entities.get_mut(&local).unwrap().hitboxes = None;
+        world.tick = 16;
+        roster.ingest_hitboxes(&shapes, 9, 5, &mut world);
+        assert!(world.entities[&local].hitboxes.is_none());
+        shapes[4..8].copy_from_slice(&16u32.to_le_bytes());
+        roster.confirm_death(target, local, &mut world);
+        roster.ingest_hitboxes(&shapes, 9, 5, &mut world);
+        assert!(world.entities[&local].hitboxes.is_none());
     }
 
     #[test]

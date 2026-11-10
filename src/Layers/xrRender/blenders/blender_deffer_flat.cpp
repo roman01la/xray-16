@@ -46,6 +46,9 @@ void CBlender_deffer_flat::Load(IReader& fs, u16 version)
 void CBlender_deffer_flat::Compile(CBlender_Compile& C)
 {
     IBlender::Compile(C);
+#ifdef XR_PLATFORM_WEB
+    C.TessMethod = oTessellation.IDselected;
+#endif
 
 #if RENDER == R_R2
     // codepath is the same, only the shaders differ
@@ -87,6 +90,11 @@ void CBlender_deffer_flat::Compile(CBlender_Compile& C)
     case SE_R2_SHADOW: // smap-direct
         //if (RImplementation.o.HW_smap)	C.r_Pass	("shadow_direct_base","dumb",	FALSE,TRUE,TRUE,FALSE);
         //else							C.r_Pass	("shadow_direct_base","shadow_direct_base",FALSE);
+#ifdef XR_PLATFORM_WEB
+        if (C.TessMethod && RImplementation.o.tessellation)
+            uber_deffer(C, true, "base", "base", false, nullptr, true);
+        else
+#endif
         C.r_Pass("shadow_direct_base", "null", FALSE, TRUE,TRUE,FALSE);
         C.r_ColorWriteEnable(false, false, false, false);
         C.r_End();

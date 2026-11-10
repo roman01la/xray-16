@@ -17,6 +17,10 @@
 #include "zone_effector.h"
 #include "BreakableObject.h"
 #include "GamePersistent.h"
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+#include "ai_space.h"
+#include "alife_simulator.h"
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 #define PREFETCHED_ARTEFACTS_NUM 1	//количество предварительно проспавненых артефактов
@@ -584,9 +588,16 @@ void CCustomZone::shedule_Update(u32 dt)
         inherited::shedule_Update(dt);
 
         // check "fast-mode" border
-        float cam_distance = Device.vCameraPosition.distance_to(P) - s.R;
-
-        if (cam_distance > FASTMODE_DISTANCE && !m_zone_flags.test(eAlwaysFastmode))
+        const float cam_distance = Device.vCameraPosition.distance_to(P) - s.R;
+        bool nearPlayer = cam_distance <= FASTMODE_DISTANCE;
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+        // A headless host camera remains at the campaign director. Use all
+        // authoritative players so remote zones keep the stock per-frame
+        // timing; coarse scheduled updates can skip short blowout windows.
+        if (const auto* alife = ai().get_alife(); alife && alife->uses_host_interests())
+            nearPlayer = alife->near_switch_interest(P, s.R + FASTMODE_DISTANCE);
+#endif
+        if (!nearPlayer && !m_zone_flags.test(eAlwaysFastmode))
             o_switch_2_slow();
         else
             o_switch_2_fast();

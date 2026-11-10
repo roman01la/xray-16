@@ -42,6 +42,8 @@ Rust and X-Ray and forwards SIGTERM. Fly allows 25 seconds for shutdown.
 - `/data/web/blobs`: immutable decoded file bytes keyed by SHA-256.
 - `/data/web/manifests`: release history; `/data/web/active.json` is atomically
   replaced only after every referenced blob has been verified as present.
+- `/data/web/analytics.sqlite`: anonymous browser activity and visit history,
+  stored separately from saves and multiplayer identities.
 
 The unified browser release uses one campaign asset pack. Its level archives
 contain Zaton, Jupiter, Pripyat, Jupiter Underground and Lab X8. The private
@@ -92,6 +94,39 @@ Upload the matching browser files before switching the server image. After the
 new gateway and Rust process pass health checks, activate the prepared frontend
 manifest. Use the manual test plan for the hosted campaign and isolated recovery
 checks. [Manual test plan](../MECHANICS_TEST_PLAN.md)
+
+## Game analytics
+
+Set the agreed initial password as the Fly secret `ZONE_ANALYTICS_PASSWORD`
+before deploying the analytics gateway. Both analytics routes are disabled
+when the secret is unset. Use the secret value at the prompt and leave it out
+of source, release manifests and command arguments.
+
+```sh
+printf 'Analytics password: ' >&2
+read -rs zone_analytics_password
+printf '\n' >&2
+printf 'ZONE_ANALYTICS_PASSWORD=%s\n' "$zone_analytics_password" |
+  flyctl secrets import --app roman-stalker-wan --stage
+unset zone_analytics_password
+```
+
+Open `https://stalker-online.xyz/analytics` and sign in as `analytics`. The
+dashboard uses HTTP Basic authentication over HTTPS. Every read requires the
+password, and the gateway rate-limits attempts by IP and across the service.
+The gateway image and browser release both need to be deployed to collect the
+full set of milestones.
+
+The browser generates a random localStorage ID independent of game saves and
+multiplayer identity. Analytics stores that ID, event IDs, event names and
+server receipt times. A new visit counts when a browser opens the game after
+30 minutes without a recorded event. First-time installs count only after the
+entire pack is verified and mounted, including interrupted downloads that
+later finish. Existing complete installs, incremental updates and retries of
+the same installation are excluded. Start Game presses, new campaign starts
+and successful user-requested save loads are reported as both event totals
+and unique browsers. Level travel and developer checkpoint warm starts are
+excluded. Counts begin when the feature is enabled.
 
 ## Native A-Life
 

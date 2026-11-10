@@ -7,6 +7,9 @@
 #include "xrCore/xrPool.h"
 #include "DetailFormat.h"
 #include "DetailModel.h"
+#ifdef XR_PLATFORM_WEB
+#include "DetailInstanceCache.h"
+#endif
 
 namespace xray::render::RENDER_NAMESPACE
 {
@@ -57,6 +60,9 @@ public:
     { // один кустик
         float scale;
         float scale_calculated;
+#ifdef XR_PLATFORM_WEB
+        u8 web_visibleClass = 255;
+#endif
         Fmatrix mRotY;
         u32 vis_ID; // индекс в visibility списке он же тип [не качается, качается1, качается2]
         float c_hemi;
@@ -66,7 +72,18 @@ public:
 #endif
     };
 
+#ifdef XR_PLATFORM_WEB
+    struct SlotItemVec : xr_vector<SlotItem*>
+    {
+        u64 revision = 0;
+        u64 packedRevision = u64(-1);
+        u64 uploadedRevision = u64(-1);
+        u32 storageIndex = u32(-1), storageGeneration = 0, visibleFrame = 0;
+        xr_vector<Fvector4> rows;
+    };
+#else
     using SlotItemVec = xr_vector<SlotItem*>;
+#endif
 
     struct SlotPart
     { //
@@ -181,6 +198,17 @@ public:
     // Hardware processor
     ref_geom hw_Geom;
     size_t hw_BatchSize;
+#ifdef XR_PLATFORM_WEB
+    struct WebInstances
+    {
+        xr_vector<u32> descriptors, signature, indices;
+        xr_vector<SlotItemVec*> dirtySlots;
+        u32 buffer = 0;
+    };
+    xr_vector<WebInstances> hw_instances[3];
+    u32 hw_storageGeneration = 1;
+#endif
+
 
     VertexStagingBuffer hw_VB;
     IndexStagingBuffer hw_IB;
@@ -221,6 +249,7 @@ public:
     /// MT stuff
     Task* m_calc_task{};
 
+    void WaitMTCalc();
     void DispatchMTCalc();
 
     CDetailManager();

@@ -17,6 +17,7 @@ pub mod lifecycle;
 
 pub mod combat;
 pub mod ballistics;
+mod xray_combat_rules;
 
 pub mod persistence;
 
@@ -44,6 +45,8 @@ pub mod travel;
 pub mod loot;
 pub mod alife_checkpoint;
 pub mod alife_interests;
+mod alife_hitboxes;
+mod alife_weapon;
 pub mod alife_npcs;
 pub mod alife_attacks;
 pub mod alife_corpse;
@@ -52,3 +55,6 @@ mod projectile;
 
 pub mod hand_grenade;
 pub mod knife;
+
+pub mod native_condition;
+pub mod native_weapon_action;

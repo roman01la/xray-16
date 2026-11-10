@@ -33,7 +33,7 @@ public:
     CSimulator RS;
     IBlender* BT;
     ShaderElement* SH;
-#ifdef USE_DX11
+#if defined(USE_DX11) || defined(XR_PLATFORM_WEB)
     enum
     {
         NO_TESS = 0,

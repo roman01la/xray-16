@@ -43,7 +43,10 @@ CSE_ALifeDynamicObject* alife_object(const CALifeSimulator* self, ALife::_OBJECT
     VERIFY(self);
     if (!valid_object_id(self, object_id))
     {
-        GEnv.ScriptEngine->script_log(LuaMessageType::Error,"! alife():object(id): invalid id[%u] specified", object_id);
+        // Stock smart terrain can repeatedly look up the no-object sentinel
+        // while choosing a job. Avoid building a Lua backtrace each time on the host.
+        if (!Device.IsHeadlessAlifeHost())
+            GEnv.ScriptEngine->script_log(LuaMessageType::Error,"! alife():object(id): invalid id[%u] specified", object_id);
         return nullptr;
     }
     return (self->objects().object(object_id, true));

@@ -1,4 +1,7 @@
 #include "stdafx.h"
+#ifdef XR_PLATFORM_WEB
+#include "Layers/xrRenderGL/WebGPUFluidVolume.h"
+#endif
 
 #include "xrCore/PostProcess/PPInfo.hpp"
 
@@ -361,7 +364,7 @@ void CRender::create()
     //.	o.sunstatic			= (strstr(Core.Params,"-sunstatic"))?	TRUE	:FALSE	;
     o.sunstatic = ps_r2_sun_static;
     o.advancedpp = ps_r2_advanced_pp;
-#if defined(USE_DX11)
+#if defined(USE_DX11) || defined(XR_PLATFORM_WEB)
     o.volumetricfog = ps_r2_ls_flags.test(R3FLAG_VOLUMETRIC_SMOKE);
 #elif defined(USE_OGL)
     // TODO: OGL: temporary disabled, need to fix it
@@ -385,6 +388,11 @@ void CRender::create()
     o.ssao_hdao = ps_r2_ls_flags_ext.test(R2FLAGEXT_SSAO_HDAO) && (ps_r_ssao != 0);
     o.ssao_ultra = HW.ComputeShadersSupported && ssao_hdao_cs_shaders_exist();
     o.ssao_hbao = !o.ssao_hdao && ps_r2_ls_flags_ext.test(R2FLAGEXT_SSAO_HBAO) && (ps_r_ssao != 0);
+#elif defined(XR_PLATFORM_WEB)
+    o.ssao_hdao = ps_r2_ls_flags_ext.test(R2FLAGEXT_SSAO_HDAO) && ps_r_ssao != 0;
+    // Ultra uses the original pixel-shader HDAO path, not a missing compute pass.
+    o.ssao_ultra = false;
+    o.ssao_hbao = !o.ssao_hdao && ps_r2_ls_flags_ext.test(R2FLAGEXT_SSAO_HBAO) && ps_r_ssao != 0;
 #elif defined(USE_OGL)
     // TODO: OGL: temporary disabled HBAO/HDAO, need to fix it
     o.ssao_hbao = false;
@@ -420,6 +428,11 @@ void CRender::create()
     // o.msaa_hybrid	= ps_r2_ls_flags.test(R3FLAG_MSAA_HYBRID);
     o.msaa_hybrid = ps_r2_ls_flags.test((u32)R3FLAG_USE_DX10_1);
     o.msaa_hybrid &= !o.msaa_opt && o.msaa && (HW.FeatureLevel >= D3D_FEATURE_LEVEL_10_1);
+#elif defined(XR_PLATFORM_WEB)
+    o.msaa = ps_r3_msaa != 0;
+    o.msaa_samples = o.msaa ? 4 : 0;
+    o.msaa_opt = o.msaa;
+    o.msaa_hybrid = false;
 #elif defined(USE_OGL)
     // TODO: OGL: temporary disabled, need to fix it
     o.msaa = false;
@@ -453,6 +466,12 @@ void CRender::create()
         }
     }
 
+#ifdef XR_PLATFORM_WEB
+    // Standard mode uses the stock coverage prepass with hardware A2C; high
+    // quality uses the original per-sample alpha evaluation/sample mask.
+    if (o.msaa && ps_r3_msaa_atest == 1)
+        o.msaa_alphatest = MSAA_ATEST_DX10_0_ATOC;
+#endif
     o.gbuffer_opt = ps_r2_ls_flags.test(R3FLAG_GBUFFER_OPT);
 
     o.minmax_sm = ps_r3_minmax_sm;
@@ -463,6 +482,9 @@ void CRender::create()
         HW.FeatureLevel >= D3D_FEATURE_LEVEL_11_0 && ps_r2_ls_flags_ext.test(R2FLAGEXT_ENABLE_TESSELLATION);
     o.support_rt_arrays = true;
 #else
+#ifdef XR_PLATFORM_WEB
+    o.tessellation = ps_r2_ls_flags_ext.test(R2FLAGEXT_ENABLE_TESSELLATION);
+#endif
     o.support_rt_arrays = false;
 #endif
 
@@ -525,6 +547,9 @@ void CRender::create()
 
 void CRender::destroy()
 {
+#ifdef XR_PLATFORM_WEB
+    UnloadWebFluidVolumes();
+#endif
 #if defined(USE_DX11)
     FluidManager.Destroy();
 #endif

@@ -1,7 +1,7 @@
 import {encodeControl,decodeControl,validateVitals,GUNSHOTS_OPCODE} from './control.mjs';
 import {LifecycleRegistry} from './lifecycle.mjs';
 import {loadContract, assertCompatible} from './contract.mjs';
-import {encodeInput, SnapshotAssembler, newer, encodeSnapshotFeedback} from './protocol.mjs';
+import {encodeInput, SnapshotAssembler, newer, encodeSnapshotFeedback, NPC_POSE_MAX_BYTES, ENVIRONMENT_OPCODE, ENVIRONMENT_BYTES, LOOP_SOUND_OPCODE} from './protocol.mjs';
 const waitFor = (target,event,test,ms=10000) => new Promise((resolve,reject)=>{
   if(test()) return resolve();
   const finish=()=>{clearTimeout(timer);target.removeEventListener(event,check);};
@@ -14,11 +14,13 @@ export class ZoneClient extends EventTarget {
   lifecycle=new LifecycleRegistry();
   weapon=null; vitals=null; ownershipVersion=0;
   grenades=null;
+  npcPosePackets=new Map();
+  nativeSoundPackets=[];
   travelPoints=[];
   stats={receivedBytes:0,receivedPackets:0,snapshots:0,resyncs:0};
   input={}; inputActive=true; heldFire=null; knifeAim=null; sequence=0; actionSequence=0; pending=new Map(); snapshot=null; playerId=null;
   emit(type,detail){this.dispatchEvent(new CustomEvent(type,{detail}));}
-  async connect({url='/offer',token='',iceServers=[],contract=null,impairment=null,identitySecret=null}={}) {
+  async connect({url='/offer',token='',iceServers=[],contract=null,impairment=null,identitySecret=null,nativeMovement=false}={}) {
     if(this.connecting)throw new Error('Connection already started');
     this.connecting=true;
     this.contract=contract || await loadContract();
@@ -31,6 +33,36 @@ export class ZoneClient extends EventTarget {
     this.state.binaryType='arraybuffer';this.control.binaryType='arraybuffer';
     const receiveState=data=>{
       const opcode=data instanceof ArrayBuffer&&data.byteLength>=4?new DataView(data).getUint8(3):0;
+      if(opcode===33||opcode===34||opcode===ENVIRONMENT_OPCODE||opcode===LOOP_SOUND_OPCODE){
+        const view=new DataView(data);
+        if(view.byteLength<5||view.getUint16(0,true)!==0x5a58||view.getUint8(2)!==3)return;
+        const packet=new Uint8Array(data,4);
+        if(opcode===33&&packet.length>=50&&packet.length<=NPC_POSE_MAX_BYTES){
+          const id=view.getUint32(4,true),tick=view.getUint32(8,true);
+          const previous=this.npcPosePackets.get(id);
+          if(!id||previous&&!newer(tick,previous.tick))return;
+          if(!previous&&this.npcPosePackets.size>=64)this.npcPosePackets.delete(this.npcPosePackets.keys().next().value);
+          this.npcPosePackets.set(id,{tick,packet});
+        }
+        if(opcode===34&&packet.length>=25&&packet.length<=151){
+          if(this.nativeSoundPackets.length>=64)this.nativeSoundPackets.shift();
+          this.nativeSoundPackets.push({packet,receivedAt:performance.now()});
+        }
+        if(opcode===ENVIRONMENT_OPCODE&&packet.length===ENVIRONMENT_BYTES){
+          const tick=view.getUint32(4,true);
+          if(this.nativeEnvironmentTick===undefined||newer(tick,this.nativeEnvironmentTick)){
+            this.nativeEnvironmentTick=tick;
+            this.nativeEnvironment=packet;
+          }
+        }
+        if(opcode===LOOP_SOUND_OPCODE&&packet.length>=33&&packet.length<=159){
+          this.nativeLoops??=new Map();
+          const id=view.getUint32(4,true),tick=view.getUint32(8,true),previous=this.nativeLoops.get(id);
+          if(id&&(previous?newer(tick,previous.tick):this.nativeLoops.size<32))
+            this.nativeLoops.set(id,{tick,packet});
+        }
+        return;
+      }
       if(opcode===26||opcode===GUNSHOTS_OPCODE){
         try{
           const frame=decodeControl(data);
@@ -75,7 +107,7 @@ export class ZoneClient extends EventTarget {
     try {
       await pc.setLocalDescription(await pc.createOffer());
       await waitFor(pc,'icegatheringstatechange',()=>pc.iceGatheringState==='complete');
-      const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify({version:3,contract:this.contract,offer:pc.localDescription,...(identitySecret?{identity_secret:identitySecret}:{})}),signal:AbortSignal.timeout(10000)});
+      const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify({version:3,contract:this.contract,offer:pc.localDescription,...(nativeMovement?{native_movement:true}:{}),...(identitySecret?{identity_secret:identitySecret}:{})}),signal:AbortSignal.timeout(10000)});
       const body=await response.json();
       if(!response.ok || body.version!==3) throw new Error(body.error || 'Signaling version mismatch');
       assertCompatible(this.contract,body.contract);
@@ -86,6 +118,18 @@ export class ZoneClient extends EventTarget {
       this.timer=setInterval(()=>{if(this.checkLiveness())this.sendInput();},1000/this.contract.tickHz); this.sendInput();
       return this;
     } catch(error){this.close();throw error;}
+  }
+  takeNativeMedia(){
+    const poses=[...this.npcPosePackets.values()].map(({packet})=>packet);
+    const now=performance.now();
+    const sounds=this.nativeSoundPackets.filter(({receivedAt})=>now-receivedAt<=400).map(({packet})=>packet);
+    this.npcPosePackets.clear();
+    this.nativeSoundPackets.length=0;
+    const environment=this.nativeEnvironment;
+    this.nativeEnvironment=undefined;
+    const loops=this.nativeLoops?[...this.nativeLoops.values()].map(({packet})=>packet):[];
+    this.nativeLoops?.clear();
+    return {poses,sounds,environment,loops};
   }
   checkLiveness(now=performance.now()){
     if(this.closed)return false;
@@ -125,7 +169,7 @@ export class ZoneClient extends EventTarget {
       this.sendState(packet);
       // Replay the quantized values that the server actually receives.
       const flags=v.getUint16(16,true);
-      this.inputHistory.push({sequence:this.sequence,x:v.getInt16(8,true)/32767,z:v.getInt16(10,true)/32767,yaw:v.getFloat32(12,true),sprint:!!(flags&1),jump:!!(flags&2),crouch:!!(flags&4),walk:!!(flags&8)});
+      this.inputHistory.push({sequence:this.sequence,sentAt:performance.timeOrigin+performance.now(),x:v.getInt16(8,true)/32767,z:v.getInt16(10,true)/32767,yaw:v.getFloat32(12,true),sprint:!!(flags&1),jump:!!(flags&2),crouch:!!(flags&4),walk:!!(flags&8)});
       this.inputHistory=this.inputHistory.slice(-32);this.emit('input-sent',this.inputHistory);
     }
   }

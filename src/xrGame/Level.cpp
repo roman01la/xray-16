@@ -41,6 +41,8 @@
 #include "MainMenu.h"
 #include "xrEngine/XR_IOConsole.h"
 #include "Actor.h"
+#include "WeaponAmmo.h"
+#include "Inventory.h"
 #include "player_hud.h"
 #include "ui/UIGameTutorial.h"
 #include "file_transfer.h"
@@ -56,6 +58,7 @@
 
 #ifndef XR_PLATFORM_WEB
 #include "CustomMonster.h"
+#include "CustomZone.h"
 #include "ai/monsters/basemonster/base_monster.h"
 #include "alife_simulator.h"
 #include "alife_object_registry.h"
@@ -149,6 +152,15 @@ void writeZoneAlifeProbe(CLevel& level)
         }
     }
     const auto count = level.Objects.o_count();
+    for (u32 i = 0, sampled = 0; i < count && sampled < 512; ++i)
+        if (auto* zone = smart_cast<CCustomZone*>(level.Objects.o_get_by_iterator(i)); zone && !zone->getDestroy())
+        {
+            const auto& p = zone->Position();
+            std::fprintf(file, "#zone\t%u\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%u\t%u\t%.6f\n",
+                unsigned(zone->ID()), zone->cNameSect().c_str(), p.x, p.y, p.z, zone->Radius(),
+                unsigned(zone->IsEnabled()), unsigned(zone->ZoneState()), zone->GetMaxPower());
+            ++sampled;
+        }
 #if defined(XR_PLATFORM_POSIX)
     xr_vector<const CActor*> targets;
     if (ai().alife().uses_host_interests())
@@ -162,6 +174,20 @@ void writeZoneAlifeProbe(CLevel& level)
                     position.x, position.y, position.z, actor->zoneAlifeHits(), unsigned(actor->g_Team()),
                     unsigned((actor->spatial.type & STYPE_VISIBLEFORAI) != 0), unsigned(actor->g_Alive()),
                     unsigned(actor->GetCForm() != nullptr), const_cast<CActor*>(actor)->ROS()->get_luminocity());
+                unsigned ammoRows = 0;
+                for (const auto* item : actor->inventory().m_all)
+                    if (const auto* ammo = smart_cast<const CWeaponAmmo*>(item); ammo && ammoRows++ < 128)
+                        std::fprintf(file, "#ammo\t%u\t%u\t%s\t%u\t%u\n", unsigned(actor->ID()),
+                            unsigned(ammo->ID()), ammo->cNameSect().c_str(), unsigned(ammo->m_boxCurr),
+                            unsigned(ammo->m_boxSize));
+                unsigned weaponRows = 0;
+                for (const auto* item : actor->inventory().m_all)
+                    if (const auto* weapon = smart_cast<const CWeapon*>(item); weapon && weaponRows++ < 4)
+                        std::fprintf(file, "#weapon\t%u\t%u\t%s\t%zu\t%s\t%u\n", unsigned(actor->ID()),
+                            unsigned(weapon->ID()), weapon->cNameSect().c_str(), weapon->m_magazine.size(),
+                            weapon->GetState() == CWeapon::eIdle ? "idle" :
+                                (weapon->GetState() == CWeapon::eReload ? "reload" : "other"),
+                            unsigned(weapon->IsPending()));
             }
     unsigned awarenessRows = 0;
 #endif
@@ -481,6 +507,17 @@ void CLevel::ProcessGameEvents()
         u32 svT = timeServer() - NET_Latency;
         while (game_events->available(svT))
         {
+#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
+            // get() removes the event. Preserve a native-player hit until its
+            // acknowledged outbound queue has room, rather than losing it in
+            // Actor::Hit after consumption. Dispatch is serial on this thread.
+            const auto& pending = game_events->queue.front();
+            if (pending.ID == M_EVENT && (pending.type == GE_HIT || pending.type == GE_HIT_STATISTIC))
+                if (auto* actor = smart_cast<CActor*>(Objects.net_Find(pending.destination));
+                    actor && actor->zoneAlifeTarget())
+                    if (const auto* alife = ai().get_alife(); alife && !alife->host_hit_capacity())
+                        break;
+#endif
             u16 ID, dest, type;
             game_events->get(ID, dest, type, P);
             switch (ID)
@@ -575,6 +612,11 @@ void CLevel::MakeReconnect()
 void CLevel::OnFrame()
 {
     ZoneScoped;
+
+    // The persistent callback continues private socket/condition servicing.
+    // Do not produce more bullet/object events while delivery is saturated.
+    if (Device.IsHeadlessAlifeHost() && Device.Paused())
+        return;
 
 #ifdef DEBUG
     DBG_RenderUpdate();

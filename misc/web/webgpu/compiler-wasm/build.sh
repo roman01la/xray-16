@@ -31,7 +31,8 @@ cp "$sidecar_dir/naga/target/wasm32-unknown-unknown/release/xray_shader_translat
 python3 - "$sidecar_dir" <<'PY'
 import pathlib,sys
 dest=pathlib.Path(sys.argv[1])
-files=[pathlib.Path('.tools/shaderc-src/LICENSE'),pathlib.Path('.tools/shaderc-src/third_party/LICENSE.glslang'),pathlib.Path('.tools/shaderc-src/third_party/LICENSE.spirv-tools')]
+files=list((dest/'naga/vendor/naga').glob('LICENSE*'))
+files += [pathlib.Path('.tools/shaderc-src/LICENSE'),pathlib.Path('.tools/shaderc-src/third_party/LICENSE.glslang'),pathlib.Path('.tools/shaderc-src/third_party/LICENSE.spirv-tools')]
 files+=list(pathlib.Path('.tools/shaderc-src/third_party/spirv-headers').glob('LICENSE*'))
 registry=pathlib.Path.home()/'.cargo/registry/src'
 import tomllib

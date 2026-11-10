@@ -6,6 +6,8 @@ const expect=(condition,message)=>{if(!condition)throw Error(message);};
 const until=async(fn,ms=15000)=>{const start=performance.now();while(!await fn()){if(performance.now()-start>ms)throw Error('Timed out waiting for scenario state');await pause(60);}};
 let clients=[];const stop=()=>{for(const c of clients)c.close();clients=[];};addEventListener('pagehide',stop);
 const self=c=>c.snapshot?.entities.find(e=>e.id===c.playerId),owned=(c,id)=>c.inventory.view.items.find(i=>i.id===id);
+const starterSections=['ammo_5.45x39_fmj','ammo_9x18_fmj','bandage','bolt','bread','device_pda','device_torch','wpn_ak74','wpn_knife','wpn_pm'];
+const hasStarterKit=c=>c.inventory.view.items.map(i=>i.section).sort().join(',')===starterSections.join(',');
 async function connect(slot,world){
  const identity=await loadIdentity(slot),client=new ZoneClient();clients.push(client);
  await client.connect({contract:world.contract,identitySecret:identity.secret});
@@ -17,7 +19,7 @@ $('run').onclick=()=>run(async()=>{
  const fixture=await (await fetch('./inventory-fixture.json')).json(),world=await (await fetch('/world.json')).json();
  expect(world.survival,'Survival mode is not enabled');
  const slots=['inv-a-'+fixture.item.slice(0,8),'inv-b-'+fixture.item.slice(0,8)],a=await connect(slots[0],world),b=await connect(slots[1],world);
- expect(a.inventory.view.items.length===6&&b.inventory.view.items.length===6,'Original starter grants missing');log('PASS · both identities received exactly one starter kit');
+ expect(hasStarterKit(a)&&hasStarterKit(b),'Starter grants missing');log('PASS · both identities received exactly one starter kit');
  const command={requestId:crypto.randomUUID().replaceAll('-',''),life:0,item:fixture.item,revision:0,action:{kind:'pickup',source:fixture.source}};
  const other={...command,requestId:crypto.randomUUID().replaceAll('-','')};
  const results=await Promise.all([a.moveInventory(command),b.moveInventory(other)]);
@@ -38,7 +40,7 @@ $('run').onclick=()=>run(async()=>{
  const recovered=await connect(victimSlot,world);expect(!recovered.inventory.view.alive&&recovered.inventory.view.items.length===0,'Reconnect reversed death');log('PASS · full-loss death and reconnect retain the dead life');
  const early=await recovered.respawn();expect(early.reason==='respawn_delay','Respawn delay was bypassed');
  $('status').textContent='Waiting for configured respawn delay';await pause(10500);
- const respawn=await recovered.respawn();expect(respawn.status==='respawned','Durable respawn failed');expect(recovered.inventory.view.life===1&&recovered.inventory.view.items.length===6,'Respawn kit/life mismatch');
+ const respawn=await recovered.respawn();expect(respawn.status==='respawned','Durable respawn failed');expect(recovered.inventory.view.life===1&&hasStarterKit(recovered),'Respawn kit/life mismatch');
  expect((await winner.inventory.move({id:fixture.item,revision:beforeDeath.revision+1},{kind:'pickup',source:corpse})).status==='committed','Corpse re-loot failed');log('PASS · delayed respawn grants a new kit; old equipment stays on the corpse');
  const saved={fixture,slots,views:{[winner===a?slots[0]:slots[1]]:winner.inventory.view,[victimSlot]:recovered.inventory.view}};
  localStorage.setItem('zone-inventory-acceptance',JSON.stringify(saved));log('Saved expected durable inventories for server restart verification');

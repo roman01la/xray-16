@@ -20,3 +20,45 @@ test('replay applies authoritative walking restrictions and limp speed to raw in
  r.snapshotReceived(snap(1,10),vitals);assert.equal(r.position().x,10);
  r.snapshotReceived(snap(1,10),[...vitals.slice(0,6),2,49000,50000,60000,500]);assert.equal(r.position().x,10.5);
 });
+test('render pose advances between fixed steps and absorbs small corrections without a jump',()=>{
+ let now=0;
+ const r=new Reconciler(mock(),()=>now);
+ const history=[{...input(11,.1),sentAt:0}];
+ r.update(snap(10,20),history);
+ const first=r.renderPosition().x;
+ now=1000/60;
+ const half=r.renderPosition().x;
+ assert.ok(Math.abs(half-first-.05)<1e-9);
+ assert.equal(r.position().x,20.1);
+ r.snapshotReceived(snap(10,19.95));
+ assert.ok(Math.abs(r.renderPosition().x-half)<1e-9);
+ now=300;
+ assert.ok(Math.abs(r.renderPosition().x-20.15)<.001);
+ r.snapshotReceived(snap(11,30));
+ assert.equal(r.renderPosition().x,30);
+ now=651;
+ assert.equal(r.renderPosition(),null);
+});
+
+test('rendered walking stays continuous as delayed acknowledgements shift between frames',()=>{
+ let now=0,history=[],raw=[],visual=[];
+ const r=new Reconciler(mock(),()=>now),walkStep=.07,tickMs=1000/30;
+ for(let frame=0;frame<480;frame++){
+  now=frame*tickMs/4;
+  if(frame%4===0){
+   history=[...history,{...input(frame/4+1,walkStep),sentAt:now}].slice(-32);
+   r.inputsReceived(history);
+  }
+  // Deliver 15 Hz snapshots 133-150 ms after the simulated client command.
+  if((frame>=16 && (frame-16)%16===0) || (frame>=26 && (frame-26)%16===0)){
+   const ack=Math.floor((frame-16)/4)+1;
+   r.snapshotReceived(snap(ack,ack*walkStep+(frame%16===0?.025:-.025)));
+  }
+  if(frame>=32){
+   raw.push(r.position().x);
+   visual.push(r.renderPosition().x);
+  }
+ }
+ const error=values=>values.slice(1).reduce((sum,value,i)=>sum+Math.abs(value-values[i]-walkStep/4),0);
+ assert.ok(error(visual)<error(raw)*.35);
+});
