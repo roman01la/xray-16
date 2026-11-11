@@ -326,7 +326,7 @@ void render_sun::render()
                 if(markCascades) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=$0;},cascade_ind+1);
 #endif
                 dsgraph.render_graph(0);
-                if (ps_r2_ls_flags.test(R2FLAG_SUN_DETAILS))
+                if (ps_r2_ls_flags.test(R2FLAG_SUN_DETAILS) && int(cascade_ind) < ps_r2_sun_details_cascades)
                     RImplementation.Details->Render(dsgraph.cmd_list);
                 sun->X.D[cascade_ind].transluent = FALSE;
                 if (bSpecial)

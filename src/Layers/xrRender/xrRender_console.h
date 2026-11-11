@@ -104,6 +104,9 @@ extern ECORE_API float ps_r2_ssaLOD_B;
 // R2-specific
 extern ECORE_API Flags32 ps_r2_ls_flags; // r2-only
 extern ECORE_API Flags32 ps_r2_ls_flags_ext;
+// Number of sun cascades that render grass details (1..3). Grass in the far
+// cascade is sub-texel at 2048; the web build defaults to near+mid.
+extern ECORE_API int ps_r2_sun_details_cascades;
 extern ECORE_API float ps_r2_df_parallax_h; // r2-only
 extern ECORE_API float ps_r2_df_parallax_range; // r2-only
 extern ECORE_API float ps_r2_gmaterial; // r2-only

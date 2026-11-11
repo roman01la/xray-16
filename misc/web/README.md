@@ -29,6 +29,11 @@ Escape to release the mouse, press it again. Add `diagnostics=1` to the page que
 for the selected GPU adapter, FPS, render size, CPU and GPU timings, and WebGPU
 validation errors.
 
+Grass sun shadows render into the near and middle sun cascades by default on the
+web build (`r2_sun_details_cascades 2`); the far cascade is skipped because its
+shadow-map texels are coarser than a grass blade. Set `r2_sun_details_cascades 3`
+in the console for the original all-cascade behavior.
+
 Single-player saves stay in the current browser origin. The startup overlay's
 **Download Saves** exports a JSON backup. **Import Saves** opens an engine-free
 restore screen: choose that backup, then **Return to Game** and use **Load game**.

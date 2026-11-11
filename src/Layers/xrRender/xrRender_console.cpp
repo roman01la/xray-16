@@ -251,6 +251,11 @@ int ps_r3_dyn_wet_surf_sm_res = 256; // 256
 
 u32 ps_steep_parallax = 0;
 int ps_r__detail_radius = 49;
+#ifdef XR_PLATFORM_WEB
+int ps_r2_sun_details_cascades = 2;
+#else
+int ps_r2_sun_details_cascades = 3;
+#endif
 
 u32 dm_size = 24;
 u32 dm_cache1_line = 12; //dm_size*2/dm_cache1_count
@@ -837,6 +842,7 @@ void xrRender_initconsole()
 
     CMD3(CCC_Mask, "r2_sun", &ps_r2_ls_flags, R2FLAG_SUN);
     CMD3(CCC_Mask, "r2_sun_details", &ps_r2_ls_flags, R2FLAG_SUN_DETAILS);
+    CMD4(CCC_Integer, "r2_sun_details_cascades", &ps_r2_sun_details_cascades, 1, 3);
     CMD3(CCC_Mask, "r2_sun_focus", &ps_r2_ls_flags, R2FLAG_SUN_FOCUS);
     //CMD3(CCC_Mask, "r2_sun_static", &ps_r2_ls_flags, R2FLAG_SUN_STATIC);
     //CMD3(CCC_Mask, "r2_exp_splitscene", &ps_r2_ls_flags, R2FLAG_EXP_SPLIT_SCENE);
