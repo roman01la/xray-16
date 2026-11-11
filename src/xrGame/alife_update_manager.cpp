@@ -114,12 +114,7 @@ void CALifeUpdateManager::update_scheduled(bool init_ef)
         init_ef_storage();
 
     START_PROFILE("ALife/scheduled");
-    auto level = GameGraph::_LEVEL_ID(-1);
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    if (host_interests_requested() && std::getenv("ZONE_ALIFE_LEVEL"))
-        level = graph().level().level_id();
-#endif
-    scheduled().update(level);
+    scheduled().update();
     STOP_PROFILE
 }
 
@@ -136,7 +131,7 @@ void CALifeUpdateManager::shedule_Update(u32 dt)
     if (!initialized())
         return;
 
-    if (!m_first_time && g_mt_config.test(mtALife) && !host_interests_requested())
+    if (!m_first_time && g_mt_config.test(mtALife))
     {
         Device.seqParallel.push_back(fastdelegate::FastDelegate0<>(this, &CALifeUpdateManager::update));
         return;
@@ -147,20 +142,6 @@ void CALifeUpdateManager::shedule_Update(u32 dt)
     START_PROFILE("ALife/update")
     update();
     STOP_PROFILE
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    if (host_interests_requested() && g_pGameLevel && Level().bReady && Level().CurrentEntity())
-    {
-        auto& checkpoint = host_interests();
-        poll_host_world(checkpoint);
-        const u32 interval = checkpoint.hasStagedCorpses() ? 1000 : checkpoint.hasWorldCheckpoint() ? 30000 : 5000;
-        if (checkpoint.checkpointAdmitted() && !checkpoint.checkpointWriting() && host_corpses_settled() &&
-            Device.dwTimeGlobal - m_last_host_checkpoint >= interval)
-        {
-            m_last_host_checkpoint = Device.dwTimeGlobal;
-            save_host_world(checkpoint);
-        }
-    }
-#endif
 }
 
 void CALifeUpdateManager::set_process_time(int microseconds)
@@ -176,7 +157,7 @@ void CALifeUpdateManager::objects_per_update(const u32& objects_per_update)
 void CALifeUpdateManager::init_ef_storage() const { ai().ef_storage().alife_evaluation(true); }
 bool CALifeUpdateManager::change_level(NET_Packet& net_packet)
 {
-    if (m_changing_level || host_interests_requested())
+    if (m_changing_level)
         return (false);
 
     luabind::functor<void> funct;
@@ -271,10 +252,6 @@ void CALifeUpdateManager::new_game(LPCSTR save_name)
     reload(m_section);
     spawns().load(save_name);
     graph().on_load();
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    if (host_interests_requested())
-        graph().configure_host_spawn();
-#endif
     server().PerformIDgen(0x0000);
     time_manager().init(m_section);
     VERIFY(can_register_objects());
@@ -345,8 +322,6 @@ void CALifeUpdateManager::reload(LPCSTR section)
 
 bool CALifeUpdateManager::load_game(LPCSTR game_name, bool no_assert)
 {
-    if (host_interests_requested())
-        return false;
     {
         string_path temp, file_name;
         strconcat(sizeof(temp), temp, game_name, SAVE_EXTENSION);

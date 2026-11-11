@@ -222,54 +222,6 @@ void HUD_SOUND_COLLECTION_LAYERED::PlaySound(pcstr alias, const Fvector& positio
             sound_item.PlaySound(alias, position, parent, hud_mode, looped, index);
 }
 
-#ifdef XRAY_WEB_MULTIPLAYER
-bool HUD_SOUND_ITEM::PlayTrackedHudSound(HUD_SOUND_ITEM& item, ref_sound& playback)
-{
-    if (item.sounds.empty())
-        return false;
-    const auto& voice = item.sounds[Random.randI(item.sounds.size())];
-    if (!voice.snd._handle())
-        return false;
-    // Keep an independent handle so inventory replacement cannot stop the voice.
-    playback.stop();
-    playback.clone(voice.snd, voice.snd._sound_type(), voice.snd._g_type());
-    playback.play_at_pos(nullptr, Fvector().set(0.f, 0.f, 0.f), sm_2D, voice.delay);
-    playback.set_volume(voice.volume * psHUDSoundVolume);
-    return true;
-}
-
-bool HUD_SOUND_ITEM::PlayOneShot(HUD_SOUND_ITEM& item, Fvector position, bool hud_mode)
-{
-    if (item.sounds.empty())
-        return false;
-    auto& voice = item.sounds[Random.randI(item.sounds.size())];
-    if (!voice.snd._handle())
-        return false;
-    float volume = voice.volume;
-    if (hud_mode)
-    {
-        position.set(0.f, 0.f, 0.f);
-        volume *= psHUDSoundVolume;
-    }
-    // The scene owns this emitter, so inventory reconciliation cannot cut it off.
-    voice.snd.play_no_feedback(nullptr, hud_mode ? sm_2D : 0, voice.delay, &position, &volume);
-    return true;
-}
-
-bool HUD_SOUND_COLLECTION_LAYERED::PlayOneShot(pcstr alias, const Fvector& position, bool hud_mode)
-{
-    bool played = false;
-    for (auto& layer : m_sound_layered_items)
-    {
-        if (layer.m_alias != alias)
-            continue;
-        auto* item = layer.FindSoundItem(alias, false);
-        if (item && HUD_SOUND_ITEM::PlayOneShot(*item, position, hud_mode))
-            played = true;
-    }
-    return played;
-}
-#endif
 
 
 HUD_SOUND_ITEM* HUD_SOUND_COLLECTION_LAYERED::FindSoundItem(pcstr alias, bool b_assert)

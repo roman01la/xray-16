@@ -458,8 +458,3 @@ if (BUILD_SHARED_LIBS)
         DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     )
 endif()
-
-if (XRAY_WEB_MULTIPLAYER)
-    set_source_files_properties(IGame_Persistent.cpp PROPERTIES
-        COMPILE_DEFINITIONS XRAY_WEB_MULTIPLAYER=1)
-endif()

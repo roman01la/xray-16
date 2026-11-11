@@ -1522,9 +1522,9 @@ float CScriptGameObject::GetLuminocityHemi()
 float CScriptGameObject::GetLuminocity()
 {
     CGameObject* e = &object();
-    if (auto* lighting = e->renderable_ROS())
-        return lighting->get_luminocity(Device.IsHeadlessAlifeHost() ? e : nullptr);
-    return 0;
+    if (!e || !e->renderable_ROS())
+        return 0;
+    return e->renderable_ROS()->get_luminocity();
 }
 
 void CScriptGameObject::ForceSetPosition(Fvector pos, bool bActivate)

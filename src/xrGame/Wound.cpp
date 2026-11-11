@@ -4,7 +4,6 @@
 
 #include "StdAfx.h"
 #include "Wound.h"
-#include "CombatRules.h"
 #include "xrCore/Animation/Bone.hpp"
 
 CWound::CWound(u16 bone_num)
@@ -24,20 +23,22 @@ CWound::CWound(u16 bone_num)
 }
 
 CWound::~CWound(void) {}
+#define WOUND_MAX 10.f
+
 // serialization
 void CWound::save(NET_Packet& output_packet)
 {
     output_packet.w_u8((u8)m_iBoneNum);
     for (u32 i = 0; i < ALife::eHitTypeMax; i++)
-        output_packet.w_float_q8(m_Wounds[i], 0.f, xray::combat::maxWoundSize);
+        output_packet.w_float_q8(m_Wounds[i], 0.f, WOUND_MAX);
 }
 void CWound::load(IReader& input_packet)
 {
     m_iBoneNum = (u8)input_packet.r_u8();
     for (u32 i = 0; i < ALife::eHitTypeMax; i++)
     {
-        m_Wounds[i] = input_packet.r_float_q8(0.f, xray::combat::maxWoundSize);
-        VERIFY(m_Wounds[i] >= 0.0f && m_Wounds[i] <= xray::combat::maxWoundSize);
+        m_Wounds[i] = input_packet.r_float_q8(0.f, WOUND_MAX);
+        VERIFY(m_Wounds[i] >= 0.0f && m_Wounds[i] <= WOUND_MAX);
     }
 }
 
@@ -58,10 +59,26 @@ float CWound::TypeSize(ALife::EHitType hit_type) { return m_Wounds[hit_type]; }
 float CWound::BloodSize() { return m_Wounds[ALife::eHitTypeWound] + m_Wounds[ALife::eHitTypeFireWound]; }
 void CWound::AddHit(float hit_power, ALife::EHitType hit_type)
 {
-    m_Wounds[hit_type] = xray::combat::addWoundHit(m_Wounds[hit_type], hit_power);
+    m_Wounds[hit_type] += hit_power;
+    clamp(m_Wounds[hit_type], 0.0f, WOUND_MAX);
 }
 
 void CWound::Incarnation(float percent, float min_wound_size)
 {
-    xray::combat::healWound(m_Wounds.begin(), m_Wounds.size(), percent, min_wound_size, EPS_S);
+    float total_size = TotalSize();
+
+    if (fis_zero(total_size))
+    {
+        for (u32 i = 0; i < ALife::eHitTypeMax; i++)
+            m_Wounds[i] = 0.f;
+        return;
+    }
+
+    //заживить все раны пропорционально их размеру
+    for (u32 i = 0; i < ALife::eHitTypeMax; i++)
+    {
+        m_Wounds[i] -= percent /* *m_Wounds[i]*/;
+        if (m_Wounds[i] < min_wound_size)
+            m_Wounds[i] = 0;
+    }
 }

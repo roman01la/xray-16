@@ -22,7 +22,6 @@ export default {
     const path=new URL(request.url).pathname;
     try{
       if(path==='/health')return response(200,JSON.stringify({status:'ok',mode:'singleplayer',hosting:'cloudflare'}),{'Content-Type':'application/json'});
-      if(['/world.json','/offer','/metrics'].includes(path)||path.startsWith('/identity/'))return response(503,'Multiplayer is not released');
       if(path!=='/analytics'&&path!=='/analytics/'&&path!=='/analytics/event')return response(404,'Not found');
       const ip=request.headers.get('CF-Connecting-IP')||'unknown';
       if(path==='/analytics/event'){

@@ -5,10 +5,6 @@
 //	Description : UI ActorMenu actions implementation
 ////////////////////////////////////////////////////////////////////////////
 
-#ifdef XRAY_WEB_MULTIPLAYER
-#include "multiplayer/EngineAdapter.h"
-#include "multiplayer/InventoryPresentation.h"
-#endif
 #include "StdAfx.h"
 #include "UIActorMenu.h"
 #include "UIActorStateInfo.h"
@@ -120,17 +116,6 @@ bool CUIActorMenu::OnItemDrop(CUICellItem* itm)
     }
     EDDListType t_new = GetListType(new_owner);
     EDDListType t_old = GetListType(old_owner);
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (zone::mapPreviewEnabled() && m_currMenuMode == mmDeadBodySearch &&
-        (t_old == iDeadBodyBag || t_new == iDeadBodyBag))
-    {
-        if (t_old == iDeadBodyBag && t_new == iActorBag)
-            zone::inventoryTakeCorpseItem(static_cast<PIItem>(itm->m_pData));
-        else if (t_new == iDeadBodyBag && (t_old == iActorBag || t_old == iActorSlot || t_old == iActorBelt))
-            ToDeadBodyBag(itm, true);
-        return true;
-    }
-#endif
 
     if (!AllowItemDrops(t_old, t_new))
     {
@@ -140,21 +125,9 @@ bool CUIActorMenu::OnItemDrop(CUICellItem* itm)
 
     if (old_owner == new_owner)
     {
-#ifdef XRAY_WEB_MULTIPLAYER
-        if (zone::mapPreviewEnabled() && t_old == iActorBelt)
-        {
-            // The generic list would move the icon without changing its server-owned belt cell.
-            ToBelt(itm, true);
-            return true;
-        }
-#endif
         DropItemOnAnotherItem(t_old, t_new, old_owner, new_owner);
         return false;
     }
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (zone::mapPreviewEnabled() && OnItemDropped(static_cast<PIItem>(itm->m_pData), new_owner, old_owner))
-        return true;
-#endif
 
     switch (t_new)
     {

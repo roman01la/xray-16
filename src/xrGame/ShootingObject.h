@@ -49,7 +49,6 @@ protected:
         u16 parent_id, u16 weapon_id, bool send_hit, int iShotNum = 0);
     void SetBulletSpeed(float new_speed) { m_fStartBulletSpeed = new_speed; }
     float GetBulletSpeed() { return m_fStartBulletSpeed; }
-    float GetAirResistanceFactor() const { return m_air_resistance_factor; }
     virtual void FireStart();
     virtual void FireEnd();
 

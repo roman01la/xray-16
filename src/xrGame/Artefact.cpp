@@ -462,17 +462,6 @@ void CArtefact::SwitchVisibility(bool b)
         m_detectorObj->SetVisible(b);
 }
 
-#ifdef XRAY_WEB_MULTIPLAYER
-void CArtefact::UpdateNetworkPresentation()
-{
-    auto* visual = Visual();
-    if (visual->dcast_PKinematicsAnimated())
-        visual->dcast_PKinematics()->CalculateBones(TRUE);
-    UpdateParticles();
-    UpdateLights();
-}
-#endif
-
 void CArtefact::StopActivation()
 {
     // VERIFY2(m_activationObj, "activation object not initialized");

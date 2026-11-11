@@ -7,8 +7,7 @@ The production package contains only the native renderer. The desktop renderer i
 
 ## Run
 
-The hosted game uses the same native WebGPU engine for single player and
-multiplayer. The render target follows the browser viewport's aspect ratio
+The hosted game uses the same native WebGPU engine for the single-player campaign. The render target follows the browser viewport's aspect ratio
 within the resolution selected in video settings. Add `diagnostics=1`
 to the query for the GPU adapter, FPS, resolution, and CPU/GPU timing.
 [Build and run from the repository](../README.md)
@@ -89,28 +88,22 @@ presets, environment configs, and renderer source entry points.
 ```sh
 mkdir -p "$private"
 node misc/web/webgpu/shader-inventory.mjs "$owned_game" --output "$private/inventory.json"
-XRAY_SHADER_CAPTURE=1 node misc/web/multiplayer/stage-game.mjs "$engine" "$private/stage" "$pack"
-node misc/web/webgpu/shader-sweep.mjs "$private/stage" "$campaign_config" "$private/sweep"
-node misc/web/webgpu/shader-sweep.mjs "$private/stage" "$campaign_config" "$private/stock" --singleplayer
+XRAY_SHADER_CAPTURE=1 node misc/web/tools/stage-game.mjs "$engine" "$private/stage" "$pack"
+node misc/web/webgpu/shader-sweep.mjs "$private/stage" "$private/sweep"
+node misc/web/webgpu/shader-sweep.mjs "$private/stage" "$private/stock"
 node misc/web/webgpu/shader-coverage.mjs "$private/sweep/captures/"*.json "$private/stock/captures/"*.json \
   --report "$private/coverage.json" --replay "$private/replayed"
 ```
 
-The sweep uses optimized unified artifacts, a separate Chrome profile and local
-preview and Rust server ports. Build `server/target/release/zone-server` first.
-The campaign config supplies each region's collision manifest and spawn anchor.
-Use `--maps zaton,jupiter` or `--presets Default,Extreme` for shorter runs.
-`--port` sets the preview port, the Rust HTTP port follows it, and `--udp`
-sets the Rust UDP port. Set `XRAY_CHROME` or `XRAY_ZONE_SERVER` to use alternate
-local binaries. `--singleplayer` starts the original Zaton campaign, lets
-A-Life initialize, and opens the inventory and PDA. It defaults to the Default
-preset and does not start the Rust server. The runner retains failed startup
-rows and partial traces alongside successful rows. Check the captured options
-to confirm what each preset actually enabled.
+The sweep uses optimized single-player artifacts, a separate Chrome profile and
+local preview HTTP port. `--port` selects that port; `XRAY_CHROME` overrides the
+browser binary. The sweep starts the original Zaton campaign, lets A-Life
+initialize, then opens the inventory and PDA. `--presets Default,Extreme` limits
+preset coverage. Failed startup rows and partial traces are retained alongside
+successful results. Check captured options to confirm each preset's settings.
 
 Use `--scenario` with a private stock route to seed renderer settings, load a
-checkpoint, or run game-console and Lua phases with exact log assertions. The
-config argument is unused for these single-player runs. The example Jupiter
+checkpoint, or run game-console and Lua phases with exact log assertions. The example Jupiter
 route expects a compatible `online-stash.scop` next to a local copy of the
 JSON. Each phase uses an isolated profile and the normal engine script loader.
 

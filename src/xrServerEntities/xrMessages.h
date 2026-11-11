@@ -234,7 +234,6 @@ enum : u32
     M_SPAWN_UPDATE = (1 << 6), // + update packet
     M_SPAWN_TIME = (1 << 7), // + spawn time
     M_SPAWN_DENIED = (1 << 8), // don't spawn entity with this flag
-    M_SPAWN_ZONE_TARGET = (1 << 14), // private native A-Life player proxy
 };
 
 enum enum_connection_results

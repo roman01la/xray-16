@@ -16,9 +16,6 @@
 #include "xrUICore/TabControl/UITabControl.h"
 #include "xrGame/ui/UIMainIngameWnd.h"
 #include "eatable_item.h"
-#ifdef XRAY_WEB_MULTIPLAYER
-#include "multiplayer/EngineAdapter.h"
-#endif
 
 void CUIActorMenu::TryRepairItem(CUIWindow* w, void* d)
 {
@@ -98,11 +95,6 @@ bool CUIActorMenu::CanUpgradeItem(PIItem item)
 
 void CUIActorMenu::CurModeToScript()
 {
-#ifdef XRAY_WEB_MULTIPLAYER
-    // Campaign menu callbacks act on the single-player story actor and tasks.
-    if (zone::mapPreviewEnabled())
-        return;
-#endif
     int mode = (int)m_currMenuMode;
     luabind::functor<void> funct;
     if (GEnv.ScriptEngine->functor("actor_menu.actor_menu_mode", funct))

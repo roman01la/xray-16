@@ -154,14 +154,14 @@ test('complete startup installation shares payloads across modes, pins metadata 
   const read=async (reader,url,length)=>{
     const out=[];assert.equal(await reader.read(url,0,length,bytes=>out.push(...bytes)),length);return out;
   };
-  const singleplayer=runtime(),multiplayer=runtime();
-  assert.deepEqual(await read(singleplayer,archives('v1')[0].url,1),[1]);
-  assert.deepEqual(await read(multiplayer,archives('v1')[1].url,2),[3,4]);
+  const firstReader=runtime(),secondReader=runtime();
+  assert.deepEqual(await read(firstReader,archives('v1')[0].url,1),[1]);
+  assert.deepEqual(await read(secondReader,archives('v1')[1].url,2),[3,4]);
   const second=await install('v2');
   assert.equal(second.stats.networkChunks,1);
   assert.equal(second.stats.downloadedBytes,2);
   assert.deepEqual(await read(runtime(),archives('v2')[1].url,2),[5,6]);
-  assert.deepEqual(await read(singleplayer,archives('v1')[1].url,2),[3,4]);
+  assert.deepEqual(await read(firstReader,archives('v1')[1].url,2),[3,4]);
   assert.equal((await install('v1')).stats.downloadedBytes,0);
   assert.equal(requests.filter(url=>url.endsWith('.bin')).length,4);
   stores.get('game-chunks').items.delete(hash(old));

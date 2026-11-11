@@ -83,13 +83,6 @@ bool CInventoryItem::get_upgrades_str(string2048& res) const
     for (; ib != ie; ++ib)
     {
         LPCSTR upgr_section = nullptr;
-#ifdef XRAY_WEB_MULTIPLAYER
-        // Multiplayer already owns the installed upgrade IDs. Resolve their
-        // parameter sections for the stock tooltip without creating A-Life.
-        if (!ai().get_alife())
-            upgr_section = pSettings->read_if_exists<LPCSTR>(ib->c_str(), "section", nullptr);
-        else
-#endif
         if (const auto* upgrade = ai().alife().inventory_upgrade_manager().get_upgrade(*ib))
             upgr_section = upgrade->section();
         if (!upgr_section)

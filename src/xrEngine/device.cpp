@@ -174,8 +174,6 @@ using namespace xray;
 
 bool CRenderDevice::RenderBegin()
 {
-    if (IsHeadlessAlifeHost())
-        return false;
     if (GEnv.isDedicatedServer)
         return true;
 
@@ -252,7 +250,7 @@ void CRenderDevice::RenderEnd(void)
 
 void CRenderDevice::PreCache(u32 amount, bool wait_user_input)
 {
-    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
+    if (GEnv.isDedicatedServer)
         amount = 0;
     else if (GEnv.Render->GetForceGPU_REF())
         amount = 0;
@@ -368,7 +366,7 @@ static void UpdateViewports()
 
 void CRenderDevice::DoRender()
 {
-    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
+    if (GEnv.isDedicatedServer)
         return;
 
     ZoneScoped;
@@ -448,7 +446,7 @@ void CRenderDevice::ProcessFrame()
         frameLimit = g_webFramePacer.GetDisplayRefreshRate();
 #endif
 
-    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
+    if (GEnv.isDedicatedServer)
         frameLimit = g_svDedicateServerUpdateReate;
 
     else if (Paused() || g_pGameLevel == nullptr)
@@ -473,7 +471,7 @@ void CRenderDevice::ProcessFrame()
         emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
     g_webFramePacer.SetVsyncPaced(vsync);
     const bool autoDisplayLimit = ps_fps_limit == 0 && g_pGameLevel && !Paused() &&
-        !GEnv.isDedicatedServer && !IsHeadlessAlifeHost();
+        !GEnv.isDedicatedServer;
     g_webFramePacer.SetFrameLimit(vsync && autoDisplayLimit ? 0 : frameLimit);
     EM_ASM({
         globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4, $5);
@@ -605,13 +603,6 @@ void CRenderDevice::Run()
         Timer_MM_Delta = time_system - time_local;
     }
 
-    if (IsHeadlessAlifeHost())
-    {
-        b_is_Active = true;
-        Msg("* A-Life headless host: SDL %s, frame presentation disabled", SDL_GetCurrentVideoDriver());
-        return;
-    }
-
     SDL_HideWindow(m_sdlWnd); // workaround for SDL bug
     UpdateWindowProps();
     SDL_ShowWindow(m_sdlWnd);
@@ -640,7 +631,7 @@ void CRenderDevice::FrameMove()
         fTimeDeltaReal = EPS_S + EPS_S;
     Timer.Start(); // previous frame
 
-    if (psDeviceFlags.test(rsConstantFPS) && !(IsHeadlessAlifeHost() && Paused()))
+    if (psDeviceFlags.test(rsConstantFPS))
     {
         // 20ms = 50fps
         // fTimeDelta = 0.020f;
@@ -694,11 +685,7 @@ ENGINE_API bool bShowPauseString = true;
 void CRenderDevice::Pause(bool bOn, bool bTimer, bool bSound, [[maybe_unused]] pcstr reason)
 {
     static int snd_emitters_ = -1;
-    // Ordinary UI/script pauses remain disabled for headless hosts. Only the
-    // private delivery gate may freeze their simulation timers.
-    const bool hostDeliveryPause = IsHeadlessAlifeHost() && reason &&
-        xr_strcmp(reason, "zone hit delivery") == 0;
-    if ((g_bBenchmark || GEnv.isDedicatedServer || IsHeadlessAlifeHost()) && !hostDeliveryPause)
+    if (g_bBenchmark || GEnv.isDedicatedServer)
         return;
 
     if (bOn)
@@ -714,7 +701,7 @@ void CRenderDevice::Pause(bool bOn, bool bTimer, bool bSound, [[maybe_unused]] p
             else
                 bShowPauseString = true;
         }
-        if (bTimer && (hostDeliveryPause || !g_pGamePersistent || g_pGamePersistent->CanBePaused()))
+        if (bTimer && (!g_pGamePersistent || g_pGamePersistent->CanBePaused()))
         {
             g_pauseMngr().Pause(true);
 #ifdef DEBUG
@@ -750,9 +737,6 @@ bool CRenderDevice::Paused() { return g_pauseMngr().Paused(); }
 
 void CRenderDevice::OnWindowActivate(SDL_Window* window, bool activated)
 {
-    if (IsHeadlessAlifeHost())
-        return;
-
     ZoneScoped;
 
     if (editor().GetState() == editor::ide::visible_state::full)

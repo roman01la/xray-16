@@ -36,9 +36,6 @@
 #include "xrUICore/PropertiesBox/UIPropertiesBox.h"
 #include "UIMainIngameWnd.h"
 #include "trade.h"
-#ifdef XRAY_WEB_MULTIPLAYER
-#include "multiplayer/EngineAdapter.h"
-#endif
 
 void CUIActorMenu::SetActor(CInventoryOwner* io)
 {
@@ -57,18 +54,6 @@ void CUIActorMenu::InitActorInfo()
 {
     if (!GetModeSpecificActorInfo())
         return;
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (zone::mapPreviewEnabled())
-    {
-        // The network actor already has native presentation metadata. There is
-        // no local xrServer/ALife entity registry to resolve a portrait from.
-        if (m_pActorInvOwner)
-            GetModeSpecificActorInfo()->InitCharacterMP(m_pActorInvOwner->Name(), m_pActorInvOwner->IconName());
-        else
-            GetModeSpecificActorInfo()->ClearInfo();
-        return;
-    }
-#endif
     if (IsGameTypeSingle())
     {
         if (m_pActorInvOwner)

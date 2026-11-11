@@ -236,7 +236,7 @@ async function syncEngineData(root, appDirectory = '_appdata_', hosted = false) 
     await ensureDir(game, ["_appdata_", sub]);
   const prepareConfig = async () => {
     const app = await ensureDir(game, appDirectory.split("/"));
-    if (root === "stream-cop" || root.startsWith("zone-engine-preview-"))
+    if (root === "stream-cop")
       await seedUserConfig(app, hosted && root === "stream-cop" && appDirectory === "_appdata_");
     try {
       await migrateStockBindings(app);

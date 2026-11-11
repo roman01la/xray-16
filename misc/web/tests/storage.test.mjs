@@ -144,7 +144,7 @@ test("unified settings are seeded once in each mode's own app-data directory", a
   });
   vm.runInContext(source.replace("import {migrateStockBindings} from './stock-bindings.mjs';", ""), context);
   context.navigator.languages = ["ja-JP", "pl-PL", "en-US"];
-  for (const [root, appDirectory] of [["stream-cop", "_appdata_"], ["zone-engine-preview-public", "_multiplayer_/v1"]]) {
+  for (const [root, appDirectory] of [["stream-cop", "_appdata_"]]) {
     const config = `/${root}/${appDirectory}/user.ltx`;
     await context.syncEngineData(root, appDirectory, true);
     assert.equal(files.get(config), root === "stream-cop" ? "_preset Default\ng_language pol\n" : "_preset Default\n");

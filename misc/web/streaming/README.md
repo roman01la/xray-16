@@ -10,7 +10,7 @@ X-Ray mounts the installed original archives read-only at `/stream`. The
 WasmFS proxy worker reads byte ranges from verified **16 MiB chunks** in
 the origin-private file system (OPFS). The pack includes campaign resources, levels,
 localization, and patches. It omits the stock multiplayer-only archives and
-bonus media. Single player and the custom multiplayer mode share the archive
+bonus media. The browser engine uses the archive
 cache while keeping their own settings and saves.
 
 Small archive headers, compressed file tables, and texture-description (`.thm`)
@@ -97,13 +97,11 @@ shader reads after startup. Playback coverage checks exact OPFS ranges across
 chunk boundaries and bootstrap bundles without hashing or downloading again.
 
 An isolated Chrome run against the locally staged pack installed 319 distinct
-chunks totaling 4,733,401,387 bytes. A second startup in the multiplayer root
-reused the full pack with zero chunk GETs. One cache-only read from each of the
+chunks totaling 4,733,401,387 bytes. One cache-only read from each of the
 12 archives also made zero chunk GETs. The parked compiler initialized with all
 537 packaged shader programs. A full-game loopback test blocked all pack requests from the page itself. On a
 new Chrome profile, the ingest worker installed all 319 chunks before single
-player entered Zaton. On the same profile, multiplayer reached world negotiation
-without downloading a chunk.
+player entered Zaton.
 A second loopback test used the optimized game in Chrome 156 with three
 eight-NPC spawn waves in Zaton. Each run spawned all 24 NPCs and made zero
 runtime chunk requests. Installed range reads reduced gameplay archive p99

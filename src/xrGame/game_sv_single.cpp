@@ -45,10 +45,6 @@ void game_sv_Single::OnCreate(u16 id_who)
 
     CSE_Abstract* e_who = get_entity_from_eid(id_who);
     VERIFY(e_who);
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    if (e_who->s_flags.test(M_SPAWN_ZONE_TARGET) && ai().alife().uses_host_interests())
-        e_who->m_bALifeControl = false;
-#endif
     if (!e_who->m_bALifeControl)
         return;
 
@@ -118,12 +114,6 @@ void game_sv_Single::OnDetach(u16 eid_who, u16 eid_what)
         CSE_Abstract* e_what = get_entity_from_eid(eid_what);
         VERIFY(e_what);
 
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-        // Rust owns these transient copies. The normal detach path would
-        // register the dropped item in A-Life and make it persist.
-        if (e_what->s_flags.test(M_SPAWN_ZONE_TARGET) && ai().alife().uses_host_interests())
-            return;
-#endif
         CSE_ALifeInventoryItem* l_tpALifeInventoryItem = smart_cast<CSE_ALifeInventoryItem*>(e_what);
         if (!l_tpALifeInventoryItem)
             return;
@@ -336,9 +326,6 @@ void game_sv_Single::on_death(CSE_Abstract* e_dest, CSE_Abstract* e_src)
         return;
 
     alife().on_death(e_dest, e_src);
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    alife().report_host_death(*e_dest);
-#endif
 }
 
 void game_sv_Single::restart_simulator(LPCSTR saved_game_name)

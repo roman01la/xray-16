@@ -44,25 +44,6 @@ CALifeSimulator::CALifeSimulator(IPureServer* server, shared_str* command_line)
     R_ASSERT2(xr_strlen(p.m_game_or_spawn) && !xr_strcmp(p.m_alife, "alife") && !xr_strcmp(p.m_game_type, "single"),
         "Invalid server options!");
 
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    if (host_interests_requested())
-    {
-        open_host_interests();
-        string_path checkpoint;
-        strconcat(sizeof(checkpoint), checkpoint, AlifeHostInterests::WorldSaveName, SAVE_EXTENSION);
-        if (FS.exist("$game_saves$", checkpoint))
-        {
-            xr_strcpy(p.m_game_or_spawn, AlifeHostInterests::WorldSaveName);
-            xr_strcpy(p.m_new_or_load, "load");
-        }
-        else
-        {
-            R_ASSERT2(!xr_strcmp(p.m_new_or_load, "new") && host_interests().recoverFreshWorld(),
-                "The native A-Life checkpoint is missing or this is not a fresh world");
-        }
-    }
-#endif
-
     string256 temp;
     xr_strcpy(temp, p.m_game_or_spawn);
     xr_strcat(temp, "/");
@@ -71,8 +52,7 @@ CALifeSimulator::CALifeSimulator(IPureServer* server, shared_str* command_line)
     xr_strcat(temp, p.m_alife);
     *command_line = temp;
 
-    const bool isNewGame = host_interests_requested() ? !xr_strcmp(p.m_new_or_load, "new") :
-        xr_strcmp(p.m_new_or_load, "new") != -1;
+    const bool isNewGame = xr_strcmp(p.m_new_or_load, "new") != -1;
 
     LPCSTR start_game_callback = pSettings->r_string(alife_section, "start_game_callback");
     luabind::functor<void> functor;

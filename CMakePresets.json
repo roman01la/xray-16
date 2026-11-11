@@ -16,22 +16,26 @@
     {
       "name": "web-release",
       "inherits": "web-base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     },
     {
       "name": "web-debug",
       "inherits": "web-base",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
-    },
-    {
-      "name": "web-multiplayer-release",
-      "inherits": "web-release",
-      "cacheVariables": { "XRAY_WEB_MULTIPLAYER": "ON" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "web-release", "configurePreset": "web-release" },
-    { "name": "web-debug", "configurePreset": "web-debug" },
-    { "name": "web-multiplayer-release", "configurePreset": "web-multiplayer-release" }
+    {
+      "name": "web-release",
+      "configurePreset": "web-release"
+    },
+    {
+      "name": "web-debug",
+      "configurePreset": "web-debug"
+    }
   ]
 }

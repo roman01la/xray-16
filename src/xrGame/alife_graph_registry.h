@@ -40,9 +40,6 @@ protected:
     TERRAIN_REGISTRY m_terrain[GameGraph::LOCATION_TYPE_COUNT][GameGraph::LOCATION_COUNT];
     CALifeLevelRegistry* m_level;
     CSE_ALifeCreatureActor* m_actor;
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    GameGraph::_GRAPH_ID m_host_start_vertex = GameGraph::_GRAPH_ID(-1);
-#endif
     float m_process_time;
     xr_vector<CSE_ALifeDynamicObject*> m_temp;
 
@@ -55,9 +52,6 @@ public:
     CALifeGraphRegistry();
     virtual ~CALifeGraphRegistry();
     void on_load();
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    void configure_host_spawn();
-#endif
     void update(CSE_ALifeDynamicObject* object);
     void attach(CSE_Abstract& object, CSE_ALifeInventoryItem* item, GameGraph::_GRAPH_ID game_vertex_id,
         bool alife_query = true, bool add_children = true);

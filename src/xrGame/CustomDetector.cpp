@@ -228,32 +228,6 @@ void CCustomDetector::shedule_Update(u32 dt)
 }
 
 bool CCustomDetector::IsWorking() { return m_bWorking && H_Parent() && H_Parent() == Level().CurrentViewEntity(); }
-#ifdef XRAY_WEB_MULTIPLAYER
-void CCustomDetector::PrepareNetworkHud()
-{
-    if (!m_ui)
-        CreateUI();
-    m_bWorking = true;
-}
-
-void CCustomDetector::ClearNetworkHud()
-{
-    m_bWorking = false;
-    xr_delete(m_ui);
-}
-
-u32 CCustomDetector::PlayNetworkHudMotion(bool draw, bool fast)
-{
-    m_bWorking = draw;
-    m_sounds.PlaySound(draw ? "sndShow" : "sndHide", Fvector().set(0, 0, 0), this, true, false);
-    auto motion = fast ? WhichHUDAnimationExist(draw ? "anm_show_fast" : "anm_hide_fast", "anim_show", true) : nullptr;
-    if (!motion)
-        motion = WhichHUDAnimationExist(draw ? "anm_show" : "anm_hide", "anim_show", true);
-    if (motion && strstr(Core.Params, "-zone-detector-probe"))
-        Msg("* Zone detector motion: %s", motion);
-    return motion ? PlayHUDMotion_noCB(motion, FALSE) : 0;
-}
-#endif
 void CCustomDetector::UpfateWork()
 {
     UpdateAf();

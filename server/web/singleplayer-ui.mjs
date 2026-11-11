@@ -1,5 +1,4 @@
 import {requireGameCompatibility, showCompatibilityFailure} from './compatibility.mjs';
-const multiplayer=document.documentElement.dataset.gameModes==='unified'&&new URLSearchParams(location.search).get('play')==='multiplayer';
 const boot=document.querySelector('#boot'),message=document.querySelector('#boot-status'),retry=document.querySelector('#retry');
 const start=document.querySelector('#start-game');
 const backupButton=document.querySelector('#boot-backup');
@@ -225,7 +224,6 @@ const observe=()=>{
  const error=/failed|unavailable|needs |lacks |No WebGPU/i;
  if(error.test(text)||error.test(sync)){fail(error.test(text)?text:sync);return;}
  if(startupReady||installing)return;
- if(multiplayer){if(text.startsWith('C++ tick'))gameReady();else if(text)message.textContent=text;return;}
  if(text!=='engine running')return;
  const gpu=document.querySelector('#webgpu-stats')?.textContent||'';
  const frames=Number(gpu.match(/([0-9]+) frames/)?.[1]||0);
@@ -236,7 +234,7 @@ const observe=()=>{
 const observer=new MutationObserver(observe);observer.observe(status,{childList:true,characterData:true,subtree:true});observer.observe(ingest,{childList:true,characterData:true,subtree:true});observer.observe(log,{childList:true,characterData:true,subtree:true});
 try {
  await requireGameCompatibility();
- await import(multiplayer?'./public-ui.mjs':'./main.js');const gpu=document.querySelector('#webgpu-stats');if(gpu)observer.observe(gpu,{childList:true,characterData:true,subtree:true});observe();
+ await import('./main.js');const gpu=document.querySelector('#webgpu-stats');if(gpu)observer.observe(gpu,{childList:true,characterData:true,subtree:true});observe();
 } catch(error) {
  if(error.compatibilityFailure){broken=true;showCompatibilityFailure(error);}
  else fail(error.message||'The game could not start. Check your connection and try again.');

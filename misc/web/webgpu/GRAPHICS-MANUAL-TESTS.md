@@ -11,7 +11,7 @@ Updated 2026-11-09. This tracks the new WebGPU graphics features separately from
 - 385 unique shader requests captured from the three MSAA alpha modes are compiled and packaged offline (stage total 1,672). Runtime compilation remains available for unobserved combinations. Production publication and broader visual/vendor acceptance are not part of these isolated tests.
 - Tessellation is tracked separately in `TESSELLATION-ASSESSMENT-2026-11-09.md` and its implementation follow-up.
 
-## Repeat for single player and multiplayer
+## Single-player scenarios
 
 1. Start a fresh engine for each AO/MSAA selection. These are renderer-creation options; `vid_restart` alone is not evidence that an AO algorithm changed. Confirm captured shader mode/diagnostics when investigating discrepancies.
 2. Load an exterior save with grass, trees, NPCs, sky and distant geometry. Then test interiors, water, rain, muzzle flashes, particles and level travel. Keep the same save/camera when comparing settings.

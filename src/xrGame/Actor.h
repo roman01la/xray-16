@@ -20,10 +20,6 @@
 
 using namespace ACTOR_DEFS;
 
-#ifdef XRAY_WEB_MULTIPLAYER
-namespace zone { class InventoryPresentation; }
-#endif
-
 class CInfoPortion;
 struct GAME_NEWS_DATA;
 class CActorCondition;
@@ -84,18 +80,6 @@ private:
 public:
     CActor();
     virtual ~CActor();
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-private:
-    bool m_zoneAlifeTarget = false;
-    u32 m_zoneAlifeHits = 0;
-
-public:
-    void applyZoneAlifePose(const Fvector& position, float yaw, bool crouched);
-    u32 zoneAlifeHits() const { return m_zoneAlifeHits; }
-    bool zoneAlifeTarget() const { return m_zoneAlifeTarget; }
-#else
-    bool zoneAlifeTarget() const { return false; }
-#endif
 
 public:
     virtual bool AlwaysTheCrow() { return true; }
@@ -408,11 +392,7 @@ protected:
     // Motions (передвижения актрера)
     //////////////////////////////////////////////////////////////////////////
 public:
-    void g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Jump, float dt, bool zoneMovement = false);
-    void resetZoneMovement(const Fvector& position, const Fvector& velocity, bool crouched);
-    bool driveZoneMovement(u32 controls, float yaw, float speedScale, float dt);
-    u32 sampleZoneMovement(Fvector& position, Fvector& velocity);
-    void updateZoneActorPose(const Fvector& position, float yaw, float pitch, float dt);
+    void g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Jump, float dt);
     void g_cl_ValidateMState(float dt, u32 mstate_wf);
     void g_cl_Orientate(u32 mstate_rl, float dt);
     void g_sv_Orientate(u32 mstate_rl, float dt);
@@ -510,9 +490,6 @@ public:
 protected:
     CFireDispertionController m_fdisp_controller;
     //если актер целится в прицел
-#ifdef XRAY_WEB_MULTIPLAYER
-    friend class zone::InventoryPresentation;
-#endif
     void SetZoomAimingMode(bool val) { m_bZoomAimingMode = val; }
     bool m_bZoomAimingMode;
 

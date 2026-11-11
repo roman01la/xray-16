@@ -3,7 +3,7 @@
 The browser runs the entire game. Cloudflare serves the immutable engine/frontend
 through Workers Static Assets and gzip game chunks through the `stalker-online-assets`
 R2 bucket at `assets.stalker-online.xyz`. Only analytics, its authenticated dashboard,
-and the health/status endpoints invoke Worker code. Multiplayer remains disabled.
+and the health/status endpoints invoke Worker code.
 
 `stalker-online-analytics` in D1 replaces the gateway's SQLite analytics file. The
 schema, event validation and dashboard preserve the existing browser IDs, milestones,
@@ -22,8 +22,8 @@ The current Wrangler OAuth login cannot edit zone DNS records.
 
 ## Publishing
 
-1. Build and stage the game normally, then run `server/tools/publish-web.py` without
-   an upload URL to create an immutable publication manifest and source index.
+1. Build and stage the game normally, then run `server/tools/publish-web.py --frontend FRONTEND --pack PACK --output PUBLICATION`
+   to create an immutable publication manifest and source index.
 2. Run `stage.py --publication PUBLICATION --retain PREVIOUS_PUBLICATION` here.
    It verifies hashes and stages assets into ignored `.assets/`, retaining a previous
    release for open tabs/rollback. The game URL stays `/` through a static internal
@@ -53,8 +53,7 @@ asset deployment skips unchanged file content through Wrangler's hash-based uplo
 ## Fly migration and recovery
 
 Before retiring Fly, retain a verified private backup of SQLite analytics and
-multiplayer databases, five-map A-Life application data, native binaries, collision
-exports, private configuration and published web releases. The migration backup
+private configuration and published web releases. The migration backup
 excludes reproducible original archives under Zaton resources/levels/patches/
 localization/gamedata. Those archives already exist locally and as verified chunks.
 Never put configuration credentials or user databases in the public R2 bucket.
@@ -71,7 +70,6 @@ Validate the backup checksum before removing legacy persistent resources.
 - Load a save and start a new campaign; check analytics milestone counts.
 - Inspect the authenticated analytics dashboard and device/FPS summaries.
 - Browser address remains `https://stalker-online.xyz/`; no new page redirect.
-- Multiplayer menu behavior stays disabled as in the published single-player build.
 
 ## Migration verification — 2026-11-11
 

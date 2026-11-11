@@ -13,11 +13,7 @@
     "run_worker_first": [
       "/analytics",
       "/analytics/*",
-      "/health",
-      "/world.json",
-      "/offer",
-      "/identity/*",
-      "/metrics"
+      "/health"
     ]
   },
   "vars": {

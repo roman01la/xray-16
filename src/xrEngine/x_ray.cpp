@@ -219,23 +219,11 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
 
     xrDebug::Initialize(commandLine);
 
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    Device.SetHeadlessAlifeHost(strstr(commandLine, "-zone-alife-headless") != nullptr);
-    if (Device.IsHeadlessAlifeHost())
-    {
-        R_ASSERT2(!GEnv.isDedicatedServer, "The A-Life host needs the single-player engine");
-#ifdef XR_PLATFORM_LINUX
-        setenv("SDL_VIDEODRIVER", "offscreen", 0);
-        setenv("LIBGL_ALWAYS_SOFTWARE", "1", 0);
-#endif
-        setenv("ALSOFT_DRIVERS", "null", 0);
-    }
-#endif
 
     {
         ZoneScopedN("SDL_Init");
         u32 flags = SDL_INIT_VIDEO;
-        if (!Device.IsHeadlessAlifeHost() && !strstr(commandLine, "-no_gamepad"))
+        if (!strstr(commandLine, "-no_gamepad"))
             flags |= SDL_INIT_GAMECONTROLLER;
         R_ASSERT3(SDL_Init(flags) == 0, "Unable to initialize SDL", SDL_GetError());
     }
@@ -246,7 +234,7 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
         shortcuts.Disable();
 #endif
 
-    if (!Device.IsHeadlessAlifeHost() && !strstr(commandLine, "-nosplash"))
+    if (!strstr(commandLine, "-nosplash"))
     {
         const bool topmost = !strstr(commandLine, "-splashnotop");
         ShowSplash(topmost);
@@ -255,7 +243,7 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
     SDL_StopTextInput(); // It's enabled by default for some reason, we don't want it
     const auto& inputTask = TaskManager::AddTask([]
     {
-        const bool captureInput = !Device.IsHeadlessAlifeHost() && !strstr(Core.Params, "-i");
+        const bool captureInput = !strstr(Core.Params, "-i");
         pInput = xr_new<CInput>(captureInput);
     });
 
@@ -293,8 +281,7 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
     Console->OnDeviceInitialize();
 
     execUserScript();
-    if (!Device.IsHeadlessAlifeHost())
-        InitializeDiscord();
+    InitializeDiscord();
 
     TaskScheduler->Wait(createSoundDevicesList);
     Engine.Sound.Create();

@@ -1,8 +1,4 @@
 #include "StdAfx.h"
-#ifdef XRAY_WEB_MULTIPLAYER
-#include "multiplayer/EngineAdapter.h"
-#include "multiplayer/InventoryPresentation.h"
-#endif
 #include "UIMainIngameWnd.h"
 #include "UIMessagesWindow.h"
 #include "UIZoneMap.h"
@@ -409,10 +405,6 @@ void CUIMainIngameWnd::RenderQuickInfos()
 
     static CGameObject* pObject = NULL;
     LPCSTR actor_action = pActor->GetDefaultActionForObject();
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (const char* container = zone::inventoryContainerUseTip())
-        actor_action = container;
-#endif
     UIStaticQuickHelp->Show(NULL != actor_action);
 
     if (NULL != actor_action)
@@ -656,18 +648,10 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     flags |= LA_CYCLIC;
     flags |= LA_ONLYALPHA;
     flags |= LA_TEXTURECOLOR;
-#ifdef XRAY_WEB_MULTIPLAYER
-    const auto* multiplayerVitals = zone::inventoryVitals();
-    if (zone::inventory().valid)
-        UpdateBoosterIndicators(pActor->conditions().GetCurBoosterInfluences());
-#endif
     // Bleeding icon
     if (m_ind_bleeding)
     {
         const float bleeding =
-#ifdef XRAY_WEB_MULTIPLAYER
-            multiplayerVitals ? multiplayerVitals->bleeding :
-#endif
             pActor->conditions().BleedingSpeed();
         if (fis_zero(bleeding, EPS))
         {
@@ -699,9 +683,6 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     if (m_ind_radiation)
     {
         const float radiation =
-#ifdef XRAY_WEB_MULTIPLAYER
-            multiplayerVitals ? multiplayerVitals->radiation :
-#endif
             pActor->conditions().GetRadiation();
         if (fis_zero(radiation, EPS))
         {
@@ -733,9 +714,6 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     if (m_ind_starvation)
     {
         const float satiety =
-#ifdef XRAY_WEB_MULTIPLAYER
-            multiplayerVitals ? multiplayerVitals->satiety :
-#endif
             pActor->conditions().GetSatiety();
         const float satiety_critical = pActor->conditions().SatietyCritical();
         const float satiety_koef =
@@ -826,19 +804,10 @@ void CUIMainIngameWnd::UpdateMainIndicators()
     if (m_ind_overweight)
     {
         const float cur_weight =
-#ifdef XRAY_WEB_MULTIPLAYER
-            multiplayerVitals ? multiplayerVitals->carriedWeight :
-#endif
             pActor->inventory().TotalWeight();
         const float max_weight =
-#ifdef XRAY_WEB_MULTIPLAYER
-            multiplayerVitals ? multiplayerVitals->walkLimit :
-#endif
             pActor->MaxWalkWeight();
         const bool show_weight =
-#ifdef XRAY_WEB_MULTIPLAYER
-            multiplayerVitals ||
-#endif
             IsGameTypeSingle();
         m_ind_overweight->Show(false);
         if (cur_weight >= max_weight - 10.0f && show_weight)
@@ -991,38 +960,6 @@ void CUIMainIngameWnd::DrawMainIndicatorsForInventory()
 
 void CUIMainIngameWnd::UpdateBoosterIndicators(const CEntityCondition::BOOSTER_MAP& influences)
 {
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (const auto* vitals = zone::inventoryVitals())
-    {
-        // Same ordering as the private vitals payload and the stock EBoostParams.
-        const std::array icons{
-            m_ind_boost_health, m_ind_boost_power, m_ind_boost_rad, m_ind_boost_wound,
-            m_ind_boost_weight, m_ind_boost_radia, m_ind_boost_psy, m_ind_boost_chem,
-        };
-        for (unsigned i = 0; i < icons.size(); ++i)
-        {
-            auto* icon = icons[i];
-            if (!icon)
-                continue;
-            const auto mask = 1u << i;
-            icon->Show((vitals->boosterIcons & mask) != 0);
-            const bool expiring = (vitals->boosterIcons & (mask << 8)) != 0;
-            if (expiring == icon->IsColorAnimationPresent())
-                continue;
-            if (expiring)
-            {
-                icon->SetColorAnimation("ui_slow_blinking_alpha", LA_CYCLIC | LA_ONLYALPHA | LA_TEXTURECOLOR);
-                icon->ResetColorAnimation();
-            }
-            else
-            {
-                icon->SetColorAnimation(nullptr, 0);
-                icon->ColorAnimationSetTextureColor(255, true);
-            }
-        }
-        return;
-    }
-#endif
     if (m_ind_boost_psy)
         m_ind_boost_psy->Show(false);
     if (m_ind_boost_radia)

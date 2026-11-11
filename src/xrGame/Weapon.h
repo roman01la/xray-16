@@ -122,13 +122,6 @@ public:
 
     BOOL IsMisfire() const;
     BOOL CheckForMisfire();
-    void SetPresentationMisfire(bool jammed) { bMisfire = jammed; }
-#ifdef __EMSCRIPTEN__
-    void SetPresentationAim(bool aiming);
-    float PresentationAimRotation() const { return m_zoom_params.m_fZoomRotationFactor; }
-    void SetPresentationAimRotation(float rotation) { m_zoom_params.m_fZoomRotationFactor = rotation; }
-    void ClearPresentationAim();
-#endif
 
     BOOL AutoSpawnAmmo() const { return m_bAutoSpawnAmmo; };
     bool IsTriStateReload() const { return m_bTriStateReload; }
@@ -319,21 +312,7 @@ public:
     }
     virtual void ForceUpdateFireParticles();
 
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    struct ZoneNpcShot
-    {
-        Fmatrix muzzle;
-        u32 time = 0;
-        bool launcher = false;
-    };
-    const ZoneNpcShot& zoneNpcShot() const { return m_zoneNpcShot; }
-#endif
-
 protected:
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    void recordZoneNpcShot(bool launcher);
-    ZoneNpcShot m_zoneNpcShot{};
-#endif
     virtual void SetDefaults();
 
     virtual bool MovingAnimAllowedNow();
@@ -426,14 +405,6 @@ protected:
     int GetAmmoCount(u8 ammo_type) const;
 
 public:
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    void CancelZoneWeaponAction()
-    {
-        StopCurrentAnimWithoutCallback();
-        OnStateSwitch(eIdle, GetState());
-        SetNextState(eIdle);
-    }
-#endif
     IC int GetAmmoElapsed() const { return /*int(m_magazine.size())*/ iAmmoElapsed; }
     IC int GetAmmoMagSize() const { return iMagazineSize; }
     int GetSuitableAmmoTotal(bool use_item_to_spawn = false) const;

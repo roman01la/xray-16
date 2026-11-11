@@ -1,10 +1,8 @@
 # Call of Pripyat in the browser
 
 The web port runs the Call of Pripyat 1.6.02 engine as wasm64 with pthreads and
-renders through native WebGPU in a worker. The hosted game uses one optimized
-engine build for both modes. **New Game** and **Load Game** use the original
-single-player simulation. The multiplayer menu item connects to the authoritative
-Rust server over WebRTC. [Hosted game](https://stalker-online.xyz/)
+renders through native WebGPU in a worker. **New Game** and **Load Game** use the
+original single-player simulation. [Hosted game](https://stalker-online.xyz/)
 
 The web build has been tested in desktop Chrome. Browsers need worker WebGPU,
 BC texture compression (including sliced 3D), wasm64, shared memory, and Origin
@@ -42,44 +40,32 @@ before the next game session. New backups include file checksums; older
 does not prove compatibility with another engine/mod version. Original file
 modification dates are not carried by this backup format.
 
-Multiplayer saves are stored on the server. Use **Controls & save** in multiplayer to copy the save key
-or restore it in another browser. Anyone with that key can access the character.
-
 The hosted game installs the full archive pack before the first launch. It
 checks for updates before later launches and downloads changed content by hash.
 Typical payload chunks are 16 MiB. [Archive installation and caching](streaming/README.md)
 
-## Build and run the unified game locally
+## Build and run the game locally
 
-Use Emscripten SDK 7.0.0, CMake, Ninja, Node.js 24, Rust 1.93.1 with the
-`wasm32-unknown-unknown` target, and a host C++ compiler for the archive packer.
-Packed builds also require the host `vorbisfile` development library and
-`pkg-config` to build the game's sound metadata index during staging.
-Activate the SDK with its `emsdk_env.sh` script. From the repository root:
+Use Emscripten SDK 7.0.0, CMake, Ninja, Node.js 24, a host C++ compiler,
+`pkg-config`, `lzo2`, and `vorbisfile`. Activate the SDK with `emsdk_env.sh`.
+From the repository root:
 
 ```sh
 git submodule update --init --recursive
-rustup target add --toolchain 1.93.1 wasm32-unknown-unknown
-emcmake cmake --preset web-multiplayer-release
-cmake --build --preset web-multiplayer-release --parallel 6
-cargo +1.93.1 build --release --locked --target wasm32-unknown-unknown \
-  --manifest-path server/prediction/Cargo.toml
-node misc/web/tools/build_dist.mjs
+emcmake cmake --preset web-release
+cmake --build --preset web-release --parallel 6
 node misc/web/tools/pack-streaming.mjs /path/to/owned/cop /private/cop-pack
-node misc/web/multiplayer/stage-game.mjs \
-  build/web-multiplayer-release/artifacts ../unified-preview /private/cop-pack
-node misc/web/multiplayer/serve-preview.mjs ../unified-preview
+node misc/web/tools/stage-game.mjs bin/wasm64/Release ../browser-preview /private/cop-pack
+node misc/web/serve.mjs ../browser-preview 8086
 ```
 
-Replace the example pack paths with your game installation and a writable output
-directory outside it. Open <http://localhost:8086/engine-preview/?stream=/pack/pack.json>.
-Single player can start from this page once the assets load. To use multiplayer,
-run the Rust server alongside the preview. The local server and collision setup
-are documented separately. [Multiplayer server](../../server/README.md)
-
+Open <http://localhost:8086/engine-preview/?stream=/pack/pack.json>.
 The shader compiler worker and its WASM modules are included in the stage. It
-uses packaged shaders where available and compiles missing variants locally into
-the same persistent cache. [WebGPU renderer and shader tools](webgpu/README.md)
+uses packaged shaders where available and compiles missing variants into the
+same persistent cache. [WebGPU renderer and shader tools](webgpu/README.md)
+
+Publishing uses immutable engine releases and shared compressed game chunks.
+[Cloudflare deployment](../../server/cloudflare/README.md)
 
 ## Standalone developer launcher
 
@@ -98,7 +84,7 @@ node misc/web/serve.mjs misc/web/dist 8081
 Open <http://localhost:8081/webgpu/?debug=1&autostart=0> to import your CoP folder,
 manage save backups, or launch manually. The game-only developer view is at
 <http://localhost:8081/webgpu/>. This launcher is separate from the hosted
-unified game. [Unified deployment](../../server/deploy/FLY.md)
+hosted game. [Cloudflare deployment](../../server/cloudflare/README.md)
 
 ## Automatic FPS limit
 
@@ -114,3 +100,17 @@ Saved numeric limits are not overwritten, including previously saved defaults:
 there is no historical flag distinguishing an explicitly chosen 60 from an old
 saved default. Existing players can select Auto once to opt in; zero persists in
 user.ltx and stays automatic across launches and monitor changes.
+
+## Single-player release verification
+
+The 2026-11-11 single-player-only release passed an optimized engine build and
+40 browser storage/loading/compatibility/analytics regression tests. A private
+headless Chrome profile installed the full pack and started a fresh campaign,
+reached the end of synchronization, and rendered with VSync on and zero WebGPU
+validation errors. The staged release contains 46 JavaScript modules (539,176
+raw bytes), with no custom replication modules or prediction WASM sidecar.
+
+Manual regression coverage still includes existing-save loading/saving, equipment,
+consumables, combat, NPC interactions, level travel, and Auto/custom FPS selection
+across monitors. Original engine networking classes remain where part of X-Ray;
+no custom gameplay service or browser network adapter is built or shipped.

@@ -10,38 +10,30 @@ import {INSTALL_DIRECTORY} from '../../../server/web/opfs-store.mjs';
 
 // Local developer integration sweep. Sources remain in the private output folder.
 const {values,positionals}=parseArgs({
- options:{maps:{type:'string'},presets:{type:'string'},port:{type:'string'},udp:{type:'string'},singleplayer:{type:'boolean'},
+ options:{maps:{type:'string'},presets:{type:'string'},port:{type:'string'},
   scenario:{type:'string'},'pipeline-probe':{type:'boolean'},'fresh-shader-cache':{type:'boolean'},'stock-game':{type:'string'}},
  allowPositionals:true,
 });
-if(positionals.length!==3)
- throw Error('Usage: node shader-sweep.mjs STAGED_PARENT CAMPAIGN_CONFIG PRIVATE_OUTPUT [--maps LIST] [--presets LIST] [--singleplayer] [--scenario FILE] [--stock-game DIR] [--pipeline-probe] [--fresh-shader-cache] [--port 8264] [--udp 52645]');
-const [root,config,trial]=positionals.map(value=>resolve(value));
+if(positionals.length!==2)
+ throw Error('Usage: node shader-sweep.mjs STAGED_PARENT PRIVATE_OUTPUT [--maps LIST] [--presets LIST] [--scenario FILE] [--stock-game DIR] [--pipeline-probe] [--fresh-shader-cache] [--port 8264]');
+const [root,trial]=positionals.map(value=>resolve(value));
 const repo=resolve(import.meta.dirname,'../../..');
 const profile=join(trial,'chrome'),captures=join(trial,'captures');
-const previewPort=Number(values.port??8264),serverPort=previewPort+1,udpPort=Number(values.udp??52645);
-if(![previewPort,serverPort,udpPort].every(port=>Number.isInteger(port)&&port>1023&&port<=65535))
+const previewPort=Number(values.port??8264);
+if(![previewPort].every(port=>Number.isInteger(port)&&port>1023&&port<=65535))
  throw Error('Invalid sweep ports');
 const origin='http://127.0.0.1:'+previewPort;
 const stock=values.scenario?await readStockScenario(resolve(values.scenario)):null;
-const singleplayer=Boolean(stock||values.singleplayer);
 const pipelineProbe=values['pipeline-probe']??false;
 const mapNames=['zaton','jupiter','pripyat','jupiter_underground','labx8'];
 const presetNames=['Default','Minimum','Low','High','Extreme'];
 const singleplayerMap=stock?.map??'zaton';
-const names=values.maps?values.maps.split(','):singleplayer?[singleplayerMap]:mapNames;
-const presets=values.presets?values.presets.split(','):singleplayer?['Default']:presetNames;
+const names=values.maps?values.maps.split(','):[singleplayerMap];
+const presets=values.presets?values.presets.split(','):['Default'];
 if(!names.every(name=>mapNames.includes(name))||!presets.every(name=>presetNames.includes(name)))
  throw Error('Invalid map or preset selection');
-if(singleplayer&&names.some(name=>name!==singleplayerMap))throw Error('The stock route starts in '+singleplayerMap);
-const regions=singleplayer?[]:JSON.parse(await readFile(config,'utf8')).regions;
-const maps=names.map(map=>{
- if(singleplayer)return {map};
- const region=regions.find(({collision})=>basename(collision,'.json')===map);
- if(!region||region.spawn?.length!==3||!region.spawn.every(Number.isFinite))
-  throw Error('Missing collision manifest or spawn anchor for '+map);
- return {...region,map,collision:resolve(dirname(config),region.collision)};
-});
+if(names.some(name=>name!==singleplayerMap))throw Error('The stock route starts in '+singleplayerMap);
+const maps=names.map(map=>({map}));
 await mkdir(trial,{recursive:true,mode:0o700});
 await mkdir(profile,{recursive:true,mode:0o700});
 await mkdir(captures,{recursive:true,mode:0o700});
@@ -72,9 +64,7 @@ async function poll(label,fn,timeout=120000){
 async function alive(url){
  try{return (await fetch(url)).ok;}catch{return false;}
 }
-const server=start(process.execPath,[join(repo,'misc/web/multiplayer/serve-preview.mjs'),root],'preview',{
- env:{...process.env,ZONE_PREVIEW_PORT:String(previewPort),ZONE_SERVER_PORT:String(serverPort)}
-});
+const server=start(process.execPath,[join(repo,'misc/web/serve.mjs'),root,String(previewPort)],'preview');
 const chrome=start(chromePath,[
  '--headless=new','--remote-debugging-port=0','--enable-unsafe-webgpu','--disable-background-networking',
  '--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows',
@@ -118,15 +108,9 @@ async function toggleStockUI(page) {
 try {
  await poll('preview HTTP',()=>alive(origin+'/shader-sweep.html'),15000);
  const port=await poll('Chrome debugger',async()=>{try{return (await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0];}catch{return null;}},15000);
- for(const {map,collision,spawn:[x,y,z]=[]} of maps){
-  const rust=singleplayer?null:start(process.env.XRAY_ZONE_SERVER??join(repo,'server/target/release/zone-server'),[],'server-'+map,{
-   env:{...process.env,ZONE_HTTP_ADDR:'127.0.0.1:'+serverPort,ZONE_UDP_ADDR:'127.0.0.1:'+udpPort,
-    ZONE_ORIGIN:origin,ZONE_COLLISION_MANIFEST:collision,ZONE_SPAWN_X:String(x),ZONE_SPAWN_Y:String(y),ZONE_SPAWN_Z:String(z)}
-  });
-  try{
-   if(rust)await poll('Rust '+map,()=>alive('http://127.0.0.1:'+serverPort+'/health'),30000);
+ for(const {map} of maps){
    for(const preset of presets){
-    const scenario=stock?.name??(singleplayer?'stock-singleplayer':'map-preview');
+    const scenario=stock?.name??'stock-singleplayer';
     const id=[map,preset.toLowerCase(),Date.now()].join('-');
     const page=await openTab(port);
     console.log('Running '+map+' '+preset+' '+id);
@@ -145,16 +129,16 @@ try {
       })()`,true);
       clearShaderCache=false;
      }
-     const configPath=singleplayer?['stream-cop','_appdata_']:['zone-engine-preview-coverage','_multiplayer_','v1'];
+     const configPath=['stream-cop','_appdata_'];
      await seedShaderSettings(page,configPath,preset,stock);
      const params=new URLSearchParams({diagnostics:'1',stream:'/pack/pack.json',shaderCapture:id,shaderMap:map,shaderPreset:preset.toLowerCase(),shaderScenario:scenario,
-      ...(singleplayer?{autostart:'0'}:{play:'multiplayer',slot:'coverage',map})});
+      autostart:'0'});
      await page.send('Page.addScriptToEvaluateOnNewDocument',{source:`globalThis.sweepLog=[];
       addEventListener('xray-engine-log',({detail:line})=>{if(/shader|loading level|synchronization|preset|rspec|fatal|error/i.test(line)){sweepLog.push(line);if(sweepLog.length>100)sweepLog.shift();}});
       ${pipelineProbe?`globalThis.shaderPipelineChannel=new BroadcastChannel('xray-webgpu');
       shaderPipelineChannel.onmessage=({data})=>{if(data.shaderPipelineProbe)globalThis.shaderPipelineSnapshot=data.shaderPipelineProbe;};`:''}`});
      await page.send('Page.navigate',{url:origin+'/engine-preview/?'+params});
-     if(singleplayer){
+     {
       await poll('stock launcher',()=>page.evaluate(`location.search.includes('autostart=0')&&document.querySelector('#game')?.value==='stream-cop'&&document.querySelector('#launch')?.disabled===false`),60000);
       const campaign=stock?.savedGame?stock.savedGame.slot+'/single/alife/load':'all/single/alife/new';
       await page.evaluate(`document.querySelector('#extra-args').value=${JSON.stringify('-start server('+campaign+') client(localhost)')};document.querySelector('#launch').click()`);
@@ -164,9 +148,9 @@ try {
      await poll(map+' WebGPU render',async()=>{
       const info=await page.evaluate(`({status:document.querySelector('#status')?.textContent,stats:document.querySelector('#browser-diagnostics')?.textContent,synced:document.querySelector('#boot')?.hidden&&document.querySelector('#log')?.textContent?.includes('End of synchronization'),engineError:(globalThis.sweepLog??[]).find(line=>line.includes('worker sent an error!'))})`).catch(()=>null);
       if(info?.status?.startsWith('Failed:')||info?.engineError)throw Error(info.engineError??info.status);
-      if((singleplayer?info?.synced:info?.status?.includes('C++ tick'))&&info?.stats?.includes('WebGPU validation errors 0')&&Number.parseFloat(info.stats)>0)return info;
+      if(info?.synced&&info?.stats?.includes('WebGPU validation errors 0')&&Number.parseFloat(info.stats)>0)return info;
      },240000);
-     if(singleplayer)await toggleStockUI(page);
+     await toggleStockUI(page);
      const initialPipelines=await page.evaluate('globalThis.shaderPipelineSnapshot??null');
      const phases=stock?await runStockPhases(page,stock,poll):[];
      await sleep(2000);
@@ -200,7 +184,6 @@ try {
      console.error(JSON.stringify(result));
     } finally {await page.close();}
    }
-  } finally {if(rust?.exitCode===null){rust.kill();await new Promise(resolve=>rust.once('close',resolve));}}
  }
 } finally {stop(chrome);stop(server);}
 if(results.some(result=>!result.complete))process.exitCode=1;

@@ -5,19 +5,8 @@
 #include "SoundRender_Core.h"
 #include "SoundRender_Source.h"
 #include "SoundRender_Target.h"
-#include "SoundPlaybackObserver.h"
-#include <atomic>
 
 XRSOUND_API extern float psSoundCull;
-
-namespace {
-std::atomic<SoundPlaybackObserver> playbackObserver{};
-}
-
-void set_sound_playback_observer(SoundPlaybackObserver observer)
-{
-    playbackObserver.store(observer, std::memory_order_relaxed);
-}
 
 inline u32 calc_cursor(const float& fTimeStarted, float& fTime, const float& fTimeTotal, const float& fFreq, const SoundDataInfo& info) //--#SM+#--
 {
@@ -38,16 +27,6 @@ void CSoundRender_Emitter::update(float fTime, float dt)
 
     VERIFY2(!!(owner_data) || (!(owner_data) && (m_current_state == stStopped)), "owner");
     VERIFY2(owner_data ? *(int*)(&owner_data->feedback) : 1, "owner");
-
-    if (!b2D && !iPaused)
-        if (const auto observer = playbackObserver.load(std::memory_order_relaxed))
-        {
-            const bool loop = m_current_state == stStartingLooped || m_current_state == stPlayingLooped ||
-                m_current_state == stSimulatingLooped;
-            if (loop || m_current_state == stStarting ||
-                (bRewind && (m_current_state == stPlaying || m_current_state == stSimulating)))
-                observer(source()->file_name(), p_source, loop ? this : nullptr);
-        }
 
     if (bRewind)
     {

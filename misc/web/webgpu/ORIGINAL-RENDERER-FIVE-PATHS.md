@@ -218,7 +218,7 @@ original-engine versus browser parity.
 ## Experiments completed — 2026-11-10
 
 Acceptance includes less work at essentially unchanged throughput. Tests used an
-isolated headless Chrome profile, optimized `web-multiplayer-release`, 1920×1080,
+isolated headless Chrome profile, optimized `web-release`, 1920×1080,
 extreme grass (density 0.1, radius 300, height 2), grass shadows enabled, VSync off.
 The existing retained grass-reuse baseline was reused rather than rerunning a
 control. Live weather/simulation and tail spikes limit conclusions from one run.

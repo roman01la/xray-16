@@ -75,9 +75,6 @@ public:
     void FollowByPath(LPCSTR path_name, int start_idx, Fvector magic_force);
     bool CanBeInvisible();
     void SwitchVisibility(bool);
-#ifdef XRAY_WEB_MULTIPLAYER
-    void UpdateNetworkPresentation();
-#endif
 
     void SwitchAfParticles(bool bOn);
     virtual void StartLights();

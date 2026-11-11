@@ -90,8 +90,7 @@ capture.addEventListener('click',async()=>{
  catch{capture.firstElementChild.textContent='Click to retry mouse capture';}
 });
 
-const params=new URLSearchParams(location.search),multiplayer=params.get('play')==='multiplayer';
-if(multiplayer)document.documentElement.dataset.multiplayer='';
+const params=new URLSearchParams(location.search);
 const managingStorage=params.get('storage')==='manage';
 const importingSaves=params.get('saves')==='import';
 const importButton=document.querySelector('#boot-import');
@@ -105,11 +104,11 @@ const reinstallButton=document.querySelector('#reinstall-game');
 const storageStatus=document.querySelector('#storage-status');
 const returningToMenu=sessionStorage.getItem(returnToMenuKey)===location.href;
 if(returningToMenu)sessionStorage.removeItem(returnToMenuKey);
-if(multiplayer||returningToMenu||managingStorage||importingSaves){
+if(returningToMenu||managingStorage||importingSaves){
  document.querySelector('#start-game').hidden=true;
  document.querySelector('#boot-backup').hidden=true;
 }
-importButton.hidden=multiplayer||returningToMenu||managingStorage;
+importButton.hidden=returningToMenu||managingStorage;
 importButton.disabled=!navigator.locks||!navigator.storage?.getDirectory;
 importButton.addEventListener('click',()=>{
  if(importingSaves){importFile.click();return;}
@@ -121,7 +120,7 @@ importButton.addEventListener('click',()=>{
  window.dispatchEvent(new Event('xray-browser-navigation'));
  location.replace(url.href);
 });
-deleteButton.hidden=multiplayer||returningToMenu||!params.has('stream');
+deleteButton.hidden=returningToMenu||!params.has('stream');
 deleteButton.disabled=!navigator.locks||!navigator.storage?.getDirectory;
 
 async function clearInstalledGame(){
@@ -143,10 +142,10 @@ async function clearInstalledGame(){
      await remove(install,ARCHIVE_DESCRIPTORS);
     }catch(error){if(error.name!=='NotFoundError')throw error;}
     for await(const [name,profile] of root.entries()){
-     if(profile.kind!=='directory'||(name!=='stream-cop'&&!/^zone-engine-preview-[a-z0-9_-]{1,24}$/.test(name)))continue;
+     if(profile.kind!=='directory'||name!=='stream-cop')continue;
      const files=await Array.fromAsync(profile.keys());
      for(const file of files){
-      if(file!=='_appdata_'&&file!=='_multiplayer_')await profile.removeEntry(file,{recursive:true});
+      if(file!=='_appdata_')await profile.removeEntry(file,{recursive:true});
      }
     }
     await Promise.all([LEGACY_CHUNKS,LEGACY_DESCRIPTORS].map(name=>globalThis.caches?.delete(name)));
@@ -187,24 +186,6 @@ async function holdInstalledGame(){
  // A restored page must recheck installation after releasing its storage lock.
  window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 }
-function selectMode(mode){
- const url=new URL(location.href);url.searchParams.delete('save');url.searchParams.delete('autostart');
- if(mode==='multiplayer'){url.searchParams.set('play',mode);url.searchParams.delete('map');url.searchParams.set('slot','public');}
- else {
-  for(const key of ['play','map','slot'])url.searchParams.delete(key);
-  sessionStorage.setItem(returnToMenuKey,url.href);
- }
- window.dispatchEvent(new Event('xray-browser-navigation'));
- location.assign(url.href);
-}
-let switching=false;
-window.addEventListener('xray-engine-log',({detail:line})=>{
- if(switching)return;
- if(line.includes('XRAY_BROWSER_MULTIPLAYER')){switching=true;selectMode('multiplayer');}
- if(line.includes('XRAY_BROWSER_MAIN_MENU')){switching=true;selectMode('singleplayer');}
-});
-document.querySelector('#multiplayer-hud').hidden=!multiplayer;
-document.querySelector('#return-menu').onclick=()=>{document.querySelector('#disconnect').click();selectMode('singleplayer');};
 if(importingSaves){
  document.querySelector('#boot-status').textContent='Import saved games';
  document.querySelector('#load-progress').style.display='none';

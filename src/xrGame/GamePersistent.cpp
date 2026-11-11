@@ -1,8 +1,5 @@
 #include "pch_script.h"
 #include "GamePersistent.h"
-#ifdef XRAY_WEB_MULTIPLAYER
-#include "multiplayer/EngineAdapter.h"
-#endif
 #include "xrCore/FMesh.hpp"
 #include "xrEngine/XR_IOConsole.h"
 #include "xrMaterialSystem/GameMtlLib.h"
@@ -91,9 +88,6 @@ CGamePersistent::~CGamePersistent()
 
 IGame_Level* CGamePersistent::CreateLevel()
 {
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (zone::mapPreviewEnabled()) return zone::createMapPreview();
-#endif
     return xr_new<CLevel>();
 }
 
@@ -488,9 +482,6 @@ extern CUISequencer* g_tutorial2;
 void CGamePersistent::OnFrame()
 {
     ZoneScoped;
-#ifdef XRAY_WEB_MULTIPLAYER
-    zone::frame();
-#endif
 
     if (Device.dwPrecacheFrame == 5 && m_intro_event.empty())
     {
@@ -532,9 +523,6 @@ void CGamePersistent::OnFrame()
     if (!g_pGameLevel->bReady)
         return;
 
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (zone::mapPreviewEnabled()) {inherited::OnFrame();return;}
-#endif
     g_pGameLevel->WorldRendered(false);
 
     if (Device.Paused())
@@ -626,30 +614,6 @@ void CGamePersistent::OnFrame()
     }
     inherited::OnFrame();
 
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    // A paused simulation must still receive acknowledgements and control
-    // requests. Pending equipment snapshots survive polls until consumed.
-    if (g_pGameLevel && g_pGameLevel->bReady && CALifeSwitchManager::host_interests_requested())
-        if (const auto* alife = ai().get_alife())
-        {
-            alife->poll_host_interests();
-            if (Device.IsHeadlessAlifeHost())
-            {
-                const bool blocked = !alife->host_hit_capacity();
-                if (blocked != Device.Paused())
-                {
-                    Msg("* Zone hit delivery simulation %s", blocked ? "blocked" : "resumed");
-                    Device.Pause(blocked, true, false, "zone hit delivery");
-                }
-            }
-            if (!Device.Paused())
-                alife->advance_host_interests(Level());
-        }
-    // Do not leave paused timers behind when a blocked level is torn down.
-    if (Device.IsHeadlessAlifeHost() && Device.Paused() &&
-        (!g_pGameLevel || !g_pGameLevel->bReady))
-        Device.Pause(false, true, false, "zone hit delivery");
-#endif
     if (!Device.Paused())
         Engine.Sheduler.Update();
 

@@ -15,10 +15,10 @@ IC void CALifeScheduleRegistry::objects_per_update(const u32& objects_per_update
     m_objects_per_update = objects_per_update;
 }
 
-IC void CALifeScheduleRegistry::update(GameGraph::_LEVEL_ID host_level)
+IC void CALifeScheduleRegistry::update()
 {
     //	u32							count =
-    objects().empty() ? 0 : inherited::update(CUpdatePredicate(m_objects_per_update, host_level), false);
+    objects().empty() ? 0 : inherited::update(CUpdatePredicate(m_objects_per_update), false);
 #ifdef DEBUG
     if (psAI_Flags.test(aiALife))
     {

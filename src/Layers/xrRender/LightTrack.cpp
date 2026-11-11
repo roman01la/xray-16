@@ -368,18 +368,15 @@ void CROS_impl::update_smooth(IRenderable* O)
 
 void CROS_impl::calc_sun_value(Fvector& position, IGameObject* _object)
 {
+    light* sun = (light*)RImplementation.Lights.sun._get();
+
     if (MODE & IRender_ObjectSpecific::TRACE_SUN)
     {
         if (--result_sun < 0)
         {
             result_sun += ::Random.randI(lt_hemisamples / 4, lt_hemisamples / 2);
             Fvector direction;
-            // Scene drawing normally updates the renderer's sun. The host
-            // still advances the stock weather and can sample it directly.
-            const auto& sunDirection = Device.IsHeadlessAlifeHost()
-                ? g_pGamePersistent->Environment().CurrentEnv.sun_dir
-                : static_cast<light*>(RImplementation.Lights.sun._get())->direction;
-            direction.set(sunDirection).invert().normalize();
+            direction.set(sun->direction).invert().normalize();
             sun_value = !(g_pGameLevel->ObjectSpace.RayTest(
                             position, direction, 500.f, collide::rqtBoth, &cache_sun, _object)) ?
                 1.f :

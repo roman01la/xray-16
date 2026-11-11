@@ -142,13 +142,7 @@ public:
     void ChangeCircumspection(const float value);
     void ChangeEntityMorale(const float value);
 
-    struct PhysicalHitDamage { float health, power; };
-    PhysicalHitDamage ResolvePhysicalHit(float& power, ALife::EHitType type);
     virtual CWound* ConditionHit(SHit* pHDS);
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    struct ZoneArmourHit { float power, outfit, helmet; bool wound; float health, powerLoss; };
-    ZoneArmourHit PreviewZoneArmourHit(float power, ALife::EHitType type, u16 bone, float penetration);
-#endif
     //обновления состояния с течением времени
     virtual void UpdateCondition();
     void UpdateWounds();
@@ -163,7 +157,6 @@ public:
 
     IC void SetCanBeHarmedState(bool CanBeHarmed) { m_bCanBeHarmed = CanBeHarmed; }
     IC bool CanBeHarmed() const { return OnServer() && m_bCanBeHarmed; };
-    void ApplyConsumableEffects(const shared_str& section);
     virtual bool ApplyInfluence(const SMedicineInfluenceValues& V, const shared_str& sect);
     virtual bool ApplyBooster(const SBooster& B, const shared_str& sect);
     void ClearWounds();
@@ -181,8 +174,7 @@ protected:
 
     //изменение силы хита в зависимости от надетого костюма
     //(только для InventoryOwner)
-    float HitOutfitEffect(float hit_power, ALife::EHitType hit_type, s16 element, float ap, bool& add_wound,
-        bool multiplayer);
+    float HitOutfitEffect(float hit_power, ALife::EHitType hit_type, s16 element, float ap, bool& add_wound);
     //изменение потери сил в зависимости от надетого костюма
     float HitPowerEffect(float power_loss);
 
@@ -266,8 +258,6 @@ protected:
     u16 m_iWhoID;
 
     //для передачи параметров из DamageManager
-    // True only while calculating an explicit native multiplayer proposal.
-    bool m_zoneConditionProposal = false;
     float m_fHitBoneScale;
     float m_fWoundBoneScale;
 

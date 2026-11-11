@@ -154,7 +154,7 @@ void CActor::g_cl_ValidateMState(float dt, u32 mstate_wf)
     };
 };
 
-void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Jump, float dt, bool zoneMovement)
+void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Jump, float dt)
 {
     float cam_eff_factor = 0.0f;
     mstate_old = mstate_real;
@@ -172,7 +172,7 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
         }
     }
 
-    if (!zoneMovement && !CanMove())
+    if (!CanMove())
     {
         if (mstate_wf & mcAnyMove)
         {
@@ -229,7 +229,7 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
             m_fJumpTime = s_fJumpTime;
 
             //уменьшить силу игрока из-за выполненого прыжка
-            if (!zoneMovement && !GodMode())
+            if (!GodMode())
                 conditions().ConditionJump(inventory().TotalWeight() / MaxCarryWeight());
         }
 
@@ -325,7 +325,7 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
         } //(mstate_real&mcAnyMove)
     } // peOnGround || peAtWall
 
-    if (!zoneMovement && IsGameTypeSingle() && cam_eff_factor > EPS)
+    if (IsGameTypeSingle() && cam_eff_factor > EPS)
     {
         LPCSTR state_anm = NULL;
 
@@ -371,68 +371,6 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
     Fmatrix mOrient;
     mOrient.rotateY(-r_model_yaw);
     mOrient.transform_dir(vControlAccel);
-}
-
-void CActor::resetZoneMovement(const Fvector& position, const Fvector& velocity, bool crouched)
-{
-    auto* movement = character_physics_support()->movement();
-    Position().set(position);
-    if (!movement->CharacterExist())
-        character_physics_support()->CreateCharacter();
-    mstate_real = crouched ? mcCrouch : 0;
-    mstate_wishful = mstate_old = mstate_real;
-    set_state_box(mstate_real);
-    movement->SetPosition(position);
-    movement->SetVelocity(velocity);
-    movement->EnableCharacter();
-    m_fJumpTime = 0.f;
-    m_fFallTime = s_fFallTime;
-    m_bJumpKeyPressed = FALSE;
-    cam_UnsetLadder();
-    spatial_move();
-}
-
-bool CActor::driveZoneMovement(u32 controls, float yaw, float speedScale, float dt)
-{
-    auto* movement = character_physics_support()->movement();
-    if (!movement->CharacterExist())
-        return false;
-    constexpr u32 states[] = {mcFwd, mcBack, mcLStrafe, mcRStrafe, mcCrouch, mcJump, mcSprint, mcAccel};
-    mstate_wishful = 0;
-    for (unsigned i = 0; i < std::size(states); ++i)
-        if (controls & (1u << i)) mstate_wishful |= states[i];
-
-    r_model_yaw = -yaw;
-    const Fvector direction{std::sin(yaw), 0.f, std::cos(yaw)};
-    Fvector acceleration;
-    float jump = 0.f;
-    g_cl_CheckControls(mstate_wishful, acceleration, jump, dt, true);
-    acceleration.mul(speedScale);
-    movement->Calculate(acceleration, direction, 0.f, jump, dt, false);
-    g_cl_ValidateMState(dt, mstate_wishful);
-    return jump > 0.f;
-}
-
-void CActor::updateZoneActorPose(const Fvector& position, float yaw, float pitch, float dt)
-{
-    r_model_yaw = -yaw;
-    r_torso.yaw = r_model_yaw;
-    r_torso.pitch = pitch;
-    unaffected_r_torso = r_torso;
-    Position().set(position);
-    g_Orientate(mstate_real, dt);
-    spatial_move();
-}
-
-u32 CActor::sampleZoneMovement(Fvector& position, Fvector& velocity)
-{
-    auto* movement = character_physics_support()->movement();
-    movement->InterpolatePosition(position);
-    movement->GetCharacterVelocity(velocity);
-    return (movement->Environment() == CPHMovementControl::peOnGround ? 2u : 0u)
-        | (mstate_real & mcCrouch ? 4u : 0u)
-        | (mstate_wishful & mcJump ? 8u : 0u)
-        | (mstate_real & mcClimb ? 16u : 0u);
 }
 
 #define ACTOR_ANIM_SECT "actor_animation"

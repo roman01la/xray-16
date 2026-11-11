@@ -14,9 +14,6 @@
 #include "ai_space.h"
 #include "xrScriptEngine/script_engine.hpp"
 #include "Include/xrRender/UIShader.h"
-#ifdef XRAY_WEB_MULTIPLAYER
-#include "multiplayer/InventoryPresentation.h"
-#endif
 
 #define BUY_MENU_TEXTURE "ui" DELIMITER "ui_mp_buy_menu"
 #define EQUIPMENT_ICONS  "ui" DELIMITER "ui_icon_equipment"
@@ -374,10 +371,6 @@ LPCSTR InventoryUtilities::GetTimePeriodAsString(pstr _buff, u32 buff_sz, ALife:
 
 static std::pair<float, float> inventoryWeights(CInventoryOwner* owner)
 {
-#ifdef XRAY_WEB_MULTIPLAYER
-    if (const auto* vitals = zone::inventoryVitals(owner))
-        return {vitals->carriedWeight, vitals->carryLimit};
-#endif
     return {owner->inventory().CalcTotalWeight(), owner->MaxCarryWeight()};
 }
 

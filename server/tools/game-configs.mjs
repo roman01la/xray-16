@@ -18,7 +18,7 @@ async function bytes(file,offset,size){
  return out;
 }
 async function payloadDecoder(){
- const dir=await mkdtemp(join(tmpdir(),'zone-lzo-')),binary=join(dir,'decode');
+ const dir=await mkdtemp(join(tmpdir(),'xray-lzo-')),binary=join(dir,'decode');
  try{
   const flags=execFileSync('pkg-config',['--cflags','--libs','lzo2'],{encoding:'utf8'}).trim().split(/\s+/);
   await writeFile(join(dir,'decode.cpp'),`#include <lzo1x.h>

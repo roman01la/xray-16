@@ -18,7 +18,7 @@ async function getBrowserId() {
 export function startCampaignAnalytics() {
   const params = new URLSearchParams(location.search);
   if (!/^\/releases\/[a-f0-9]{64}\/index\.html$/.test(location.pathname) ||
-      !params.has('stream') || params.get('play') === 'multiplayer' ||
+      !params.has('stream') ||
       params.get('storage') === 'manage' || params.get('saves') === 'import' || params.has('save')) return;
 
   const browser = getBrowserId().catch(() => null);

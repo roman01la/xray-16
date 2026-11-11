@@ -260,18 +260,6 @@ CInifile* IGame_Persistent::GetArchiveHeader(pcstr name, pcstr ver)
 void IGame_Persistent::OnEvent(EVENT E, u64 P1, u64 P2)
 {
     ZoneScoped;
-#ifdef XRAY_WEB_MULTIPLAYER
-    // Block before level allocation, menu changes and asset prefetch. The bridge
-    // diagnostic entry must never activate local single-player simulation.
-    if ((E == eStart || E == eStartMPDemo) && strstr(Core.Params, "-zone_bridge_only"))
-    {
-        pstr first = pstr(P1);
-        xr_free(first);
-        if (E == eStart) {pstr second = pstr(P2); xr_free(second);}
-        Msg("! Multiplayer adapter preview: level startup is not enabled");
-        return;
-    }
-#endif
 
 
     if (E == eStart)

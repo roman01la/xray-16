@@ -1,0 +1,3 @@
+-- The browser has no desktop exit; keep the stock Q shortcut harmless.
+function main_menu:OnMessageQuitWin()
+end

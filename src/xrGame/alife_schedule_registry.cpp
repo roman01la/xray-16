@@ -8,14 +8,6 @@
 
 #include "StdAfx.h"
 #include "alife_schedule_registry.h"
-#include "ai_space.h"
-
-bool CALifeScheduleRegistry::on_host_level(CSE_ALifeSchedulable& object, GameGraph::_LEVEL_ID level)
-{
-    const auto* entity = object.base()->cast_alife_dynamic_object();
-    const auto& graph = ai().game_graph();
-    return entity && graph.valid_vertex_id(entity->m_tGraphID) && graph.vertex(entity->m_tGraphID)->level_id() == level;
-}
 
 CALifeScheduleRegistry::~CALifeScheduleRegistry() {}
 void CALifeScheduleRegistry::add(CSE_ALifeDynamicObject* object)

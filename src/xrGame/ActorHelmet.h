@@ -30,8 +30,7 @@ public:
     [[nodiscard]] float GetHitTypeProtection(ALife::EHitType hit_type, s16 element) const;
     [[nodiscard]] float GetBoneArmor(s16 element) const;
 
-    float HitThroughArmor(float hit_power, s16 element, float ap, bool& add_wound, ALife::EHitType hit_type,
-        bool multiplayer);
+    float HitThroughArmor(float hit_power, s16 element, float ap, bool& add_wound, ALife::EHitType hit_type);
 
     float m_fPowerLoss;
     float m_fHealthRestoreSpeed;

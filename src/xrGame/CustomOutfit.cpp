@@ -1,7 +1,6 @@
 #include "StdAfx.h"
 
 #include "CustomOutfit.h"
-#include "CombatRules.h"
 #include "xrPhysics/PhysicsShell.h"
 #include "inventory_space.h"
 #include "Inventory.h"
@@ -152,8 +151,7 @@ float CCustomOutfit::GetBoneArmor(s16 element) const
     return m_boneProtection.getBoneArmor(element);
 }
 
-float CCustomOutfit::HitThroughArmor(float hit_power, s16 element, float ap, bool& add_wound, ALife::EHitType hit_type,
-    bool multiplayer)
+float CCustomOutfit::HitThroughArmor(float hit_power, s16 element, float ap, bool& add_wound, ALife::EHitType hit_type)
 {
     float NewHitPower = hit_power;
 
@@ -168,9 +166,28 @@ float CCustomOutfit::HitThroughArmor(float hit_power, s16 element, float ap, boo
             if (ba < 0.0f)
                 return NewHitPower;
 
-            NewHitPower = xray::combat::bulletArmourPower(hit_power, ap, ba * GetCondition(),
-                m_boneProtection.m_fHitFrac, m_boneProtection.getBoneProtection(element), multiplayer, add_wound);
-            VERIFY(NewHitPower >= 0.f);
+            float BoneArmor = ba * GetCondition();
+            if (/*!fis_zero(ba, EPS) &&*/ ap > BoneArmor)
+            {
+                //пуля пробила бронь
+                if (!IsGameTypeSingle())
+                {
+                    float hit_fraction = (ap - BoneArmor) / ap;
+                    if (hit_fraction < m_boneProtection.m_fHitFrac)
+                        hit_fraction = m_boneProtection.m_fHitFrac;
+
+                    NewHitPower *= hit_fraction;
+                    NewHitPower *= m_boneProtection.getBoneProtection(element);
+                }
+
+                VERIFY(NewHitPower >= 0.0f);
+            }
+            else
+            {
+                //пуля НЕ пробила бронь
+                NewHitPower *= m_boneProtection.m_fHitFrac;
+                add_wound = false; 	//раны нет
+            }
         }
         else
         {

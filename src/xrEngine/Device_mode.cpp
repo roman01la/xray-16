@@ -317,7 +317,7 @@ void CRenderDevice::SelectResolution(const bool windowed)
 
     // Dedicated server hardcoded resolution
     // XXX: to be removed
-    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
+    if (GEnv.isDedicatedServer)
     {
         psDeviceMode.Width = 640;
         psDeviceMode.Height = 480;

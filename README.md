@@ -28,8 +28,7 @@ Legends of the Zone/Enhanced Edition is not supported and won't ever be likely. 
 ## Call of Pripyat in the browser
 
 This fork runs Call of Pripyat 1.6.02 in a desktop browser with native WebGPU.
-The same browser build starts the original single-player game or the
-server-authoritative multiplayer alpha from its game menu. [Play the web version](https://stalker-online.xyz/)
+The browser build runs the original single-player campaign and keeps saves on your device. [Play the web version](https://stalker-online.xyz/)
 
 Local setup, browser requirements, display settings, and asset staging are in the
 [web build guide](misc/web/README.md).

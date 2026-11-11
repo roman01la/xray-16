@@ -5,7 +5,6 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {openAnalytics} from './analytics-store.mjs';
-import {createGateway} from './gateway.mjs';
 
 const event = (kind,browserId) => ({event:kind,browserId,eventId:randomUUID()});
 
@@ -34,89 +33,6 @@ test('visits roll after inactivity, installs are unique and repeated gameplay is
     });
   } finally {db.close();}
 });
-
-test('gateway protects every dashboard read and persists accepted milestones',async () => {
-  const root = await mkdtemp(join(tmpdir(),'zone-analytics-'));
-  const origin = 'https://game.example', password = 'isolated-analytics-test';
-  const options = {root,origin,token:'isolated-gateway-token'};
-  let server;
-  async function listen(analyticsPassword) {
-    server = await createGateway({...options,analyticsPassword});
-    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-    return 'http://127.0.0.1:'+server.address().port;
-  }
-  async function close() {
-    if (!server) return;
-    server.closeAllConnections();
-    await new Promise(resolve=>server.close(resolve));
-    server = undefined;
-  }
-  const auth = {Authorization:'Basic '+Buffer.from('analytics:'+password).toString('base64')};
-  const wrongAuth = {Authorization:'Basic '+Buffer.from('analytics:wrong').toString('base64')};
-  const a = randomUUID();
-  try {
-    let base = await listen(password);
-    const dashboard = () => fetch(base+'/analytics',{headers:auth});
-    const send = (body,headers={}) => fetch(base+'/analytics/event',{
-      method:'POST', headers:{Origin:origin,'Content-Type':'application/json',...headers},
-      body:JSON.stringify(body),
-    });
-    const guest = await fetch(base+'/analytics');
-    assert.equal(guest.status,401);
-    assert.match(guest.headers.get('www-authenticate'),/^Basic /);
-    assert.doesNotMatch(await guest.text(),/Successful save loads/);
-    assert.equal((await fetch(base+'/analytics/',{method:'HEAD'})).status,401);
-    assert.equal((await fetch(base+'/analytics',{headers:{Authorization:'Bearer '+options.token}})).status,401);
-    assert.equal((await fetch(base+'/analytics/event')).status,405);
-    assert.equal((await send(event('visit',a),{Origin:'https://foreign.example'})).status,403);
-    assert.equal((await send(event('visit',a),{'Sec-Fetch-Site':'cross-site'})).status,403);
-    assert.equal((await send(event('visit',a),{'Content-Type':'text/plain'})).status,415);
-    assert.equal((await send({...event('visit',a),saveName:'personal save'})).status,400);
-    assert.equal((await send({...event('visit',a),eventId:'x'.repeat(1200)})).status,413);
-    assert.equal((await send(event('unexpected',a))).status,400);
-    const accepted = ['visit','visit','install','install','start_game','new_campaign','load_save','load_save'];
-    await Promise.all(accepted.map(async kind=>assert.equal((await send(event(kind,a))).status,204)));
-    const response = await dashboard();
-    assert.equal(response.status,200);
-    assert.equal(response.headers.get('cache-control'),'no-store');
-    assert.equal(response.headers.get('referrer-policy'),'no-referrer');
-    const page = await response.text();
-    assert.match(page,/Unique browsers <strong>1<\/strong>/);
-    assert.match(page,/First completed game installs<\/th><td>1<\/td><td>1<\/td>/);
-    assert.match(page,/Successful save loads<\/th><td>1<\/td><td>2<\/td>/);
-    assert.ok(!page.includes(a)&&!page.includes(password));
-    assert.equal((await fetch(base+'/analytics.sqlite')).status,404);
-    assert.equal((await fetch(base+'/analytics',{method:'HEAD',headers:auth})).status,200);
-    const attackingIp = {'Fly-Client-IP':'192.0.2.9'};
-    for (let i=0;i<8;i++)
-      assert.equal((await fetch(base+'/analytics',{headers:{...wrongAuth,...attackingIp}})).status,401);
-    const throttled = await fetch(base+'/analytics',{headers:{...auth,...attackingIp}});
-    assert.equal(throttled.status,429);
-    assert.ok(throttled.headers.get('retry-after'));
-    let distributedStatus;
-    for (let i=1;i<=61&&distributedStatus!==429;i++){
-      const headers = {...wrongAuth,'Fly-Client-IP':'198.51.100.'+i};
-      distributedStatus = (await fetch(base+'/analytics',{headers})).status;
-    }
-    assert.equal(distributedStatus,429);
-    await close();
-    base = await listen(password);
-    const restored = await dashboard();
-    const restoredPage = await restored.text();
-    const nonce = /<script nonce="([^"]+)"/.exec(restoredPage)[1];
-    assert.ok(restored.headers.get('content-security-policy').includes("'nonce-" + nonce + "'"));
-    const withoutNonce = html => html.replace(/nonce="[^"]+"/g, 'nonce=""');
-    assert.equal(withoutNonce(restoredPage),withoutNonce(page));
-    await close();
-    base = await listen('');
-    assert.equal((await dashboard()).status,404);
-    assert.equal((await send(event('visit',a))).status,404);
-  } finally {
-    await close();
-    await rm(root,{recursive:true,force:true});
-  }
-});
-
 
 test('device/performance validation, deduplication, weighted FPS and escaped dashboard',async()=>{
  const {validateAnalyticsEvent,analyticsDashboard}=await import('./analytics-http.mjs');

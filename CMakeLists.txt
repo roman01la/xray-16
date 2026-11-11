@@ -23,10 +23,6 @@ option(XRAY_USE_ASAN     "Use AddressSanitizer"       OFF)
 option(XRAY_ENABLE_TRACY "Enable tracy profiler"      OFF)
 
 
-option(XRAY_WEB_MULTIPLAYER "Isolate experimental browser multiplayer build artifacts" OFF)
-if (XRAY_WEB_MULTIPLAYER AND NOT EMSCRIPTEN)
-    message(FATAL_ERROR "XRAY_WEB_MULTIPLAYER requires the Emscripten toolchain")
-endif()
 
 include(XRay.Build)
 include(XRay.Packaging)

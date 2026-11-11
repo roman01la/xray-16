@@ -29,8 +29,7 @@ public:
     //если на персонаже надет костюм
     [[nodiscard]] float GetPowerLoss() const;
 
-    float HitThroughArmor(float hit_power, s16 element, float ap, bool& add_wound, ALife::EHitType hit_type,
-        bool multiplayer);
+    float HitThroughArmor(float hit_power, s16 element, float ap, bool& add_wound, ALife::EHitType hit_type);
 
     virtual void OnMoveToSlot(const SInvItemPlace& prev);
     virtual void OnMoveToRuck(const SInvItemPlace& previous_place);

@@ -32,7 +32,7 @@ void CRenderDevice::Create()
     fFOV = 90.f;
     fASPECT = 1.f;
 
-    if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
+    if (GEnv.isDedicatedServer)
         psDeviceMode.WindowStyle = rsWindowed;
 
     UpdateWindowProps();

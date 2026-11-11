@@ -17,6 +17,6 @@ test('worker gates origin, size, authentication and unknown routes',async()=>{co
  assert.equal((await worker.fetch(req('/analytics/event',{method:'POST',headers:{Origin:env.ORIGIN,'Content-Type':'application/json'},body:'x'.repeat(8193)}),env)).status,413);
  assert.equal((await worker.fetch(req('/analytics/event',{method:'POST',headers:{Origin:env.ORIGIN,'Content-Type':'application/json'},body:JSON.stringify(event('visit'))}),env)).status,204);
  assert.equal((await summary(db)).browsers,1);
- assert.equal((await worker.fetch(req('/world.json'),env)).status,503);assert.equal((await worker.fetch(req('/_deploy/publish'),env)).status,404);
+ assert.equal((await worker.fetch(req('/world.json'),env)).status,404);assert.equal((await worker.fetch(req('/_deploy/publish'),env)).status,404);
  env.EVENT_LIMIT={limit:async()=>({success:false})};assert.equal((await worker.fetch(req('/analytics/event',{method:'POST',headers:{Origin:env.ORIGIN,'Content-Type':'application/json'},body:'{}'}),env)).status,429);
  }finally{sqlite.close();}});

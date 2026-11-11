@@ -350,8 +350,6 @@ public:
 
     void SetWeather(shared_str name, bool forced = false);
     shared_str GetWeather() { return CurrentWeatherName; }
-    const shared_str& GetWeatherCycle() const { return CurrentCycleName; }
-    float GetWeatherEffectTimeLeft() const { return bWFX ? wfx_time : 0.f; }
     void ChangeGameTime(float game_time);
     void SetGameTime(float game_time, float time_factor);
 

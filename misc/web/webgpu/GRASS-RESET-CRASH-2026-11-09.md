@@ -36,7 +36,7 @@ instancing algorithms are unchanged.
 
 ## Validation
 
-- Optimized `web-multiplayer-release` build passed, including final relink after
+- Optimized `web-release` build passed, including final relink after
   keeping render-pass waits read-only.
 - Eight detail cache, instancing and storage regressions passed.
 - Isolated headless Chrome exercises alternate density `0.6` and `0.1`, each
@@ -53,7 +53,7 @@ instancing algorithms are unchanged.
 
 Manual coverage remains: changing settings through the actual options widgets,
 long paused intervals, detail radius/height changes, disabling and re-enabling
-grass, save/load and level travel, multiplayer and other browsers/GPUs. The
+grass, save/load and level travel and other browsers/GPUs. The
 headless stress run does not establish those untested cases.
 
 ## Completed validation and local publication

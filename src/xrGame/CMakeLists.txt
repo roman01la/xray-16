@@ -226,9 +226,6 @@ target_sources(xrGame PRIVATE
     alife_story_registry.cpp
     alife_story_registry.h
     alife_story_registry_inline.h
-    alife_host_interests.cpp
-    alife_host_targets.cpp
-    alife_host_interests.h
     alife_surge_manager.cpp
     alife_surge_manager.h
     alife_surge_manager_inline.h
@@ -2535,10 +2532,4 @@ if (BUILD_SHARED_LIBS)
     install(TARGETS xrGame LIBRARY
         DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     )
-endif()
-
-# The production single-player target has neither adapter code nor frame hooks.
-if (XRAY_WEB_MULTIPLAYER)
-    target_sources(xrGame PRIVATE multiplayer/EngineAdapter.cpp multiplayer/MapPreview.cpp multiplayer/InventoryPresentation.cpp)
-    target_compile_definitions(xrGame PRIVATE XRAY_WEB_MULTIPLAYER=1)
 endif()

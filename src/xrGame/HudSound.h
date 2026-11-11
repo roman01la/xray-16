@@ -15,10 +15,6 @@ struct HUD_SOUND_ITEM
         bool looped = false, u8 index = u8(-1));
 
     static void StopSound(HUD_SOUND_ITEM& snd);
-#ifdef XRAY_WEB_MULTIPLAYER
-    static bool PlayOneShot(HUD_SOUND_ITEM& snd, Fvector position, bool hud_mode);
-    static bool PlayTrackedHudSound(HUD_SOUND_ITEM& snd, ref_sound& playback);
-#endif
 
     ICF BOOL playing()
     {
@@ -89,9 +85,6 @@ public:
     void PlaySound(pcstr alias, const Fvector& position, const IGameObject* parent,
         bool hud_mode, bool looped = false, u8 index = u8(-1));
 
-#ifdef XRAY_WEB_MULTIPLAYER
-    bool PlayOneShot(pcstr alias, const Fvector& position, bool hud_mode = false);
-#endif
 
     void StopSound(pcstr alias);
     void StopAllSounds();

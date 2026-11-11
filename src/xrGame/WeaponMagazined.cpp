@@ -1,7 +1,6 @@
 #include "pch_script.h"
 
 #include "WeaponMagazined.h"
-#include "CombatRules.h"
 #include "Actor.h"
 #include "ParticlesObject.h"
 #include "Scope.h"
@@ -22,9 +21,6 @@
 #include "xrScriptEngine/script_callback_ex.h"
 #include "script_game_object.h"
 #include "HudSound.h"
-#ifdef XRAY_WEB_MULTIPLAYER
-#include "player_hud.h"
-#endif
 
 CWeaponMagazined::CWeaponMagazined(ESoundTypes eSoundType) : CWeapon(), m_bStopedAfterQueueFired(false)
 {
@@ -205,12 +201,10 @@ bool CWeaponMagazined::TryReload()
 {
     if (m_pInventory)
     {
-        // Headless hosts contain several actor mirrors. The callback belongs
-        // to this weapon's owner, not the global director actor.
-        if (auto* owner = smart_cast<CActor*>(H_Parent()); IsGameTypeSingle() && owner)
+        if (IsGameTypeSingle() && ParentIsActor())
         {
             int AC = GetSuitableAmmoTotal();
-            owner->callback(GameObject::eWeaponNoAmmoAvailable)(lua_game_object(), AC);
+            Actor()->callback(GameObject::eWeaponNoAmmoAvailable)(lua_game_object(), AC);
         }
 
         m_pCurrentAmmo = smart_cast<CWeaponAmmo*>(m_pInventory->GetAny(m_ammoTypes[m_ammoType].c_str()));
@@ -228,19 +222,18 @@ bool CWeaponMagazined::TryReload()
             SwitchState(eReload);
             return true;
         }
-        const unsigned selected = xray::combat::selectReloadAmmo(
-            static_cast<unsigned>(m_ammoTypes.size()), m_ammoType, false, false,
-            [&](unsigned candidate) {
-                m_pCurrentAmmo = smart_cast<CWeaponAmmo*>(m_pInventory->GetAny(m_ammoTypes[candidate].c_str()));
-                return m_pCurrentAmmo != nullptr;
-            });
-        if (selected < m_ammoTypes.size())
-        {
-            m_set_next_ammoType_on_reload = static_cast<u8>(selected);
-            SetPending(true);
-            SwitchState(eReload);
-            return true;
-        }
+        else
+            for (u8 i = 0; i < u8(m_ammoTypes.size()); ++i)
+            {
+                m_pCurrentAmmo = smart_cast<CWeaponAmmo*>(m_pInventory->GetAny(m_ammoTypes[i].c_str()));
+                if (m_pCurrentAmmo)
+                {
+                    m_set_next_ammoType_on_reload = i;
+                    SetPending(true);
+                    SwitchState(eReload);
+                    return true;
+                }
+            }
     }
 
     if (GetState() != eIdle)
@@ -262,10 +255,10 @@ bool CWeaponMagazined::IsAmmoAvailable()
 
 void CWeaponMagazined::OnMagazineEmpty()
 {
-    if (auto* owner = smart_cast<CActor*>(H_Parent()); IsGameTypeSingle() && owner)
+    if (IsGameTypeSingle() && ParentIsActor())
     {
         int AC = GetSuitableAmmoTotal();
-        owner->callback(GameObject::eOnWeaponMagazineEmpty)(lua_game_object(), AC);
+        Actor()->callback(GameObject::eOnWeaponMagazineEmpty)(lua_game_object(), AC);
     }
 
     if (GetState() == eIdle)
@@ -307,10 +300,10 @@ void CWeaponMagazined::UnloadMagazine(bool spawn_ammo)
 
     VERIFY((u32)iAmmoElapsed == m_magazine.size());
 
-    if (auto* owner = smart_cast<CActor*>(H_Parent()); IsGameTypeSingle() && owner)
+    if (IsGameTypeSingle() && ParentIsActor())
     {
         int AC = GetSuitableAmmoTotal();
-        owner->callback(GameObject::eOnWeaponMagazineEmpty)(lua_game_object(), AC);
+        Actor()->callback(GameObject::eOnWeaponMagazineEmpty)(lua_game_object(), AC);
     }
 
     if (!spawn_ammo)
@@ -361,14 +354,27 @@ void CWeaponMagazined::ReloadMagazine()
         if (m_ammoTypes.size() <= m_ammoType)
             return;
 
-        const unsigned selected = xray::combat::selectReloadAmmo(
-            static_cast<unsigned>(m_ammoTypes.size()), m_ammoType, false, m_bLockType,
-            [&](unsigned candidate) {
-                m_pCurrentAmmo = smart_cast<CWeaponAmmo*>(m_pInventory->GetAny(m_ammoTypes[candidate].c_str()));
-                return m_pCurrentAmmo != nullptr;
-            });
-        if (selected < m_ammoTypes.size())
-            m_ammoType = static_cast<u8>(selected);
+        LPCSTR tmp_sect_name = m_ammoTypes[m_ammoType].c_str();
+
+        if (!tmp_sect_name)
+            return;
+
+        //попытаться найти в инвентаре патроны текущего типа
+        m_pCurrentAmmo = smart_cast<CWeaponAmmo*>(m_pInventory->GetAny(tmp_sect_name));
+
+        if (!m_pCurrentAmmo && !m_bLockType)
+        {
+            for (u8 i = 0; i < u8(m_ammoTypes.size()); ++i)
+            {
+                //проверить патроны всех подходящих типов
+                m_pCurrentAmmo = smart_cast<CWeaponAmmo*>(m_pInventory->GetAny(m_ammoTypes[i].c_str()));
+                if (m_pCurrentAmmo)
+                {
+                    m_ammoType = i;
+                    break;
+                }
+            }
+        }
     }
 
     //нет патронов для перезарядки
@@ -376,9 +382,8 @@ void CWeaponMagazined::ReloadMagazine()
         return;
 
     //разрядить магазин, если загружаем патронами другого типа
-    if (xray::combat::reloadChangesType(m_bLockType, !m_magazine.empty(), m_pCurrentAmmo != nullptr,
-        m_pCurrentAmmo && !m_magazine.empty() &&
-            !xr_strcmp(m_pCurrentAmmo->cNameSect(), m_magazine.back().m_ammoSect.c_str())))
+    if (!m_bLockType && !m_magazine.empty() &&
+        (!m_pCurrentAmmo || xr_strcmp(m_pCurrentAmmo->cNameSect(), m_magazine.back().m_ammoSect.c_str())))
         UnloadMagazine();
 
     VERIFY((u32)iAmmoElapsed == m_magazine.size());
@@ -554,8 +559,10 @@ void CWeaponMagazined::state_Fire(float dt)
 
             //Alundaio: Use fModeShotTime instead of fOneShotTime if current fire mode is 2-shot burst
             //Alundaio: Cycle down RPM after two shots; used for Abakan/AN-94
-            fShotTimeCounter = xray::combat::shotInterval(
-                GetCurrentFireMode(), bCycleDown, m_iShotNum, fOneShotTime, fModeShotTime);
+            if (GetCurrentFireMode() == 2 || (bCycleDown == true && m_iShotNum <= 1))
+                fShotTimeCounter = fModeShotTime;
+            else
+                fShotTimeCounter = fOneShotTime;
             //Alundaio: END
 
             ++m_iShotNum;
@@ -635,76 +642,9 @@ void CWeaponMagazined::OnShot()
     //дым из ствола
     ForceUpdateFireParticles();
     StartSmokeParticles(get_LastFP(), vel);
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-    recordZoneNpcShot(false);
-#endif
 }
 
 void CWeaponMagazined::OnEmptyClick() { PlaySound("sndEmptyClick", get_LastFP()); }
-#ifdef XRAY_WEB_MULTIPLAYER
-void CWeaponMagazined::PlayConfirmedHudReload(unsigned sound, ref_sound& playback)
-{
-    // Sound discriminators from the authoritative reload phase.
-    constexpr pcstr aliases[] = {nullptr, "sndReload", "sndReloadEmpty", "sndReloadMisfire",
-        "sndReloadG", "sndReload1", "sndOpen", "sndAddCartridge", "sndClose"};
-    if (!HudItemData() || sound == 0 || sound >= std::size(aliases))
-        return;
-    auto* item = m_sounds.FindSoundItem(aliases[sound], false);
-    if (!item && (sound == 2 || sound == 3))
-        item = m_sounds.FindSoundItem("sndReload", false);
-    if (item && HUD_SOUND_ITEM::PlayTrackedHudSound(*item, playback) && strstr(Core.Params, "-zone-weapon-hud-probe"))
-        Msg("* Zone weapon HUD reload sound: %s %s %s", cNameSect().c_str(), item->m_alias.c_str(), playback._handle()->file_name());
-}
-
-void CWeaponMagazined::PlayConfirmedHudShot(bool launcher)
-{
-    auto* hud = HudItemData();
-    if (!hud)
-        return;
-
-    const bool underbarrel = launcher && IsGrenadeLauncherAttached();
-    auto* launcherSound = underbarrel ? m_sounds.FindSoundItem("sndShotG", false) : nullptr;
-    const pcstr sound = launcherSound ? "sndShotG" : m_sSndShotCurrent.c_str();
-    const auto center = Fvector().set(0.f, 0.f, 0.f);
-    const bool played = launcherSound ? HUD_SOUND_ITEM::PlayOneShot(*launcherSound, center, true)
-        : sound && m_layered_sounds.PlayOneShot(sound, center, true);
-
-    const auto& flame = underbarrel ? m_sFlameParticles2 : m_sFlameParticlesCurrent;
-    const auto firePoint = underbarrel ? hud_item_measures::e_fire_point2 : hud_item_measures::e_fire_point;
-    const bool hasMuzzle = hud->m_measures.m_prop_flags.test(firePoint);
-    if (hasMuzzle)
-    {
-        firedeps deps{};
-        deps.m_FireParticlesXForm.set(hud->m_item_transform);
-        hud->setup_firedeps(deps);
-        deps.m_FireParticlesXForm.c = underbarrel ? deps.vLastFP2 : deps.vLastFP;
-
-        const auto play = [&](const shared_str& effect)
-        {
-            if (!effect.size())
-                return;
-            auto* particles = CParticlesObject::Create(effect.c_str(), FALSE);
-            particles->SetXFORM(deps.m_FireParticlesXForm);
-            particles->Play(true);
-            // Play emits the first simulation step. Keep a bounded lifetime
-            // for those particles after stopping a looping preset.
-            if (particles->IsLooped())
-            {
-                particles->Stop(TRUE);
-                particles->PSI_SetLifeTime(1.f);
-            }
-            particles->SetAutoRemove(true);
-        };
-        play(flame);
-        if (!underbarrel)
-            play(m_sSmokeParticlesCurrent);
-    }
-    if (strstr(Core.Params, "-zone-weapon-hud-probe"))
-        Msg("* Zone weapon HUD feedback: %s sound=%s flame=%s smoke=%s", cNameSect().c_str(),
-            played ? sound : "-", hasMuzzle && flame.size() ? flame.c_str() : "-",
-            hasMuzzle && !underbarrel && m_sSmokeParticlesCurrent.size() ? m_sSmokeParticlesCurrent.c_str() : "-");
-}
-#endif
 void CWeaponMagazined::OnAnimationEnd(u32 state)
 {
     switch (state)
@@ -899,24 +839,6 @@ bool CWeaponMagazined::Action(u16 cmd, u32 flags)
     }
     return false;
 }
-
-#if defined(__EMSCRIPTEN__) || (defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB))
-void CWeaponMagazined::SetPresentationScope(pcstr section)
-{
-    if (!IsScopeAttached() || m_eScopeStatus != ALife::eAddonAttachable)
-        return;
-    for (size_t index = 0; index < m_scopes.size(); ++index)
-    {
-        if (xr_strcmp(pSettings->r_string(m_scopes[index], "scope_name"), section) == 0)
-        {
-            m_cur_scope = static_cast<u8>(index);
-            UpdateAddonsVisibility();
-            InitAddons();
-            return;
-        }
-    }
-}
-#endif
 
 bool CWeaponMagazined::CanAttach(PIItem pIItem)
 {
@@ -1360,47 +1282,6 @@ void CWeaponMagazined::save(NET_Packet& output_packet)
     save_data(m_iShotNum, output_packet);
     save_data(m_iCurFireMode, output_packet);
 }
-
-#if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
-xray::combat::FireRules CWeaponMagazined::NativeFireRules()
-{
-    // The map host runs A-Life in single-player mode. Browser players use
-    // the authored multiplayer actor tuning for their rewind poses.
-    static const auto actorDispersion = [] {
-        const char* section = pSettings->section_exist("mp_actor") ? "mp_actor" : "actor";
-        return std::array{deg2rad(pSettings->r_float(section, "disp_base")),
-            deg2rad(pSettings->r_float(section, "disp_aim")), pSettings->r_float(section, "disp_vel_factor"),
-            pSettings->r_float(section, "disp_accel_factor"), pSettings->r_float(section, "disp_crouch_factor"),
-            pSettings->r_float(section, "disp_crouch_no_acc_factor")};
-    }();
-    const int mode = GetCurrentFireMode();
-    xray::combat::FireRules rules{mode, misfireUseOldFormula,
-        xray::combat::shotInterval(mode, bCycleDown, 0, fOneShotTime, fModeShotTime),
-        xray::combat::shotInterval(mode, bCycleDown, 2, fOneShotTime, fModeShotTime),
-        conditionDecreasePerShot, conditionDecreasePerQueueShot, {},
-        fvHitPower[egdMaster] * cur_silencer_koef.hit_power, fHitImpulse * cur_silencer_koef.hit_impulse,
-        IsSilencerAttached(), fireDistance, m_fStartBulletSpeed * cur_silencer_koef.bullet_speed,
-        m_fBaseDispersionedBulletsSpeed * cur_silencer_koef.bullet_speed,
-        GetAirResistanceFactor(), static_cast<unsigned>(m_iBaseDispersionedBulletsCount),
-        {fireDispersionBase * cur_silencer_koef.fire_dispersion, fireDispersionConditionFactor,
-            actorDispersion[0] * Get_PDM_Base(), actorDispersion[1], actorDispersion[2] * Get_PDM_Vel_F(),
-            actorDispersion[3] * Get_PDM_Accel_F(), actorDispersion[4] * Get_PDM_Crouch(),
-            actorDispersion[5] * Get_PDM_Crouch_NA()}};
-    if (misfireUseOldFormula)
-    {
-        rules.misfire[0] = misfireProbability;
-        rules.misfire[1] = misfireConditionK;
-    }
-    else
-    {
-        rules.misfire[0] = misfireStartCondition;
-        rules.misfire[1] = misfireEndCondition;
-        rules.misfire[2] = misfireStartProbability;
-        rules.misfire[3] = misfireEndProbability;
-    }
-    return rules;
-}
-#endif
 
 void CWeaponMagazined::load(IReader& input_packet)
 {

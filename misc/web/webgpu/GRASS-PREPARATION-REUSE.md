@@ -45,7 +45,7 @@ and upload through the reusable arena; compute gathers themselves still run.
 
 ## Validation and evidence
 
-- Optimized web-multiplayer-release build completed successfully.
+- Optimized web-release build completed successfully.
 - 38 targeted tests passed: detail storage/cache/instancing, stream/material and
   backend tests. Includes frame/visibility/storage invalidation, parameter slice
   lifetime, arena rollover and resource replacement.
