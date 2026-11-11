@@ -6,8 +6,9 @@ export class DetailStorage {
   constructor(renderer,{maxPageRecords,softBytes=256*1024*1024}={}) {
     this.r=renderer;this.device=renderer.device;this.entries=new Map();this.pages=[];
     this.maxPageRecords=Math.min(2**DETAIL_PAGE_SHIFT,maxPageRecords||2**Math.floor(Math.log2(this.device.limits.maxStorageBufferBindingSize/64)));
+    this.recordScratch=new Uint8Array(0);
     this.softBytes=softBytes;this.pageGeneration=0;this.bytes=0;this.clock=0;this.sets=0;
-    this.metrics={recordBytes:0,indexBytes:0,evictions:0,growths:0,gathers:0,parameterSlices:0,bindGroups:0};
+    this.metrics={recordBytes:0,indexBytes:0,evictions:0,growths:0,gathers:0,parameterSlices:0,bindGroups:0,expandedRecords:0,expandedRanges:0};
     this.empty=this.device.createBuffer({size:64,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
   }
   free(page,offset,size) {
@@ -74,9 +75,13 @@ export class DetailStorage {
       if(!entry){entry={id,...this.allocate(n,protectedIds),lo:-1,hi:-1};this.entries.set(id,entry);}
       if(entry.lo!==lo||entry.hi!==hi||entry.count!==n) {
         if(this.r.encoder&&entry.owner?.detailComputeEncoder===this.r.encoder)this.r.flush();
-        const bytes=new Uint8Array(heap.subarray(pointer,pointer+n*64));
-        this.device.queue.writeBuffer(this.pages[entry.page].gpu,entry.offset*64,bytes);
-        this.metrics.recordBytes+=bytes.length;entry.lo=lo;entry.hi=hi;entry.count=n;
+        // WebGPU snapshots writeBuffer input synchronously. Reuse an unshared
+        // staging allocation rather than allocating one snapshot per dirty slot.
+        const byteCount=n*64;
+        if(this.recordScratch.length<byteCount)this.recordScratch=new Uint8Array(power2(byteCount));
+        this.recordScratch.set(heap.subarray(pointer,pointer+byteCount));
+        this.device.queue.writeBuffer(this.pages[entry.page].gpu,entry.offset*64,this.recordScratch.subarray(0,byteCount));
+        this.metrics.recordBytes+=byteCount;entry.lo=lo;entry.hi=hi;entry.count=n;
       }
       entry.owner=owner;entry.indexAddress=indexAddress;entry.seenAddress=seenAddress;entry.used=++this.clock;
       words[indexAddress/4]=entry.page*2**DETAIL_PAGE_SHIFT+entry.offset;
@@ -165,20 +170,23 @@ export class DetailStorage {
       compute:{module:this.device.createShaderModule({code,label:'X-Ray detail slot expansion'}),entryPoint:'main'}});
     return this.rangeCompute;
   }
-  gatherRanges(token,ranges,count,changed) {
+  gatherRanges(token,ranges,count,changed,partial=false) {
     if(!count)return;
     if(!Number.isSafeInteger(count)||count<0||ranges.length%4)throw Error('Invalid detail ranges');
     const info=this.r.info(token);
+    // Partial ranges address an already complete output with identical membership.
+    if(partial&&(!changed||!ranges.length||!info.gpu||info.detailRangeCount!==count||info.gpu.size<count*64))
+      throw Error('Partial detail update requires existing output');
     if(!info.detailSet){info.detailSet=true;this.sets++;}
     if(changed||!info.detailRangeBuffer) {
-      let end=0;
+      let end=0, expandedRecords=0;
       for(let i=0;i<ranges.length;i+=4) {
         const [source,n,first,reserved]=ranges.subarray(i,i+4);
         const page=this.pages[source>>>21];
-        if(!page||!n||first!==end||reserved||((source&2097151)+n)>page.capacity)throw Error('Invalid detail range span');
-        end+=n;
+        if(!page||!n||(partial?first<end:first!==end)||(partial&&first+n>count)||reserved||((source&2097151)+n)>page.capacity)throw Error('Invalid detail range span');
+        end=first+n;expandedRecords+=n;
       }
-      if(end!==count)throw Error('Detail range count mismatch');
+      if(!partial&&end!==count)throw Error('Detail range count mismatch');
       if(this.r.encoder&&info.detailComputeEncoder===this.r.encoder)this.r.flush();
       const size=power2(Math.max(16,ranges.byteLength));
       if(!info.detailRangeBuffer||info.detailRangeBuffer.size<size){
@@ -186,7 +194,7 @@ export class DetailStorage {
         info.detailRangeBuffer=this.device.createBuffer({size,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
       }
       this.device.queue.writeBuffer(info.detailRangeBuffer,0,ranges);
-      info.detailRangeBytes=ranges.byteLength;info.detailRangeCount=count;
+      info.detailRangeBytes=ranges.byteLength;info.detailRangeCount=count;info.detailExpandedRecords=expandedRecords;
       this.metrics.indexBytes+=ranges.byteLength;
     }
     if(info.detailRangeCount!==count)throw Error('Unchanged detail range count mismatch');
@@ -230,12 +238,15 @@ export class DetailStorage {
       }
     }
     windows.length=windowCount;
-    this.r.endPass();const pass=this.r.enc().beginComputePass();pass.setPipeline(this.rangePipeline());
+    this.metrics.expandedRecords+=info.detailExpandedRecords;this.metrics.expandedRanges+=info.detailRangeBytes/16;
+    let pass=this.r.detailComputePass;
+    if(!pass){this.r.endPass();pass=this.r.detailComputePass=this.r.enc().beginComputePass();this.metrics.computePasses=(this.metrics.computePasses||0)+1;}
+    pass.setPipeline(this.rangePipeline());
     for(const window of windows){
       pass.setBindGroup(0,window.group,[window.offset]);
       const groups=info.detailRangeBytes/16;pass.dispatchWorkgroups(Math.min(65535,groups),Math.ceil(groups/65535));
     }
-    pass.end();info.detailComputeEncoder=this.r.encoder;this.encoder=this.r.encoder;this.metrics.gathers++;
+    info.detailComputeEncoder=this.r.encoder;this.encoder=this.r.encoder;this.metrics.gathers++;
   }
   release(info) {
     if(!info.detailSet)return false;info.detailSet=false;

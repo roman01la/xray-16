@@ -15,9 +15,21 @@ test('detail cache invalidates only affected object/classes, retaining unchanged
 #include <vector>
 #include <array>
 #include <cassert>
+#include <random>
+#include <algorithm>
 using namespace xray::detail_cache;
-struct List {uint64_t revision=0,uploadedRevision=0;uint32_t storageIndex=0;size_t length=1;size_t size()const{return length;}};
+struct List {uint64_t revision=0,uploadedRevision=0;uint32_t storageIndex=0,visibleFrame=0;size_t length=1;size_t size()const{return length;}};
 int main() {
+ struct Epoch {std::vector<uint64_t> revisions;size_t cursor=0;uint64_t version=0;bool changed=false;} epoch;
+ List v0,v1;std::vector<List*> produced;
+ auto publish=[&](std::initializer_list<List*> next){epoch.cursor=0;epoch.changed=false;for(auto* item:next)appendVisible(produced,epoch,item,42);finishVisible(produced,epoch);};
+ publish({&v0,&v1});assert(epoch.version==1&&v0.visibleFrame==42);
+ publish({&v0,&v1});assert(epoch.version==1);
+ ++v1.revision;publish({&v0,&v1});assert(epoch.version==2);
+ publish({&v1,&v0});assert(epoch.version==3);
+ publish({&v0});assert(epoch.version==4&&epoch.revisions.size()==1);
+ publish({});assert(epoch.version==5&&produced.empty());publish({});assert(epoch.version==5);
+ publish({&v0});assert(epoch.version==6);
  PreparedFrame prepared;
  assert(!prepared.matches(0,0,1));
  prepared={7,1,42,3};
@@ -50,6 +62,29 @@ int main() {
  assert(!updateSignature(visible[0],saved[0],count));assert(count==2);
  slots[0][0].storageIndex=uint32_t(-1);assert(needsUpload(slots[0][0])); // eviction
  slots[0][0].storageIndex=900;assert(updates()==1);assert(updates()==0);
+ // Fuse membership checks into the upload scan; allocations may change afterward.
+ std::array<List,64> records{};
+ std::vector<List*> members;
+ std::vector<uint32_t> fused, reference;
+ std::mt19937 rng(0x51a7);
+ for(uint32_t i=0;i<records.size();++i){records[i].storageIndex=i*16;members.push_back(&records[i]);}
+
+ for(int round=0;round<2000;++round){
+   if(round%3==0 && members.size()>1)std::swap(members[rng()%members.size()],members[rng()%members.size()]);
+   if(round%7==0 && members.size()>4)members.pop_back();
+   if(round%11==0 && members.size()<records.size())members.push_back(&records[members.size()]);
+   auto* changed=members[rng()%members.size()];++changed->revision;changed->length=1+rng()%4;
+   bool dirty=fused.size()!=members.size()*3;fused.resize(members.size()*3);
+   uint32_t total=0;
+   for(size_t i=0;i<members.size();++i){dirty|=updateSignatureEntry(fused.data()+i*3,*members[i]);total+=members[i]->size();}
+   // Simulate allocation changes inside upload, after the first comparison.
+   changed->storageIndex=round*32;
+   for(size_t i=0;i<members.size();++i)if(members[i]==changed)dirty|=updateSignatureEntry(fused.data()+i*3,*members[i]);
+   uint32_t expectedTotal=0;bool expected=updateSignature(members,reference,expectedTotal);
+   assert(fused==reference);assert(total==expectedTotal);assert(!expected||dirty);
+   for(size_t i=0;i<members.size();++i)assert(!updateSignatureEntry(fused.data()+i*3,*members[i]));
+ }
+
 }
 
 `);

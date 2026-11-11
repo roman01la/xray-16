@@ -1,5 +1,8 @@
 #include "stdafx.h"
 
+#ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
+#endif
 #include "r2_R_sun_support.h"
 #include "xrCore/Threading/ParallelFor.hpp"
 
@@ -314,6 +317,10 @@ void render_sun::render()
                 dsgraph.cmd_list.set_xform_world(Fidentity);
                 dsgraph.cmd_list.set_xform_view(Fidentity);
                 dsgraph.cmd_list.set_xform_project(sun->X.D[cascade_ind].combine);
+#ifdef XR_PLATFORM_WEB
+                static const bool audit = strstr(Core.Params,"-web_shadow_audit") != nullptr;
+                if(audit) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=$0;},cascade_ind+1);
+#endif
                 dsgraph.render_graph(0);
                 if (ps_r2_ls_flags.test(R2FLAG_SUN_DETAILS))
                     RImplementation.Details->Render(dsgraph.cmd_list);
@@ -326,6 +333,9 @@ void render_sun::render()
                     dsgraph.render_graph(1); // normal level, secondary priority
                     dsgraph.render_sorted(); // strict-sorted geoms
                 }
+#ifdef XR_PLATFORM_WEB
+                if(audit) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=0;});
+#endif
             }
 
             if (!RImplementation.o.support_rt_arrays)

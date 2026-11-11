@@ -10,21 +10,23 @@ passes, 1.045/1.390 million grass instances summed across passes, 63/63 buffer
 uploads, 67/127 KB changed grass records, 0/774 KB compact range uploads.
 CPU render averages: 5.05/8.12 ms. Instance totals are not unique visible plants.
 
-1. Incremental GPU gather. glDetailManager_VS calls GatherWebGPUDetailRanges
+1. Incremental GPU gather (implemented and measured; see
+   [GRASS-PARTIAL-UPDATES.md](GRASS-PARTIAL-UPDATES.md)). glDetailManager_VS calls GatherWebGPUDetailRanges
    for any dirty content even when membership is unchanged; gatherRanges then
    expands every slot in the batch. Keep the current contiguous vertex input,
    patch only dirty destination spans when membership is unchanged, and retain
    full expansion for membership changes. Track allocation changes, count
    changes, eviction and source generations. This avoids the previously failed
    vertex-storage-fetch design. Measure copied bytes and GPU gather duration.
-2. Native preparation reuse. hw_Render_dump scans every visible list for dirty
-   records, then updateSignature scans it again and rewrites the signature even
-   when unchanged. First combine these traversals; then investigate exact
+2. Native preparation reuse. The upload/signature traversals are now combined,
+   with only potentially reallocated dirty entries rechecked after upload.
+   Unchanged signature entries are no longer rewritten. Next investigate exact
    visibility generations at the producer so unchanged lists can bypass them.
    Reuse between passes only when visibility and storage generations match.
    Historical preparation cost was roughly 2 ms stationary / 3.8 ms turning;
    that is the entire scope, not an achievable saving estimate.
-3. Grass shadow workload. The sun-near pass renders Details with the shadow
+3. Grass shadow workload (measured in [GRASS-SHADOW-PIXELS.md](GRASS-SHADOW-PIXELS.md):
+   ~1.34 ms/frame net cost; three full grass sets submitted to cascades). The sun-near pass renders Details with the shadow
    transform. Audit which grass can actually contribute to that shadow map,
    and filter conservatively against its caster volume. Camera visibility
    alone is not safe: offscreen grass can cast visible shadows. Add pass-level
@@ -35,7 +37,8 @@ CPU render averages: 5.05/8.12 ms. Instance totals are not unique visible plants
    storage and cache bindings by allocation generation. Investigate preparing
    dependency-independent gathers together before their first consuming draw.
    Never move writes across readers of the same output or source allocation.
-5. Alpha-tested vegetation pixel cost. Measure depth/fragment-heavy passes
+5. Alpha-tested vegetation pixel cost (the current forest-view raster-area probe
+   showed only ~0.18 ms/frame benefit at 6.25% coverage; lower priority here). Measure depth/fragment-heavy passes
    separately before considering an alpha-tested depth prepass. It doubles
    geometry work and texture sampling in the prepass and can regress; no
    recommendation to enable it without a measured win.
@@ -219,3 +222,30 @@ opportunities appeared in the sampled draws. The two-frame submission gate was
 reverted for throughput regression. Conditional terrain-layer sampling is
 promising in a standalone GPU fixture but still requires real game mask/full-
 shader validation; it is not enabled in production.
+
+
+## Grass cascade filtering experiment
+
+[CPU-side cascade filtering](GRASS-SHADOW-PIXELS.md#cascade-filter-experiment)
+removed 82% of submitted grass shadow triangles, but repeated reference captures
+were about 100 FPS versus the earlier 109–114 FPS. Keep the partial-gather and
+fused-preparation improvements; the CPU culling prototype was deleted after the experiment. Next candidate is GPU-side filtering/compaction to avoid
+extra CPU lists and per-pass bookkeeping. No production performance claim.
+
+
+GPU-side follow-up is now measured in the same report: approximately 83% fewer
+submitted shadow triangles, reference 113–119 FPS versus earlier 109–114 FPS.
+Retained as an isolated experiment. Next work is production integration and
+lifecycle/boundary validation, not another CPU culling implementation.
+
+## Five follow-up experiments (2026-11-11)
+
+See [the complete results](FIVE-PERFORMANCE-EXPERIMENTS.md). Retained shared grass
+compute passes (~17 gathers in <1 compute pass/frame), exact producer epochs,
+and zero-weight terrain-layer sampling. Throughput is about 118 FPS in the tested
+view; additional producer/terrain gains are not established. Non-grass sun-shadow
+omission had little throughput effect, so no shadow-map cache was added. A 100 FPS
+cap reduced queue-completion delay and tail intervals but achieved ~89 FPS; defaults
+remain unchanged. CPU profiling did not reproduce the unprofiled 100 ms spikes.
+Next: low-overhead per-frame attribution of a reproduced spike and lifecycle/
+cross-vendor validation, not another speculative synchronization gate.

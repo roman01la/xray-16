@@ -366,14 +366,14 @@ void UpdateWebGPUDetailRecords(GLuint buffer, const u32* descriptors, u32 slotCo
 {
     xrUpdateWebGPUDetailRecords(buffer, descriptors, slotCount, visible, visibleCount);
 }
-EM_JS(int, xrGatherWebGPUDetailRanges, (unsigned buffer, const unsigned* ranges, unsigned rangeCount, unsigned count, bool changed), {
+EM_JS(int, xrGatherWebGPUDetailRanges, (unsigned buffer, const unsigned* ranges, unsigned rangeCount, unsigned count, bool changed, bool partial), {
     globalThis.__xrayWebGPU.gatherDetailRanges(globalThis.__xrayWebGPUHandles.buffers[buffer],
-        HEAPU32.subarray(Number(ranges)/4,Number(ranges)/4+rangeCount*4),count,changed);
+        HEAPU32.subarray(Number(ranges)/4,Number(ranges)/4+rangeCount*4),count,changed,partial);
     return 1;
 });
-void GatherWebGPUDetailRanges(GLuint buffer, const u32* ranges, u32 rangeCount, u32 instanceCount, bool changed)
+void GatherWebGPUDetailRanges(GLuint buffer, const u32* ranges, u32 rangeCount, u32 instanceCount, bool changed, bool partial)
 {
-    xrGatherWebGPUDetailRanges(buffer, ranges, rangeCount, instanceCount, changed);
+    xrGatherWebGPUDetailRanges(buffer, ranges, rangeCount, instanceCount, changed, partial);
 }
 EM_JS(int, xrGatherWebGPUDetailSet, (unsigned buffer, const unsigned* indices, unsigned count, bool changed), {
     globalThis.__xrayWebGPU.gatherDetailSet(globalThis.__xrayWebGPUHandles.buffers[buffer],

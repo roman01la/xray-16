@@ -87,3 +87,62 @@ Pending manual visual checks:
 
 Animation update rates and production frame pacing have not changed. The terrain
 shader prototype is not enabled in the game.
+
+## Incremental grass output updates (2026-11-11)
+
+Automated coverage checks full-to-partial updates, unchanged output rows, disjoint
+patches, cross-window patches, successive patches, invalid ranges, allocation and
+count guards. The GPU fixture verifies 371,168 output floats. Dense outdoor on/off/on
+captures retain identical submitted instance counts and show no obvious missing grass.
+A four-direction turn run exercised full membership rebuilds with zero GPU validation
+errors; the final view was inspected.
+
+Remaining manual checks: walk through dense vegetation across slot boundaries,
+change density/radius then resume, save/load, level travel, and shadow/flashlight
+transitions. Verify no stale blades, holes or old transforms. Density, distance,
+LOD and shadow rules are unchanged; membership changes still rebuild complete outputs.
+
+Preparation follow-up: fused signature/upload traversal and reusable upload staging
+passed 105 tests, the real-GPU gather fixture, and stationary/turned game captures
+with zero GPU validation errors. Allocation changes are checked after upload.
+Keep the walking/reset/travel cases above pending; static screenshots do not
+validate every lifetime or scene transition.
+
+
+### Deferred grass cascade-filter experiment
+
+The CPU cascade-filter prototype was deleted and is **not active** in the retained build.
+It reduced submitted shadow triangles but regressed reference throughput. Before
+any future GPU-side version is enabled, compare low-sun shadows, moving cascade
+boundaries, slopes, maximum grass height/wind, spotlights, detail-setting resets,
+and travel. The prototype's stationary/turned screenshots and randomized bound
+tests do not replace these checks. See `GRASS-SHADOW-PIXELS.md` for measurements.
+
+
+### GPU grass shadow-filter experiment (not enabled by default)
+
+- GPU fixture: ten cases / 900 instances passed; exact retained rows and indirect
+  arguments checked against CPU bounds tests.
+- Private release capture: reference, turned and repeated reference; zero WebGPU
+  validation errors. Main-view counts unchanged; indirect shadow counts reduced.
+- Still pending before normal integration: low sun, walking/turning at cascade
+  edges, slopes, weather/wind transitions, detail-quality changes, device reset,
+  map travel/unload, spotlights and split-scene rendering. Also verify bounded
+  buffer/cache lifetime and fallback for device storage limits.
+- Evidence and timing limits: `GRASS-SHADOW-PIXELS.md`, GPU experiment section.
+
+### Batched preparation, producer epochs and terrain layers
+
+See `FIVE-PERFORMANCE-EXPERIMENTS.md` for measured results and retained changes.
+
+- Automated: 108 tests; GPU gathers compare 371,168 floats; full terrain shader
+  compares 6,144 float outputs exactly; game captures report zero GPU errors.
+- Pending: walk through grass slot boundaries; turn rapidly; pause/resume; change
+  density/radius/height; travel and reload; confirm unchanged visibility does not
+  leave stale instances after content changes or resets.
+- Inspect terrain seams, distant mip transitions, blended and single-layer regions,
+  normals/gloss and positive/negative texture LOD bias on macOS and Windows/NVIDIA.
+- Capture unprofiled frame spikes and NPC-heavy scenes separately; CPU profiling
+  did not reproduce the >100 ms camera-change spikes. No stall-fix claim.
+- Non-grass shadow omission and 100 FPS cap were diagnostics only. Production
+  shadows and pacing defaults are unchanged. No deployment in this iteration.

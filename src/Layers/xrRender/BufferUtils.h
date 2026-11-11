@@ -62,7 +62,7 @@ void DeleteWebGPUTextures(u32 count, const GLuint* textures);
 void CreateWebGPUBuffer(GLuint* buffer, const void* data, u32 size);
 void UploadWebGPUBuffer(GLuint buffer, const void* data, u32 size, u32 offset = 0, bool replace = true);
 void UpdateWebGPUDetailRecords(GLuint buffer, const u32* descriptors, u32 slotCount, const void* visible, u32 visibleCount);
-void GatherWebGPUDetailRanges(GLuint buffer, const u32* ranges, u32 rangeCount, u32 instanceCount, bool changed);
+void GatherWebGPUDetailRanges(GLuint buffer, const u32* ranges, u32 rangeCount, u32 instanceCount, bool changed, bool partial);
 void GatherWebGPUDetailSet(GLuint buffer, const u32* indices, u32 instanceCount, bool changed);
 void DeleteWebGPUBuffer(GLuint buffer);
 int WebGPUQuery(u32 operation, GLuint query = 0);

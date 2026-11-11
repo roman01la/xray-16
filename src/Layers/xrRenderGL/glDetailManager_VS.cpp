@@ -59,6 +59,18 @@ void CDetailManager::hw_Render(CBackend& cmd_list)
     // Setup geometry and DMA
     cmd_list.set_Geometry(hw_Geom);
 
+#ifdef XR_PLATFORM_WEB
+    // Prepare every material before the first consuming draw so gathers can
+    // share a compute pass. Each batch retains its original draw order.
+    {
+        webPrepareOnly=true;
+        const Fvector4 unused{};
+        hw_Render_dump(cmd_list,unused,unused,unused,1,0);
+        hw_Render_dump(cmd_list,unused,unused,unused,2,0);
+        hw_Render_dump(cmd_list,unused,unused,unused,0,1);
+        webPrepareOnly=false;
+    }
+#endif
     // Wave0
     float scale = 1.f / float(quant);
     Fvector4 wave;
@@ -130,12 +142,21 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
             auto& batch = batches[O];
             const double preparationStart = profileDetails ? emscripten_get_now() : 0.0;
             u32 instanceCount = batch.prepared.count;
-            if (!batch.buffer || !batch.prepared.matches(Device.dwFrame, web_visibilityGeneration, hw_storageGeneration))
+            const u64 producerVersion = web_visibleState[var_id][O].version;
+            const bool sameProducer = batch.producerVersion==producerVersion && batch.prepared.storage==hw_storageGeneration;
+            if (!batch.buffer || (!sameProducer && !batch.prepared.matches(Device.dwFrame, web_visibilityGeneration, hw_storageGeneration)))
             {
                 batch.descriptors.clear();
                 batch.dirtySlots.clear();
+                batch.dirtyRanges.clear();
+                batch.dirtySignatureOffsets.clear();
+                bool indicesChanged = batch.signature.size() != vis.size() * 3;
+                batch.signature.resize(vis.size() * 3);
+                u32 destination = 0, signatureOffset = 0;
                 for (auto* items : vis)
                 {
+                    const u32 first = destination;
+                    destination += static_cast<u32>(items->size());
                     items->visibleFrame = Device.dwFrame;
                     if (items->storageGeneration != hw_storageGeneration)
                     {
@@ -143,6 +164,9 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                         items->storageIndex = u32(-1);
                         items->uploadedRevision = u64(-1);
                     }
+                    const u32 currentSignature = signatureOffset;
+                    signatureOffset += 3;
+                    indicesChanged |= xray::detail_cache::updateSignatureEntry(batch.signature.data() + currentSignature, *items);
                     if (!xray::detail_cache::needsUpload(*items))
                         continue;
                     if (items->packedRevision != items->revision)
@@ -169,16 +193,26 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                     batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->storageIndex)));
                     batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->visibleFrame)));
                     batch.dirtySlots.push_back(items);
+                    batch.dirtySignatureOffsets.push_back(currentSignature);
+                    batch.dirtyRanges.insert(batch.dirtyRanges.end(), {0, static_cast<u32>(items->size()), first, 0});
                 }
                 if (!batch.buffer) CreateWebGPUBuffer(&batch.buffer, nullptr, 0);
                 const bool changed = !batch.dirtySlots.empty();
                 if (changed)
                 {
                     UpdateWebGPUDetailRecords(batch.buffer, batch.descriptors.data(), static_cast<u32>(batch.dirtySlots.size()), vis.data(), static_cast<u32>(vis.size()));
-                    for (auto* items : batch.dirtySlots)
+                    for (u32 i = 0; i < batch.dirtySlots.size(); ++i)
+                    {
+                        auto* items = batch.dirtySlots[i];
                         items->uploadedRevision = items->revision;
+                        batch.dirtyRanges[i * 4] = items->storageIndex;
+                        // Upload can allocate or relocate this source range. Other
+                        // visible ranges are protected from eviction by the upload.
+                        indicesChanged |= xray::detail_cache::updateSignatureEntry(
+                            batch.signature.data() + batch.dirtySignatureOffsets[i], *items);
+                    }
                 }
-                const bool indicesChanged = xray::detail_cache::updateSignature(vis, batch.signature, instanceCount);
+                instanceCount = destination;
                 if (indicesChanged)
                 {
                     batch.indices.resize(vis.size()*4);
@@ -193,17 +227,24 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                         first += static_cast<u32>(items->size());
                     }
                 }
-                if (changed || indicesChanged)
-                    GatherWebGPUDetailRanges(batch.buffer, batch.indices.data(), static_cast<u32>(vis.size()), instanceCount, indicesChanged);
+                if (indicesChanged)
+                    GatherWebGPUDetailRanges(batch.buffer, batch.indices.data(), static_cast<u32>(vis.size()), instanceCount, true, false);
+                else if (changed)
+                    // Membership is unchanged: retain all unaffected output records.
+                    GatherWebGPUDetailRanges(batch.buffer, batch.dirtyRanges.data(), static_cast<u32>(batch.dirtySlots.size()), instanceCount, true, true);
                 changedBatches += changed || indicesChanged;
                 reusedBatches += !changed && !indicesChanged;
                 membershipChanges += indicesChanged;
                 contentChanges += changed;
                 batch.prepared = {Device.dwFrame, hw_storageGeneration, instanceCount, web_visibilityGeneration};
+                batch.producerVersion=producerVersion;
             }
             else
                 ++reusedBatches;
             if (profileDetails) preparationMs += emscripten_get_now() - preparationStart;
+#endif
+#ifdef XR_PLATFORM_WEB
+            if (!webPrepareOnly)
 #endif
             for (u32 iPass = 0; iPass < Object.shader->E[lod_id]->passes.size(); ++iPass)
             {

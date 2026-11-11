@@ -35,6 +35,7 @@ for (const file of [
   "queue-audit.js",
   "detail-instancing.js",
   "detail-storage.js",
+  "terrain-zero-layers.js",
   "tessellation-cache.js",
   "tessellation-core.js",
   "tessellation-patterns.js",

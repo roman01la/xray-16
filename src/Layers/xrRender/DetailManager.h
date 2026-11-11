@@ -162,6 +162,11 @@ public:
     DetailSlot DS_empty;
 
     DetailVec objects;
+#ifdef XR_PLATFORM_WEB
+    struct WebVisibility { xr_vector<u64> revisions; size_t cursor=0; u64 version=0; bool changed=false; };
+    xr_vector<WebVisibility> web_visibleState[3];
+    bool webPrepareOnly = false;
+#endif
     vis_list m_visibles[3]; // 0=still, 1=Wave1, 2=Wave2
 
 #ifndef _EDITOR
@@ -201,10 +206,11 @@ public:
 #ifdef XR_PLATFORM_WEB
     struct WebInstances
     {
-        xr_vector<u32> descriptors, signature, indices;
+        xr_vector<u32> descriptors, signature, indices, dirtyRanges, dirtySignatureOffsets;
         xr_vector<SlotItemVec*> dirtySlots;
         u32 buffer = 0;
         xray::detail_cache::PreparedFrame prepared;
+        u64 producerVersion = u64(-1);
     };
     xr_vector<WebInstances> hw_instances[3];
     u32 hw_storageGeneration = 1;

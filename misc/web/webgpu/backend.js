@@ -1,5 +1,6 @@
 import { QueueAudit } from "./queue-audit.js";
 import { FluidRenderer } from "./fluid-renderer.js";
+import { skipZeroTerrainLayers } from "./terrain-zero-layers.js";
 import { DetailStorage } from "./detail-storage.js";
 import { TessellationCache } from "./tessellation-cache.js";
 import { installDetailInstancing } from "./detail-instancing.js";
@@ -282,6 +283,7 @@ export class GPUFrontend {
   destroyFluidVolume(id) { this.fluids?.destroy(id); }
   renderFluidVolume(id, frame) { this.fluids?.render(id, frame); }
   endPass() {
+    if(this.detailComputePass){this.detailComputePass.end();this.detailComputePass=null;}
     if (this.pass) {
       this.occlusion.suspend(this.pass);
       this.pass.end();
@@ -547,6 +549,7 @@ export class GPUFrontend {
   }
   link(program) {
     const meta = program.meta;
+    skipZeroTerrainLayers(meta);
     installDetailInstancing(meta);
     meta.activeSamplerIndices = meta.samplers.map((_,n)=>n).filter(n=>meta.activeBindings.includes(1+n*2));
     meta.activeBindingSet = new Set(meta.activeBindings);
@@ -1006,10 +1009,10 @@ export class GPUFrontend {
     this.detailArena??=new DetailStorage(this);
     this.detailArena.upload(token,descriptors,heap,words,visible);
   }
-  gatherDetailRanges(token, ranges, count, changed) {
+  gatherDetailRanges(token, ranges, count, changed, partial = false) {
     this.flushNativeDraws?.();
     this.detailArena??=new DetailStorage(this);
-    this.detailArena.gatherRanges(token,ranges,count,changed);
+    this.detailArena.gatherRanges(token,ranges,count,changed,partial);
   }
   gatherDetailSet(token, indices, changed) {
     this.flushNativeDraws?.();
@@ -2107,7 +2110,7 @@ export class GPUFrontend {
       for (const k in profile) profile[k] = 0;
       if(this.detailArena)Object.assign(diagnostics,{detailStorageBytes:this.detailArena.bytes,
         detailStorageSlots:this.detailArena.entries.size,detailRecordUploadBytes:this.detailArena.metrics.recordBytes,
-        detailIndexUploadBytes:this.detailArena.metrics.indexBytes,detailStorageEvictions:this.detailArena.metrics.evictions});
+        detailIndexUploadBytes:this.detailArena.metrics.indexBytes,detailExpandedRecords:this.detailArena.metrics.expandedRecords,detailExpandedRanges:this.detailArena.metrics.expandedRanges,detailStorageEvictions:this.detailArena.metrics.evictions});
       diagnostics.passBatchEnabled = this.passBatchEnabled;
       diagnostics.bindingBatchEnabled = this.bindingBatchEnabled;
       diagnostics.stateBatchEnabled = this.stateBatchEnabled;

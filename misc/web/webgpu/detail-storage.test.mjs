@@ -8,7 +8,7 @@ function fixture() {
   let id=0;const writes=[],groups=[],dispatches=[];
   const r={objects:new WeakMap(),encoder:null,retired:[],flushes:0,
     info(t){if(!this.objects.has(t))this.objects.set(t,{});return this.objects.get(t)},
-    flush(){this.flushes++;this.encoder=null},endPass(){},
+    flush(){this.endPass();this.flushes++;this.encoder=null},endPass(){this.detailComputePass?.end();this.detailComputePass=null},
     enc(){return this.encoder??=this.device.createCommandEncoder()},
     device:{limits:{maxStorageBufferBindingSize:128*1024*1024},
       createBuffer({size}){const data=new ArrayBuffer(size);return {id:++id,size,getMappedRange(){return data},unmap(){},destroy(){this.destroyed=true}}},
@@ -118,4 +118,46 @@ test('cached range bindings ignore stale capacity beyond active range count',()=
  assert.equal(new Uint32Array(r.uniformStaging.buffer,oldOffset,4)[2],2);
  assert.equal(new Uint32Array(r.uniformStaging.buffer,window.offset,4)[2],1);
  assert.equal(r.info(token).detailRangeBuffer.size,32,'capacity still includes an unused range');
+});
+
+test('partial detail ranges retain complete output and reject invalid updates',()=>{
+ const {r,arena,upload,words,dispatches}=fixture(),token={};
+ upload(token,[[1,0,5],[2,0,5]]);
+ const all=new Uint32Array([words[2],5,0,0,words[4],5,5,0]);
+ assert.throws(()=>arena.gatherRanges(token,all,10,true,true),/existing output/);
+ arena.gatherRanges(token,all,10,true);const output=r.info(token).gpu;
+ const patch=new Uint32Array([words[4],2,7,0]);
+ arena.gatherRanges(token,patch,10,true,true);
+ assert.equal(r.info(token).gpu,output);assert.equal(r.info(token).detailRangeCount,10);
+ assert.deepEqual(dispatches.at(-1),[1,1]);
+ assert.throws(()=>arena.gatherRanges(token,patch,11,true,true),/existing output/);
+ assert.throws(()=>arena.gatherRanges(token,new Uint32Array([words[4],2,9,0]),10,true,true),/span/);
+ assert.throws(()=>arena.gatherRanges(token,new Uint32Array([words[4],2,7,0,words[2],2,8,0]),10,true,true),/span/);
+ arena.gatherRanges(token,all,10,true);assert.deepEqual(dispatches.at(-1),[2,1]);
+});
+
+test('record upload staging reuses allocation without changing queued snapshots',()=>{
+ const {arena,heap,writes,upload}=fixture(),token={};
+ heap.fill(17,1536,1536+128);upload(token,[[1,0,2]]);
+ const scratch=arena.recordScratch;const first=writes.at(-1);
+ heap.fill(29,1536,1536+128);upload(token,[[1,1,2]]);
+ assert.equal(arena.recordScratch,scratch);
+ assert.deepEqual(first.bytes,Array(128).fill(17));
+ assert.deepEqual(writes.at(-1).bytes,Array(128).fill(29));
+ heap.fill(41,1536,1536+320);upload(token,[[1,2,5]]);
+ assert.ok(arena.recordScratch.length>=320);assert.notEqual(arena.recordScratch,scratch);
+ assert.deepEqual(writes.at(-1).bytes,Array(320).fill(41));
+});
+
+test('independent range gathers share a compute pass until a reader boundary',()=>{
+ const {r,arena,words,upload}=fixture(),a={},b={};
+ upload(a,[[1,0,2]]);upload(b,[[2,0,2]]);
+ arena.gatherRanges(a,new Uint32Array([words[2],2,0,0]),2,true);
+ const pass=r.detailComputePass;
+ arena.gatherRanges(b,new Uint32Array([words[4],2,0,0]),2,true);
+ assert.equal(r.detailComputePass,pass);assert.equal(arena.metrics.computePasses,1);
+ r.endPass();assert.equal(r.detailComputePass,null);
+ arena.gatherRanges(a,new Uint32Array([words[2],2,0,0]),2,true);
+ assert.notEqual(r.detailComputePass,pass);assert.equal(arena.metrics.computePasses,2);
+ r.flush();assert.equal(r.detailComputePass,null);
 });

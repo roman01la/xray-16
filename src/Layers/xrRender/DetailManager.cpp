@@ -250,6 +250,9 @@ void CDetailManager::Unload()
     }
 
     objects.clear();
+#ifdef XR_PLATFORM_WEB
+    for(auto& states:web_visibleState)states.clear();
+#endif
     m_visibles[0].clear();
     m_visibles[1].clear();
     m_visibles[2].clear();
@@ -265,9 +268,20 @@ void CDetailManager::UpdateVisibleM()
     ++web_visibilityGeneration;
 #endif
 
+#ifdef XR_PLATFORM_WEB
+    for (int i=0;i<3;++i) {
+            web_visibleState[i].resize(objects.size());
+            for (auto& state:web_visibleState[i]) { state.cursor=0;state.changed=false; }
+        }
+    auto appendVisible = [&](u32 group,u32 object,SlotItemVec* items) {
+        auto& vis=m_visibles[group][object];auto& state=web_visibleState[group][object];
+        xray::detail_cache::appendVisible(vis,state,items,Device.dwFrame);
+    };
+#else
     for (int i = 0; i != 3; ++i)
         for (auto& vis : m_visibles[i])
             vis.clear();
+#endif
 
     CFrustum View;
     View.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
@@ -387,20 +401,38 @@ void CDetailManager::UpdateVisibleM()
                         continue;
                     if (!sp.r_items[0].empty())
                     {
+#ifdef XR_PLATFORM_WEB
+                        appendVisible(0,sp.id,&sp.r_items[0]);
+#else
                         m_visibles[0][sp.id].push_back(&sp.r_items[0]);
+#endif
                     }
                     if (!sp.r_items[1].empty())
                     {
+#ifdef XR_PLATFORM_WEB
+                        appendVisible(1,sp.id,&sp.r_items[1]);
+#else
                         m_visibles[1][sp.id].push_back(&sp.r_items[1]);
+#endif
                     }
                     if (!sp.r_items[2].empty())
                     {
+#ifdef XR_PLATFORM_WEB
+                        appendVisible(2,sp.id,&sp.r_items[2]);
+#else
                         m_visibles[2][sp.id].push_back(&sp.r_items[2]);
+#endif
                     }
                 }
             }
         }
     }
+#ifdef XR_PLATFORM_WEB
+    for (int i=0;i<3;++i) for(size_t o=0;o<objects.size();++o) {
+            auto& state=web_visibleState[i][o];auto& vis=m_visibles[i][o];
+            xray::detail_cache::finishVisible(vis,state);
+        }
+#endif
     RImplementation.BasicStats.DetailVisibility.End();
 }
 
