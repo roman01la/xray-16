@@ -8,6 +8,7 @@ class CWebFramePacer
 public:
     void SetVsyncPaced(bool paced);
     void SetFrameLimit(int hz);
+    int GetDisplayRefreshRate() const;
     bool IsFrameDue(double now);
 
 private:

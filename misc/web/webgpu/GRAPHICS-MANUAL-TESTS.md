@@ -169,3 +169,19 @@ is still pending: walk around lights/NPCs, use a flashlight, move through changi
 visibility, then save/load and leave the level. Confirm no `Native WebGPU is not
 initialized` trap and no persistent missing lights or shadows. Deployment is tracked in the release record; manual gameplay confirmation
 remains pending.
+
+### Auto FPS limit (2026-11-11)
+
+- Fresh settings: FPS dropdown shows Auto, VSync is on, menus stay capped at 60.
+- On a display above 60 Hz, enter gameplay and confirm Auto does not impose a
+  fixed 60 FPS limit (actual performance still depends on scene/GPU load).
+- Select each fixed cap; save/reload and confirm it is preserved. Existing saved
+  60/custom caps must remain unchanged when upgrading.
+- Select Auto, save/reload, and confirm the dropdown still shows Auto.
+- Move between different-refresh monitors; hide/show the tab and confirm pacing
+  settles without treating hidden-tab delays as refresh intervals.
+- Disable VSync with Auto selected: cap follows estimated display timing;
+  choose an explicit cap and confirm it overrides Auto.
+- Deterministic checks of the actual pacer methods passed Auto ticks at
+  60/75/120/144/165/240 Hz and fixed 30/60/100/120 caps on a 120 Hz timeline.
+  These checks do not substitute for multi-monitor/manual menu validation.

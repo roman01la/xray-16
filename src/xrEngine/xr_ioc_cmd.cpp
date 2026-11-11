@@ -829,7 +829,7 @@ extern int ps_vsync_interval;
 
 class CCC_WebFrameLimit final : public CCC_Token
 {
-    xr_token m_limits[6] = {{"30", 30}, {"60", 60}, {"100", 100}, {"120", 120}, {}, {}};
+    xr_token m_limits[7] = {{"Auto", 0}, {"30", 30}, {"60", 60}, {"100", 100}, {"120", 120}, {}, {}};
     TStatus m_custom{};
 
 public:
@@ -855,7 +855,7 @@ public:
     {
         for (auto option = GetToken(); option->name; ++option)
         {
-            if (EQ(option->name, args))
+            if (xr_stricmp(option->name, args) == 0)
             {
                 ps_fps_limit = option->id;
                 return;
@@ -864,7 +864,13 @@ public:
         InvalidSyntax();
     }
 
-    void GetStatus(TStatus& status) override { xr_itoa(ps_fps_limit, status, 10); }
+    void GetStatus(TStatus& status) override
+    {
+        if (ps_fps_limit == 0)
+            xr_strcpy(status, "Auto");
+        else
+            xr_itoa(ps_fps_limit, status, 10);
+    }
     void Save(IWriter*) override {} // rs_fps_limit owns the saved integer.
 };
 #endif
@@ -913,7 +919,11 @@ void CCC_Register()
 
     CMD1(CCC_Editor, "rs_editor");
 
+#ifdef XR_PLATFORM_WEB
+    CMD4(CCC_Integer, "rs_fps_limit", &ps_fps_limit, 0, 501);
+#else
     CMD4(CCC_Integer, "rs_fps_limit", &ps_fps_limit, 30, 501);
+#endif
     CMD4(CCC_Integer, "rs_fps_limit_in_menu", &ps_fps_limit_in_menu, 30, 501);
 #ifdef XR_PLATFORM_WEB
     CMD1(CCC_WebFrameLimit, "rs_fps_limit_preset");

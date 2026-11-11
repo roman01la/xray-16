@@ -31,7 +31,7 @@ ENGINE_API bool g_bBenchmark = false;
 string512 g_sBenchmarkName;
 
 #ifdef XR_PLATFORM_WEB
-int ps_fps_limit = 60;
+int ps_fps_limit = 0; // Auto: follow the browser display cadence.
 #else
 int ps_fps_limit = 501;
 #endif
@@ -43,7 +43,7 @@ CWebFramePacer g_webFramePacer;
 
 void CWebFramePacer::SetVsyncPaced(bool paced)
 {
-    if (paced && !displayHookInstalled)
+    if (!displayHookInstalled)
     {
         displayHookInstalled = true;
         MAIN_THREAD_EM_ASM({
@@ -51,15 +51,19 @@ void CWebFramePacer::SetVsyncPaced(bool paced)
             const samples = [];
             let last = 0;
             const tick = (now) => {
-                if (last > 0) {
+                // Hidden tabs and long gaps are not display refresh samples.
+                if (document.hidden) { last = 0; samples.length = 0; }
+                else if (last > 0 && now - last >= 1 && now - last <= 100) {
                     samples.push(now - last);
                     if (samples.length > 32)
                         samples.shift();
                     const sorted = samples.slice().sort((a, b) => a - b);
-                    growMemViews();
-                    Atomics.store(HEAP32, index, Math.round(sorted[sorted.length >> 2] * 1000));
+                    if (samples.length >= 8) {
+                        growMemViews();
+                        Atomics.store(HEAP32, index, Math.round(sorted[sorted.length >> 2] * 1000));
+                    }
                 }
-                last = now;
+                last = document.hidden ? 0 : now;
                 requestAnimationFrame(tick);
             };
             requestAnimationFrame(tick);
@@ -72,6 +76,12 @@ void CWebFramePacer::SetVsyncPaced(bool paced)
     lastTickRendered = false;
     refreshesSinceFrame = 0;
     frameLimitCredit = 0;
+}
+
+int CWebFramePacer::GetDisplayRefreshRate() const
+{
+    const auto period = displayPeriodUs.load(std::memory_order_relaxed);
+    return period > 0 ? std::clamp(int(1000000.0 / period + 0.5), 30, 500) : 60;
 }
 
 void CWebFramePacer::SetFrameLimit(int hz)
@@ -108,7 +118,8 @@ bool CWebFramePacer::IsFrameDue(double now)
 
     refreshesSinceFrame += refreshes;
     const u32 paced = ps_vsync_interval > 0 ? u32(ps_vsync_interval) : std::min(interval, maxInterval);
-    const double refreshesPerFrame = std::max(1.0, 1000.0 / (period * frameLimitHz));
+    // Auto adds no second cap on top of the display-paced callbacks.
+    const double refreshesPerFrame = frameLimitHz == 0 ? 1.0 : std::max(1.0, 1000.0 / (period * frameLimitHz));
     // Carry the fractional refresh forward for limits such as 100 on 120 Hz.
     frameLimitCredit = std::min(frameLimitCredit + refreshes, refreshesPerFrame + 1.0);
     lastTickRendered = refreshesSinceFrame >= paced && frameLimitCredit >= refreshesPerFrame;
@@ -432,6 +443,10 @@ void CRenderDevice::ProcessFrame()
     const u64 frameTime = frameEndTime - frameStartTime;
 
     int frameLimit = ps_fps_limit;
+#ifdef XR_PLATFORM_WEB
+    if (frameLimit == 0)
+        frameLimit = g_webFramePacer.GetDisplayRefreshRate();
+#endif
 
     if (GEnv.isDedicatedServer || IsHeadlessAlifeHost())
         frameLimit = g_svDedicateServerUpdateReate;
@@ -457,7 +472,9 @@ void CRenderDevice::ProcessFrame()
         // minimum delay. Vsync-off must not use the adaptive rAF frame pacer.
         emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
     g_webFramePacer.SetVsyncPaced(vsync);
-    g_webFramePacer.SetFrameLimit(frameLimit);
+    const bool autoDisplayLimit = ps_fps_limit == 0 && g_pGameLevel && !Paused() &&
+        !GEnv.isDedicatedServer && !IsHeadlessAlifeHost();
+    g_webFramePacer.SetFrameLimit(vsync && autoDisplayLimit ? 0 : frameLimit);
     EM_ASM({
         globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4, $5);
     }, cpuSimulationEnd - cpuFrameStart, cpuRenderEnd - cpuSimulationEnd,

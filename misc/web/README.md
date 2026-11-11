@@ -99,3 +99,18 @@ Open <http://localhost:8081/webgpu/?debug=1&autostart=0> to import your CoP fold
 manage save backups, or launch manually. The game-only developer view is at
 <http://localhost:8081/webgpu/>. This launcher is separate from the hosted
 unified game. [Unified deployment](../../server/deploy/FLY.md)
+
+## Automatic FPS limit
+
+Fresh browser settings default to **Auto** (`rs_fps_limit 0`), with VSync enabled.
+Auto follows the browser's presentation cadence instead of imposing the previous
+60 FPS gameplay cap. With VSync disabled, the measured display rate supplies the
+cap (60 FPS until timing samples are ready). Measurements follow the visible tab;
+they estimate browser presentation timing, not a guaranteed physical monitor mode.
+Menus retain their independent 60 FPS limit.
+
+The FPS dropdown also offers 30, 60, 100 and 120, and retains saved custom values.
+Saved numeric limits are not overwritten, including previously saved defaults:
+there is no historical flag distinguishing an explicitly chosen 60 from an old
+saved default. Existing players can select Auto once to opt in; zero persists in
+user.ltx and stays automatic across launches and monitor changes.
