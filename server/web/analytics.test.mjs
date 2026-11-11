@@ -101,7 +101,12 @@ test('gateway protects every dashboard read and persists accepted milestones',as
     assert.equal(distributedStatus,429);
     await close();
     base = await listen(password);
-    assert.equal(await (await dashboard()).text(),page);
+    const restored = await dashboard();
+    const restoredPage = await restored.text();
+    const nonce = /<script nonce="([^"]+)"/.exec(restoredPage)[1];
+    assert.ok(restored.headers.get('content-security-policy').includes("'nonce-" + nonce + "'"));
+    const withoutNonce = html => html.replace(/nonce="[^"]+"/g, 'nonce=""');
+    assert.equal(withoutNonce(restoredPage),withoutNonce(page));
     await close();
     base = await listen('');
     assert.equal((await dashboard()).status,404);

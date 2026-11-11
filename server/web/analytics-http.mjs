@@ -1,3 +1,4 @@
+import {performanceSortingScript} from './analytics-sort.mjs';
 import {analyticsEvents} from './analytics-events.mjs';
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -38,7 +39,7 @@ const labels = {
   load_save: 'Successful save loads',
 };
 
-export function analyticsDashboard({browsers,events,devices=[],performance=[]}) {
+export function analyticsDashboard({browsers,events,devices=[],performance=[]}, nonce = '') {
   const counts = new Map(events.map(row => [row.event,row]));
   const number = value => Number(value).toLocaleString('en');
   const rows = Object.entries(labels).map(([event,label]) => {
@@ -46,7 +47,23 @@ export function analyticsDashboard({browsers,events,devices=[],performance=[]}) 
     return `<tr><th scope="row">${label}</th><td>${number(row?.browsers ?? 0)}</td><td>${number(row?.total ?? 0)}</td></tr>`;
   }).join('\n');
   const escape=v=>String(v??'Unknown').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const perfRows=performance.map(r=>`<tr><td>${escape(r.os)}<br>${escape(r.browser)}</td><td>${escape(r.gpu)}</td><td>${escape(r.cores)}</td><td>${r.vsync?"On":"Off"} / ${Number(r.cap||0).toFixed(0)}</td><td>${escape(r.width)}×${escape(r.height)}</td><td>${number(r.users)}</td><td>${Number(r.minutes).toFixed(1)}</td><td>${Number(r.fps).toFixed(1)}</td><td>${Number(r.p95).toFixed(1)}</td><td>${number(r.stalls)}</td><td>${Number(r.worst).toFixed(1)}</td></tr>`).join('');
+  const numeric = value => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+  const cell = (value, key) => `<td data-sort="${escape(JSON.stringify(key))}">${value}</td>`;
+  const perfRows = performance.map(r => `<tr>${[
+    cell(`${escape(r.os)}<br>${escape(r.browser)}`, [r.os ?? null, r.browser ?? null]),
+    cell(escape(r.gpu), [r.gpu ?? null]),
+    cell(escape(r.cores), [numeric(r.cores)]),
+    cell(`${r.vsync ? 'On' : 'Off'} / ${Number(r.cap || 0).toFixed(0)}`, [Number(Boolean(r.vsync)), numeric(r.cap)]),
+    cell(`${escape(r.width)}×${escape(r.height)}`, [r.width == null || r.height == null ? null : r.width * r.height, numeric(r.width), numeric(r.height)]),
+    cell(number(r.users), [numeric(r.users)]),
+    cell(Number(r.minutes).toFixed(1), [numeric(r.minutes)]),
+    cell(Number(r.fps).toFixed(1), [numeric(r.fps)]),
+    cell(Number(r.p95).toFixed(1), [numeric(r.p95)]),
+    cell(number(r.stalls), [numeric(r.stalls)]),
+    cell(Number(r.worst).toFixed(1), [numeric(r.worst)]),
+  ].join('')}</tr>`).join('');
+  const perfHeaders = ['OS / browser','GPU','CPU threads','VSync / FPS cap','Render size','Browsers','Minutes','Avg FPS','Mean P95 ms','Stalls >100ms','Worst ms']
+    .map((label, index) => `<th scope="col"${index === 6 ? ' aria-sort="descending"' : ''}><button type="button">${escape(label)}</button></th>`).join('');
   const deviceRows=devices.map(r=>{const d=JSON.parse(r.data);return `<details><summary>${escape(d.os)} · ${escape(d.browser)} · ${escape(d.gpuDescription||d.gpuDevice||d.gpuVendor)} · ${escape(d.cores)} logical cores</summary><dl>${Object.entries(d).filter(([k])=>k!=='sessionId').map(([k,v])=>`<dt>${escape(k)}</dt><dd>${escape(v)}</dd>`).join('')}</dl></details>`}).join('');
   return `<!doctype html>
 <html lang="en">
@@ -58,6 +75,9 @@ html{color-scheme:dark;background:#161812;color:#eee;font:16px/1.5 system-ui,san
 main{max-width:90rem;margin:3rem auto;padding:0 1rem}table{width:100%;border-collapse:collapse}
 th,td{padding:.65rem .4rem;border-bottom:1px solid #46483c;text-align:right}
 th:first-child{text-align:left}p{color:#bbb}
+th button{font:inherit;font-weight:600;color:inherit;background:none;border:0;padding:.25rem;cursor:pointer;text-align:inherit}
+th button::after{content:' ↕';color:#aaa}th[aria-sort="ascending"] button::after{content:' ↑'}th[aria-sort="descending"] button::after{content:' ↓'}
+th button:focus-visible{outline:2px solid #c9d6a5;outline-offset:2px}
 </style>
 <main>
   <h1>Game analytics</h1>
@@ -69,10 +89,12 @@ th:first-child{text-align:left}p{color:#bbb}
   </table>
   <h2>Gameplay performance — last 30 days</h2>
   <p>FPS is total rendered frames / observed gameplay time. Hidden tabs, loading and engine pauses excluded. P95 is the mean of per-window P95 frame times (1 ms histogram bins, capped at 1000 ms), not a global percentile. Stall counts are frames over 100 ms. Up to 200 device groups shown.</p>
-  <div style="overflow:auto"><table><thead><tr><th>OS / browser</th><th>GPU</th><th>CPU threads</th><th>VSync / FPS cap</th><th>Render size</th><th>Browsers</th><th>Minutes</th><th>Avg FPS</th><th>Mean P95 ms</th><th>Stalls &gt;100ms</th><th>Worst ms</th></tr></thead><tbody>${perfRows}</tbody></table></div>
+  <p>Click a column heading to sort; click again to reverse. Render size sorts by pixel count; VSync / FPS cap by VSync, then cap.</p>
+  <div style="overflow:auto"><table id="performance" aria-label="Gameplay performance"><thead><tr>${perfHeaders}</tr></thead><tbody>${perfRows}</tbody></table></div>
   <h2>Recent device sessions</h2><p>Browser-reported data; missing values are unknown. Latest 200 sessions, retained 30 days.</p>${deviceRows}
   <p>A visit begins when a browser opens the game after 30 minutes without recorded activity.
      Successful save loads are a signal that players continued a campaign.</p>
 </main>
+<script nonce="${escape(nonce)}">${performanceSortingScript}</script>
 </html>`;
 }

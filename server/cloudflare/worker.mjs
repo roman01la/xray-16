@@ -42,7 +42,8 @@ export default {
       let credentials='';try{if(/^Basic /i.test(auth))credentials=atob(auth.slice(6));}catch{}
       if(!env.ANALYTICS_PASSWORD||!await equalSecret(credentials,'analytics:'+env.ANALYTICS_PASSWORD))return response(401,'Authentication required',{'WWW-Authenticate':'Basic realm="S.T.A.L.K.E.R. Analytics", charset="UTF-8"'});
       if(request.method==='HEAD')return response(200,null,{'Content-Type':'text/html; charset=utf-8'});
-      return response(200,analyticsDashboard(await summary(env.DB)),{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"});
+      const nonce = crypto.randomUUID();
+      return response(200,analyticsDashboard(await summary(env.DB), nonce),{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; frame-ancestors 'none'`});
     }catch(error){console.error('Request failed',error.status||500);return response(error.status||503,'Request failed');}
   },
   async scheduled(event,env,ctx){ctx.waitUntil(prune(env.DB));},

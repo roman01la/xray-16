@@ -60,7 +60,8 @@ export async function createGateway({root,token,origin,backendPort=8082,assetOri
     if(!['GET','HEAD'].includes(req.method))return reply(405);
     if(req.headers['sec-fetch-site']==='cross-site')return reply(403);
     headers['Referrer-Policy']='no-referrer';
-    headers['Content-Security-Policy']="default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'";
+    const nonce = randomUUID();
+    headers['Content-Security-Policy']=`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; frame-ancestors 'none'`;
     const credentials=/^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(req.headers.authorization||'');
     // Limit both individual and distributed guessing before comparing passwords.
     if(credentials&&(limited(ip,'analytics-auth',8,900000)||limited('*','analytics-auth',60,900000))){
@@ -71,7 +72,7 @@ export async function createGateway({root,token,origin,backendPort=8082,assetOri
      headers['WWW-Authenticate']='Basic realm="S.T.A.L.K.E.R. Analytics", charset="UTF-8"';
      return reply(401,'Authentication required');
     }
-    const page=analyticsDashboard(await analytics.request('summary'));
+    const page=analyticsDashboard(await analytics.request('summary'), nonce);
     headers['Content-Type']='text/html; charset=utf-8';
     headers['Content-Length']=Buffer.byteLength(page);
     return reply(200,req.method==='HEAD'?undefined:page);
