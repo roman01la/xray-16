@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {isMainThread,parentPort,Worker,workerData} from 'node:worker_threads';
 
-export const analyticsEvents = new Set(['visit','install','start_game','new_campaign','load_save','device','performance']);
+export {analyticsEvents} from './analytics-events.mjs';
 const visitGap = 30 * 60 * 1000;
 
 export function openAnalytics(database) {

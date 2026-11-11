@@ -1,0 +1,81 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stalker-online",
+  "account_id": "b49f562ad79d2cfcb9148a2427ee2454",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-11",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./.assets",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none",
+    "run_worker_first": [
+      "/analytics",
+      "/analytics/*",
+      "/health",
+      "/world.json",
+      "/offer",
+      "/identity/*",
+      "/metrics"
+    ]
+  },
+  "vars": {
+    "ORIGIN": "https://stalker-online.xyz"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stalker-online-analytics",
+      "database_id": "1c38116a-95b8-4805-8b8a-31a0328a175d"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "EVENT_LIMIT",
+      "namespace_id": "2026111101",
+      "simple": {
+        "limit": 600,
+        "period": 60
+      }
+    },
+    {
+      "name": "AUTH_LIMIT",
+      "namespace_id": "2026111102",
+      "simple": {
+        "limit": 8,
+        "period": 60
+      }
+    },
+    {
+      "name": "EVENT_GLOBAL",
+      "namespace_id": "2026111103",
+      "simple": {
+        "limit": 1800,
+        "period": 60
+      }
+    },
+    {
+      "name": "AUTH_GLOBAL",
+      "namespace_id": "2026111104",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "17 * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": false
+  },
+  "routes": [
+    {
+      "pattern": "stalker-online.xyz/*",
+      "zone_id": "8b5aa91ab220d839bee1091cf3342885"
+    }
+  ]
+}
