@@ -55,7 +55,8 @@ test('browser client sends device info and gameplay summary without hidden-tab f
  const saved=new Map(),keys=['window','document','navigator','screen','location','localStorage','fetch','innerWidth','innerHeight','devicePixelRatio','crossOriginIsolated'];
  for(const key of keys)saved.set(key,Object.getOwnPropertyDescriptor(globalThis,key));
  const posts=[],storage=new Map(),window=new EventTarget(),document=new EventTarget();document.hidden=false;
- const values={window,document,navigator:{userAgent:'Mozilla Windows Chrome/140.0',platform:'Win32',hardwareConcurrency:8,deviceMemory:8,language:'en',maxTouchPoints:0,gpu:{}},screen:{width:2560,height:1440,availWidth:2560,availHeight:1400,colorDepth:24},location:{pathname:'/releases/'+'a'.repeat(64)+'/index.html',search:'?stream=/pack'},localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},innerWidth:1280,innerHeight:720,devicePixelRatio:2,crossOriginIsolated:true,fetch:async(_url,options)=>{posts.push(JSON.parse(options.body));return {status:204}}};
+ const priorSession=randomUUID();storage.set('xray-analytics-playtime-v1:'+priorSession,JSON.stringify({sessionId:priorSession,release:'a'.repeat(64),elapsedMs:3000}));
+ const values={window,document,navigator:{userAgent:'Mozilla Windows Chrome/140.0',platform:'Win32',hardwareConcurrency:8,deviceMemory:8,language:'en',maxTouchPoints:0,gpu:{}},screen:{width:2560,height:1440,availWidth:2560,availHeight:1400,colorDepth:24},location:{pathname:'/releases/'+'a'.repeat(64)+'/index.html',search:'?stream=/pack'},localStorage:{get length(){return storage.size;},key:i=>[...storage.keys()][i],getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},innerWidth:1280,innerHeight:720,devicePixelRatio:2,crossOriginIsolated:true,fetch:async(_url,options)=>{posts.push(JSON.parse(options.body));return {status:204}}};
  try{
   for(const [key,value]of Object.entries(values))Object.defineProperty(globalThis,key,{value,configurable:true,writable:true});
   const {startCampaignAnalytics}=await import('./analytics-client.mjs');startCampaignAnalytics();
@@ -65,5 +66,32 @@ test('browser client sends device info and gameplay summary without hidden-tab f
   await new Promise(setImmediate);
   const sample=posts.find(p=>p.event==='performance');assert.equal(sample.data.frames,360);assert.equal(sample.data.avgFps,60);assert.equal(sample.data.p95Ms,17);assert.equal(sample.data.width,1280);
   assert.ok(posts.some(p=>p.event==='device'&&p.data.cores===8));
+  assert.ok(posts.some(p=>p.event==='playtime'&&p.data.sessionId===priorSession&&p.data.elapsedMs===3000),'pending prior-session checkpoint retried on startup');
+  assert.equal(posts.find(p=>p.event==='playtime'&&p.data.sessionId===sample.data.sessionId).data.elapsedMs,6000,'hidden gameplay is excluded');
+  const previousPerformanceCount=posts.filter(p=>p.event==='performance').length;
+  window.dispatchEvent(new CustomEvent('xray-performance',{detail:{...detail,gameplayPerformance:{...detail.gameplayPerformance,frames:120,elapsedMs:2000,hist:{17:120}}}}));
+  let offline=true;globalThis.fetch=async(_url,options)=>{const body=JSON.parse(options.body);posts.push(body);return {status:body.event==='playtime'&&offline?503:204};};
+  window.dispatchEvent(new Event('pagehide'));await new Promise(setImmediate);
+  assert.equal(posts.filter(p=>p.event==='performance').length,previousPerformanceCount,'short performance windows are omitted');
+  assert.equal(posts.filter(p=>p.event==='playtime').at(-1).data.elapsedMs,8000,'short gameplay still contributes to playtime');
+  assert.ok([...storage.keys()].some(k=>k.startsWith('xray-analytics-playtime-v1:')),'failed checkpoint survives');
+  offline=false;window.dispatchEvent(new Event('online'));await new Promise(setImmediate);
+  assert.equal(posts.filter(p=>p.event==='playtime').at(-1).data.elapsedMs,8000,'retry sends cumulative total');
+  assert.equal([...storage.keys()].filter(k=>k.startsWith('xray-analytics-playtime-v1:')).length,0,'acknowledged checkpoint removed');
  }finally{for(const [key,descriptor]of saved){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key]}}
+});
+
+test('playtime validates cumulative checkpoints and totals persist across sessions',async()=>{
+ const {validateAnalyticsEvent,analyticsDashboard}=await import('./analytics-http.mjs');
+ const db=openAnalytics(':memory:'),browserId=randomUUID(),sessionId=randomUUID(),release='a'.repeat(64);
+ const checkpoint=ms=>({...event('playtime',browserId),data:{sessionId,release,elapsedMs:ms}});
+ try{
+  const first=checkpoint(60000);assert.ok(validateAnalyticsEvent(first));db.record(first,1);db.record(first,2);
+  db.record(checkpoint(120000),3);db.record(checkpoint(90000),4);
+  db.record({...checkpoint(30000),data:{...checkpoint(30000).data,sessionId:randomUUID()}},5);
+  const s=db.summary();assert.equal(s.playtime.totalMs,150000);assert.equal(s.playtime.players,1);assert.equal(s.playtimeUsers[0].sessions,2);
+  assert.equal(s.events.length,0);assert.match(analyticsDashboard(s),/0h 2m 30s/);
+  for(const ms of [0,-1,1.5,Infinity,31536000001,null])assert.equal(validateAnalyticsEvent(checkpoint(ms)),null);
+  assert.equal(validateAnalyticsEvent({...first,data:{...first.data,extra:'invalid'}}),null);
+ }finally{db.close();}
 });

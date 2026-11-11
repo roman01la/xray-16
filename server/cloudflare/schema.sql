@@ -16,3 +16,5 @@ CREATE TABLE IF NOT EXISTS analytics_devices (browser_id TEXT NOT NULL, session_
     CREATE UNIQUE INDEX IF NOT EXISTS analytics_first_install
       ON analytics_events(browser_id) WHERE event='install';
     CREATE INDEX IF NOT EXISTS analytics_event_counts ON analytics_events(event,browser_id);
+
+CREATE TABLE IF NOT EXISTS analytics_playtime (browser_id TEXT NOT NULL, session_id TEXT NOT NULL, elapsed_ms INTEGER NOT NULL CHECK(elapsed_ms > 0), received_at INTEGER NOT NULL, PRIMARY KEY(browser_id,session_id)) STRICT;

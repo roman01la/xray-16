@@ -20,3 +20,18 @@ test('worker gates origin, size, authentication and unknown routes',async()=>{co
  assert.equal((await worker.fetch(req('/world.json'),env)).status,404);assert.equal((await worker.fetch(req('/_deploy/publish'),env)).status,404);
  env.EVENT_LIMIT={limit:async()=>({success:false})};assert.equal((await worker.fetch(req('/analytics/event',{method:'POST',headers:{Origin:env.ORIGIN,'Content-Type':'application/json'},body:'{}'}),env)).status,429);
  }finally{sqlite.close();}});
+
+test('D1 cumulative playtime is monotonic, separates sessions and survives pruning',async()=>{
+ const {db,sqlite}=fixture();const sessionId=crypto.randomUUID();
+ const checkpoint=(ms,session=sessionId)=>({...event('playtime'),data:{sessionId:session,release:'a'.repeat(64),elapsedMs:ms}});
+ try{
+  const first=checkpoint(60000);await record(db,first,1);await record(db,first,2);
+  await record(db,checkpoint(120000),3);await record(db,checkpoint(30000),4);
+  await record(db,checkpoint(10000,crypto.randomUUID()),5);
+  await record(db,{...checkpoint(20000),browserId:crypto.randomUUID()},6);
+  await prune(db,31*86400000);
+  const s=await summary(db,31*86400000);assert.equal(s.playtime.totalMs,150000);assert.equal(s.playtime.players,2);
+  assert.equal(s.playtimeUsers[0].elapsed_ms,130000);assert.equal(s.playtimeUsers[0].sessions,2);
+  assert.equal(s.events.length,0,'checkpoints do not inflate milestone or visit counts');
+ }finally{sqlite.close();}
+});

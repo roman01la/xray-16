@@ -94,3 +94,23 @@ Validate the backup checksum before removing legacy persistent resources.
   IPv4 was released. Public DNS resolves to Cloudflare and the site remains live.
 - Full interactive gameplay and returning-browser save reuse remain manual checks;
   migration does not change engine code, save origin or content hashes.
+
+## Cumulative playtime
+
+`analytics_playtime` stores the maximum cumulative active-gameplay milliseconds
+for each anonymous browser/session pair. Dashboard totals sum these checkpoints
+across sessions; they are not deleted with the 30-day device/performance samples.
+No historical playtime is backfilled: tracking starts with the updated client.
+
+The client uses engine gameplay telemetry, excluding hidden tabs, loading, menus
+and engine pauses. It checkpoints every 30 seconds of reporting and on page hide,
+retains failed checkpoints in localStorage and retries them on the next launch.
+Duplicate/out-of-order checkpoints cannot add time twice. Concurrent visible game
+sessions count separately; this is anonymous browser playtime, not verified human
+attention. An abrupt crash can lose the latest uncheckpointed interval.
+
+Before deploying the updated Worker, add the `analytics_playtime` table using the
+idempotent CREATE statement in `schema.sql` (do not reimport any old data dump).
+Then publish the updated analytics client in a new immutable frontend release.
+No engine rebuild is required. The dashboard shows all-time total, average per
+playing browser, and the top 200 browser totals with session counts.

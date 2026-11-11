@@ -1,3 +1,4 @@
+import {playtimeUpsert,playtimeSummary,playtimeUsers} from '../web/analytics-playtime.mjs';
 const performanceQuery = `SELECT coalesce(json_extract(d.data,'$.os'),'Unknown') AS os,coalesce(json_extract(d.data,'$.browser'),'Unknown') AS browser,
         coalesce(nullif(json_extract(d.data,'$.gpuDescription'),''),nullif(json_extract(d.data,'$.gpuDevice'),''),nullif(json_extract(d.data,'$.gpuVendor'),''),'Unknown') AS gpu,
         json_extract(d.data,'$.cores') AS cores,json_extract(p.data,'$.vsync') AS vsync,json_extract(p.data,'$.fpsCap') AS cap,
@@ -11,6 +12,7 @@ const performanceQuery = `SELECT coalesce(json_extract(d.data,'$.os'),'Unknown')
         WHERE p.received_at >= ? GROUP BY os,browser,gpu,cores,vsync,cap,width,height ORDER BY minutes DESC LIMIT 200`;
 export async function record(db,{browserId,eventId,event,data},now=Date.now()) {
   const q=(sql,...values)=>db.prepare(sql).bind(...values);
+  if(event==='playtime')return q(playtimeUpsert,browserId,data.sessionId,data.elapsedMs,now).run();
   if(event==='device')return q('INSERT INTO analytics_devices VALUES (?,?,?,?) ON CONFLICT(browser_id,session_id) DO UPDATE SET received_at=excluded.received_at,data=excluded.data',browserId,data.sessionId,now,JSON.stringify(data)).run();
   if(event==='performance')return q('INSERT OR IGNORE INTO analytics_performance VALUES (?,?,?,?,?)',eventId,browserId,data.sessionId,now,JSON.stringify(data)).run();
   const statements=[q('INSERT OR IGNORE INTO analytics_browsers VALUES (?,?,?)',browserId,now,now)];
@@ -27,8 +29,9 @@ export async function summary(db,now=Date.now()) {
     db.prepare('SELECT event,count(*) AS total,count(DISTINCT browser_id) AS browsers FROM analytics_events GROUP BY event'),
     db.prepare('SELECT data,received_at FROM analytics_devices ORDER BY received_at DESC LIMIT 200'),
     db.prepare(performanceQuery).bind(now-30*86400000),
+    db.prepare(playtimeSummary),db.prepare(playtimeUsers),
   ]);
-  return {browsers:rows[0].results[0].total,events:rows[1].results,devices:rows[2].results,performance:rows[3].results};
+  return {browsers:rows[0].results[0].total,events:rows[1].results,devices:rows[2].results,performance:rows[3].results,playtime:rows[4].results[0],playtimeUsers:rows[5].results};
 }
 export async function prune(db,now=Date.now()) {
   // Hourly batches avoid scanning/deleting old samples on every event request.

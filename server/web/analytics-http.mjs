@@ -3,15 +3,19 @@ import {analyticsEvents} from './analytics-events.mjs';
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export function validateAnalyticsEvent(value) {
-  if (!value || typeof value !== 'object' || Object.keys(value).length !== (['device','performance'].includes(value.event)?4:3) ||
+  if (!value || typeof value !== 'object' || Object.keys(value).length !== (['device','performance','playtime'].includes(value.event)?4:3) ||
       !analyticsEvents.has(value.event) || typeof value.browserId !== 'string' ||
       typeof value.eventId !== 'string' || !uuid.test(value.browserId) || !uuid.test(value.eventId))
     return null;
-  if(['device','performance'].includes(value.event)){
+  if(['device','performance','playtime'].includes(value.event)){
     const data=value.data;
     const deviceKeys='sessionId release userAgent platform browser os mobile cores memoryGB screenWidth screenHeight availableWidth availableHeight dpr colorDepth touchPoints language webgpu crossOriginIsolated connection saveData architecture bitness model osVersion gpuVendor gpuArchitecture gpuDevice gpuDescription gpuFallback gpuFeatures maxTextureDimension2D maxBufferSize'.split(' ');
     const perfKeys='sessionId release width height viewportWidth viewportHeight vsync fpsCap validationErrors frames elapsedMs avgFps p50Ms p95Ms p99Ms maxMs stalls50 stalls100'.split(' ');
     if(!data||typeof data!=='object'||Array.isArray(data)||!uuid.test(data.sessionId)||!/^[a-f0-9]{64}$/.test(data.release))return null;
+    if(value.event==='playtime'){
+      if(Object.keys(data).length!==3||!Number.isSafeInteger(data.elapsedMs)||data.elapsedMs<1||data.elapsedMs>31536000000)return null;
+      return {event:value.event,browserId:value.browserId,eventId:value.eventId,data};
+    }
     const allowed=value.event==='device'?deviceKeys:perfKeys;
     const numeric='cores memoryGB screenWidth screenHeight availableWidth availableHeight dpr colorDepth touchPoints maxTextureDimension2D maxBufferSize width height viewportWidth viewportHeight fpsCap validationErrors frames elapsedMs avgFps p50Ms p95Ms p99Ms maxMs stalls50 stalls100'.split(' ');
     const boolean='mobile webgpu crossOriginIsolated saveData gpuFallback vsync'.split(' ');
@@ -39,7 +43,7 @@ const labels = {
   load_save: 'Successful save loads',
 };
 
-export function analyticsDashboard({browsers,events,devices=[],performance=[]}, nonce = '') {
+export function analyticsDashboard({browsers,events,devices=[],performance=[],playtime={totalMs:0,players:0},playtimeUsers=[]}, nonce = '') {
   const counts = new Map(events.map(row => [row.event,row]));
   const number = value => Number(value).toLocaleString('en');
   const rows = Object.entries(labels).map(([event,label]) => {
@@ -47,6 +51,8 @@ export function analyticsDashboard({browsers,events,devices=[],performance=[]}, 
     return `<tr><th scope="row">${label}</th><td>${number(row?.browsers ?? 0)}</td><td>${number(row?.total ?? 0)}</td></tr>`;
   }).join('\n');
   const escape=v=>String(v??'Unknown').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const duration=ms=>{const seconds=Math.floor(Number(ms||0)/1000);return `${Math.floor(seconds/3600)}h ${Math.floor(seconds/60)%60}m ${seconds%60}s`;};
+  const playRows=playtimeUsers.map(r=>`<tr><th scope="row">${escape(r.browser_id)}</th><td>${duration(r.elapsed_ms)}</td><td>${number(r.sessions)}</td></tr>`).join('');
   const numeric = value => value == null || !Number.isFinite(Number(value)) ? null : Number(value);
   const cell = (value, key) => `<td data-sort="${escape(JSON.stringify(key))}">${value}</td>`;
   const perfRows = performance.map(r => `<tr>${[
@@ -87,6 +93,11 @@ th button:focus-visible{outline:2px solid #c9d6a5;outline-offset:2px}
     <thead><tr><th scope="col">Activity</th><th scope="col">Unique browsers</th><th scope="col">Total</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
+  <h2>Cumulative playtime</h2>
+  <p>Total <strong>${duration(playtime.totalMs)}</strong> · ${number(playtime.players)} browsers played · average ${duration(playtime.players?playtime.totalMs/playtime.players:0)} per playing browser.</p>
+  <p>Since playtime tracking was enabled. Active, visible gameplay only; downloading, loading, menus and engine pauses excluded. Totals persist beyond the 30-day performance retention. Anonymous browser identity; clearing site storage creates a new identity. Concurrent visible game sessions count separately. Latest unreported time may be lost on a crash.</p>
+  <table aria-label="Cumulative playtime by browser"><thead><tr><th scope="col">Browser ID</th><th scope="col">Total playtime</th><th scope="col">Game sessions</th></tr></thead><tbody>${playRows}</tbody></table>
+  <p>Top 200 browsers by total playtime.</p>
   <h2>Gameplay performance — last 30 days</h2>
   <p>FPS is total rendered frames / observed gameplay time. Hidden tabs, loading and engine pauses excluded. P95 is the mean of per-window P95 frame times (1 ms histogram bins, capped at 1000 ms), not a global percentile. Stall counts are frames over 100 ms. Up to 200 device groups shown.</p>
   <p>Click a column heading to sort; click again to reverse. Render size sorts by pixel count; VSync / FPS cap by VSync, then cap.</p>

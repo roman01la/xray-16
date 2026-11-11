@@ -1,3 +1,4 @@
+import {playtimeUpsert,playtimeSummary,playtimeUsers} from './analytics-playtime.mjs';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {isMainThread,parentPort,Worker,workerData} from 'node:worker_threads';
@@ -8,6 +9,7 @@ const visitGap = 30 * 60 * 1000;
 export function openAnalytics(database) {
   const db = new DatabaseSync(database);
   db.exec(`
+    CREATE TABLE IF NOT EXISTS analytics_playtime (browser_id TEXT NOT NULL, session_id TEXT NOT NULL, elapsed_ms INTEGER NOT NULL CHECK(elapsed_ms > 0), received_at INTEGER NOT NULL, PRIMARY KEY(browser_id,session_id)) STRICT;
     CREATE TABLE IF NOT EXISTS analytics_devices (browser_id TEXT NOT NULL, session_id TEXT NOT NULL, received_at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(browser_id,session_id)) STRICT;
     CREATE TABLE IF NOT EXISTS analytics_performance (id TEXT PRIMARY KEY, browser_id TEXT NOT NULL, session_id TEXT NOT NULL, received_at INTEGER NOT NULL, data TEXT NOT NULL) STRICT;
     CREATE INDEX IF NOT EXISTS analytics_device_time ON analytics_devices(received_at);
@@ -42,6 +44,7 @@ export function openAnalytics(database) {
   `);
   return {
     record({browserId,eventId,event,data}, now = Date.now()) {
+      if(event==='playtime'){db.prepare(playtimeUpsert).run(browserId,data.sessionId,data.elapsedMs,now);return;}
       if(event==='device'||event==='performance'){
         if(event==='device')db.prepare('INSERT INTO analytics_devices VALUES (?,?,?,?) ON CONFLICT(browser_id,session_id) DO UPDATE SET received_at=excluded.received_at,data=excluded.data').run(browserId,data.sessionId,now,JSON.stringify(data));
         else db.prepare('INSERT OR IGNORE INTO analytics_performance VALUES (?,?,?,?,?)').run(eventId,browserId,data.sessionId,now,JSON.stringify(data));
@@ -69,7 +72,7 @@ export function openAnalytics(database) {
       }
     },
     summary() {
-      return {browsers:browserCount.get().total,events:eventCounts.all(), devices:db.prepare("SELECT data,received_at FROM analytics_devices ORDER BY received_at DESC LIMIT 200").all(),
+      return {playtime:db.prepare(playtimeSummary).get(),playtimeUsers:db.prepare(playtimeUsers).all(),browsers:browserCount.get().total,events:eventCounts.all(), devices:db.prepare("SELECT data,received_at FROM analytics_devices ORDER BY received_at DESC LIMIT 200").all(),
         performance:db.prepare(`SELECT coalesce(json_extract(d.data,'$.os'),'Unknown') AS os,coalesce(json_extract(d.data,'$.browser'),'Unknown') AS browser,
         coalesce(nullif(json_extract(d.data,'$.gpuDescription'),''),nullif(json_extract(d.data,'$.gpuDevice'),''),nullif(json_extract(d.data,'$.gpuVendor'),''),'Unknown') AS gpu,
         json_extract(d.data,'$.cores') AS cores,json_extract(p.data,'$.vsync') AS vsync,json_extract(p.data,'$.fpsCap') AS cap,

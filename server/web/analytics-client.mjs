@@ -54,6 +54,32 @@ export function startCampaignAnalytics() {
 
   const sessionId=crypto.randomUUID(), release=location.pathname.split('/')[2];
   let device={}, lastDevice='', windowStart=performance.now(), totals=null, lastRender={};
+  // Persist cumulative checkpoints, not deltas, so retrying cannot inflate totals.
+  const playtimePrefix='xray-analytics-playtime-v1:';
+  let playtimeMs=0,lastPlaytimeFlush=performance.now();
+  async function deliverPlaytime(key,data){
+    if(await send('playtime',undefined,data)){
+      try{if(localStorage.getItem(key)===JSON.stringify(data))localStorage.removeItem(key);}catch{}
+    }
+  }
+  function flushPlaytime(){
+    if(playtimeMs<1)return;
+    lastPlaytimeFlush=performance.now();
+    const data={sessionId,release,elapsedMs:Math.floor(playtimeMs)},key=playtimePrefix+sessionId;
+    try{localStorage.setItem(key,JSON.stringify(data));}catch{}
+    void deliverPlaytime(key,data);
+  }
+  // Failed/offline checkpoints survive reload and are delivered with their original session.
+  try{
+    const pending=[];
+    for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(key?.startsWith(playtimePrefix))pending.push(key);}
+    for(const key of pending){
+      try{const data=JSON.parse(localStorage.getItem(key));
+        if(uuid.test(data.sessionId)&&key===playtimePrefix+data.sessionId&&/^[a-f0-9]{64}$/.test(data.release)&&Number.isSafeInteger(data.elapsedMs)&&data.elapsedMs>0&&data.elapsedMs<=31536000000)void deliverPlaytime(key,data);
+      }catch{}
+    }
+  }catch{}
+
   const ua=navigator.userAgent;
   const match=ua.match(/(Edg|OPR|Firefox|Chrome|Version)\/([\d.]+)/);
   device={sessionId,release,userAgent:ua,platform:navigator.platform||'',
@@ -89,14 +115,16 @@ export function startCampaignAnalytics() {
     lastRender={width:d.width,height:d.height,viewportWidth:innerWidth,viewportHeight:innerHeight,vsync:d.pacing?.vsync,
       fpsCap:d.pacing?.limitMs?1000/d.pacing.limitMs:0,validationErrors:d.validationErrors??0};
     const a=d.gameplayPerformance;if(!a?.frames)return;
+    if(Number.isFinite(a.elapsedMs)&&a.elapsedMs>0&&a.elapsedMs<=3600000){playtimeMs+=a.elapsedMs;if(performance.now()-lastPlaytimeFlush>=30000)flushPlaytime();}
     totals??={frames:0,elapsedMs:0,maxMs:0,stalls50:0,stalls100:0,hist:{}};
     for(const k of ['frames','elapsedMs','stalls50','stalls100'])totals[k]+=a[k];
     totals.maxMs=Math.max(totals.maxMs,a.maxMs);
     for(const [bin,n] of Object.entries(a.hist))totals.hist[bin]=(totals.hist[bin]||0)+n;
     if(performance.now()-windowStart>=60000)flushPerformance();
   });
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)flushPerformance()});
-  window.addEventListener('pagehide',flushPerformance);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){flushPerformance();flushPlaytime();}});
+  window.addEventListener('pagehide',()=>{flushPerformance();flushPlaytime();});
+  window.addEventListener('online',flushPlaytime);
   void send('visit');
   void sendInstall();
   window.addEventListener('xray-stream-progress',({detail}) => {
