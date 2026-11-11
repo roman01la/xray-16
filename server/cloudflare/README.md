@@ -92,6 +92,7 @@ Validate the backup checksum before removing legacy persistent resources.
   final analytics SQL and legacy configuration. Never publish that directory.
 - With explicit deletion approval, retired Tigris bucket `roman-stalker-assets`,
   Fly machine `813e27c9723e48`, and volume `vol_40o7jmp7odd7pmm4`.
-  Paid IPv4 release awaits confirmation of the user's DNS edit.
+  The user changed the proxied root DNS record to a placeholder; the paid Fly
+  IPv4 was released. Public DNS resolves to Cloudflare and the site remains live.
 - Full interactive gameplay and returning-browser save reuse remain manual checks;
   migration does not change engine code, save origin or content hashes.
