@@ -25,6 +25,7 @@ void R_occlusion::occq_create(u32 limit)
 }
 void R_occlusion::occq_destroy()
 {
+    ScopeLock lock{ &render_lock };
     ++generation;
     for (const auto& q : used)
         ReleaseQuery(q.Q);
@@ -138,6 +139,25 @@ R_occlusion::occq_result R_occlusion::occq_get(u32& ID, bool* ready)
     if (0 == fragments)
         RImplementation.BasicStats.OcclusionCulled++;
 
+    recycle_query(ID);
+    return fragments;
+}
+
+void R_occlusion::occq_cancel(u32& ID, u32 expectedGeneration)
+{
+    // Light movement/destruction can run on calculation workers. Cancelling an
+    // ended query only returns its handle to the pool; never query WebGPU here.
+    ScopeLock lock{ &render_lock };
+    if (expectedGeneration != generation || ID == iInvalidHandle || ID >= used.size() || !used[ID].Q)
+    {
+        ID = iInvalidHandle;
+        return;
+    }
+    recycle_query(ID);
+}
+
+void R_occlusion::recycle_query(u32& ID)
+{
     // insert into pool (sorting in decreasing order)
     Query& Q = used[ID];
     if (pool.empty())
@@ -153,7 +173,6 @@ R_occlusion::occq_result R_occlusion::occq_get(u32& ID, bool* ready)
     // remove from used and shrink as nesessary
     used[ID].Q = 0;
     fids.emplace_back(ID);
-    ID = 0;
-    return fragments;
+    ID = iInvalidHandle;
 }
 } // namespace xray::render::RENDER_NAMESPACE

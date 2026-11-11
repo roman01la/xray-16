@@ -243,3 +243,30 @@ node misc/web/serve.mjs /tmp/xray-update-probe 8094
 The earlier full-game cold-cache measurements in this document predate this
 cross-version cache identity change. Changing only the pack URL no longer creates
 a cold game-data cache; use a separate origin/profile for a future cold-load test.
+
+### Compressed CDN chunks
+
+The CDN migration tool (`server/tools/migrate-cdn.py`) writes every chunk as
+`chunks/<decoded-sha256>.bin.gz` with `Content-Encoding: gzip`. It uses offline
+level-6 compression and verifies uploaded bytes by reading back and decompressing
+them. There is no uncompressed CDN download fallback. A resumed migration verifies
+existing compressed objects; old raw objects can supply input if volume copies
+were already removed.
+
+Fetch automatically decompresses the response. The installer validates decoded
+length and SHA-256 before storing the original bytes in OPFS. HTTP Content-Length
+is the compressed wire size, so it is not compared to the archive chunk size.
+Progress counts decoded game bytes, not network traffic. Existing cached chunks,
+archive descriptors, pack IDs and incremental-update reuse are unchanged.
+
+Rollout order matters: publish the updated chunk reader first, run migration to
+completion (pass the public website origin through `--origin` for CORS), then
+deploy the gateway that redirects to `.bin.gz`. Do not deploy that gateway before
+all compressed objects exist. New immutable object URLs avoid cached raw-object
+metadata. Old raw CDN objects are migration inputs only; remove them only after
+cutover and expiry of previously cached raw redirects. `--prune-volume` still
+removes verified local chunk copies while preserving shared frontend blobs.
+
+Validation: `node --test misc/web/tests/streaming.test.mjs server/web/gateway.test.mjs`.
+The tests cover actual HTTP gzip decoding, cache reuse, truncated/oversized or
+hash-invalid decoded bytes, hidden compression headers, and compressed CDN URLs.

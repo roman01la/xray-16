@@ -155,7 +155,7 @@ ${iconLink}
     return reply(200,req.method==='HEAD'?undefined:html);
    }
    const decoded=decodeURIComponent(path),file=active?.files[decoded];if(!file)return reply(404);
-   if(assetOrigin&&/^\/packs\/[a-f0-9]{64}\/chunks\/[a-f0-9]{64}\.bin$/.test(decoded)&&await cdnReady(file.sha256)){res.writeHead(307,{...headers,'Cache-Control':'public, max-age=300',Location:assetOrigin+'/chunks/'+file.sha256+'.bin'});res.end();return;}
+   if(assetOrigin&&/^\/packs\/[a-f0-9]{64}\/chunks\/[a-f0-9]{64}\.bin$/.test(decoded)&&await cdnReady(file.sha256)){res.writeHead(307,{...headers,'Cache-Control':'public, max-age=300',Location:assetOrigin+'/chunks/'+file.sha256+'.bin.gz'});res.end();return;}
    headers['Cache-Control']='public, max-age=31536000, immutable';headers['ETag']='"'+file.sha256+'"';headers['Content-Type']=mime(decoded);
    if(req.headers['if-none-match']===headers.ETag)return reply(304);
    headers['Content-Length']=file.size;res.writeHead(200,headers);

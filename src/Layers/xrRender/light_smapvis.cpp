@@ -11,7 +11,9 @@ smapvis::smapvis()
 }
 smapvis::~smapvis()
 {
+#ifndef XR_PLATFORM_WEB
     flushoccq();
+#endif
     invalidate();
 }
 void smapvis::invalidate()
@@ -19,7 +21,7 @@ void smapvis::invalidate()
 #ifdef XR_PLATFORM_WEB
     if (query_pending)
     {
-        if (query_generation == RImplementation.occq_generation()) RImplementation.occq_get(testQ_id);
+        RImplementation.occq_cancel(testQ_id, query_generation);
         query_pending = false;
     }
 #endif

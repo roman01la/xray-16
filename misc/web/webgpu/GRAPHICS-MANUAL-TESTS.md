@@ -146,3 +146,26 @@ See `FIVE-PERFORMANCE-EXPERIMENTS.md` for measured results and retained changes.
   did not reproduce the >100 ms camera-change spikes. No stall-fix claim.
 - Non-grass shadow omission and 100 FPS cap were diagnostics only. Production
   shadows and pacing defaults are unchanged. No deployment in this iteration.
+
+### Gameplay-worker light query cancellation (Chrome/macOS)
+
+A reported production crash in release c3e91de6 had the stack
+`TaskWorkerStart -> render_main::calculate -> build_subspace -> CLight_DB::add_light
+-> light::set_position -> light::spatial_move -> R_occlusion::occq_get -> xrWebGPUQuery`.
+Light movement discarded an obsolete query by reading its result from a calculation
+worker, where the renderer's JavaScript global does not exist.
+
+Cancellation now returns the query to the CPU pool under its lock without calling
+the graphics API. Generation checks under the same lock prevent cancellation of a
+replacement pool after reset. Light destruction and shadow-query invalidation use
+the same path; web shadow-state destruction no longer reads GPU results first.
+Actual visibility decisions still read results on the rendering thread. Existing
+GPU query generations reject late results after pooled handles are reused.
+
+Automated checks: native pool cancellation with an unavailable renderer, repeated
+cancellation, pool-reset generation mismatch, delayed shadow results, and stale
+asynchronous GPU results. Optimized Wasm build passed. Manual gameplay validation
+is still pending: walk around lights/NPCs, use a flashlight, move through changing
+visibility, then save/load and leave the level. Confirm no `Native WebGPU is not
+initialized` trap and no persistent missing lights or shadows. Deployment is tracked in the release record; manual gameplay confirmation
+remains pending.

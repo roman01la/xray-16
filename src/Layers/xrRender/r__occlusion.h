@@ -39,6 +39,7 @@ private:
     xr_vector<u32> fids; // free id's
 
     Lock render_lock{};
+    void recycle_query(u32& ID); // Caller holds render_lock; no graphics API calls.
 public:
 #if defined(USE_DX11)
     typedef u64 occq_result;
@@ -56,5 +57,6 @@ public:
     u32 occq_begin(u32& ID); // returns 'order'
     void occq_end(u32& ID);
     occq_result occq_get(u32& ID, bool* ready = nullptr);
+    void occq_cancel(u32& ID, u32 expectedGeneration);
 };
 } // namespace xray::render::RENDER_NAMESPACE

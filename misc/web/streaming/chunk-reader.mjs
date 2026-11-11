@@ -199,7 +199,8 @@ export class ChunkReader {
         try {
           const response=await this.fetcher(networkURL);
           if(!response.ok)throw Error('Game chunk unavailable (HTTP '+response.status+'): '+new URL(response.url||networkURL).pathname);
-          const length=response.headers.get('Content-Length');if(length!==null && Number(length)!==size)throw Error('Game chunk length mismatch');
+          // Fetch decodes HTTP compression; Content-Length describes wire bytes and
+          // Content-Encoding may be hidden by CDN CORS. Verify decoded bytes below.
           if(response.body?.getReader){
             bytes=new Uint8Array(size);const reader=response.body.getReader();
             try{while(true){const {done,value}=await reader.read();if(done)break;

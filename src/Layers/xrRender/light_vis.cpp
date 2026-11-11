@@ -27,8 +27,7 @@ void light::vis_prepare(CBackend& cmd_list)
         if (vis.query_generation != RImplementation.occq_generation() || frame - vis.query_frame > 120 ||
             memcmp(&vis.query_view, &Device.mFullTransform, sizeof(Fmatrix)) != 0)
         {
-            if (vis.query_generation == RImplementation.occq_generation())
-                RImplementation.occq_get(vis.query_id); // Cancel stale camera results without blocking.
+            RImplementation.occq_cancel(vis.query_id, vis.query_generation);
             vis.pending = false;
             vis.visible = true;
             vis.frame2test = frame;

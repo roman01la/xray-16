@@ -230,3 +230,36 @@ test('a failed startup does not publish archive metadata and resumes verified ch
   await assert.rejects(new ChunkReader({...options,openStore:quota.openStore}).install(files),/not enough browser storage/);
   assert.equal(quota.stores.get('game-archives').items.size,0);
 });
+
+test('HTTP gzip chunks decode, verify and reuse the same persistent cache',async()=>{
+ const {createServer}=await import('node:http');
+ const {gzipSync}=await import('node:zlib');
+ const original=Buffer.from('compressed game archive data '.repeat(4096));
+ const digest=hash(original),compressed=gzipSync(original),store=memoryStore();
+ let requests=0;
+ const server=createServer((req,res)=>{
+  requests++;res.writeHead(200,{'Content-Encoding':'gzip','Content-Length':compressed.length});res.end(compressed);
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const archive=`http://127.0.0.1:${server.address().port}/pack/resources/test.db`;
+ try{
+  const reader=new ChunkReader({openStore:async()=>store,digest:async bytes=>hash(bytes)});
+  assert.deepEqual(Buffer.from(await reader.chunk(archive,digest,original.length)),original);
+  assert.equal(requests,1);assert.equal(reader.stats.downloadedBytes,original.length);
+  const cached=new ChunkReader({openStore:async()=>store,digest:async bytes=>hash(bytes),fetcher:()=>assert.fail('Cached bytes must not be downloaded again')});
+  assert.deepEqual(Buffer.from(await cached.chunk(archive,digest,original.length)),original);
+  assert.equal(cached.stats.cachedChunks,1);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('decoded size and hash are enforced even when compression headers are hidden by CORS',async()=>{
+ const original=Buffer.from('game data'),digest=hash(original);
+ for(const payload of [Buffer.from('bad data!'),original.subarray(1),Buffer.concat([original,Buffer.from('x')])]){
+  const store=memoryStore();
+  const reader=new ChunkReader({openStore:async()=>store,digest:async bytes=>hash(bytes),fetcher:async()=>new Response(payload,{headers:{'Content-Length':'3'}})});
+  await assert.rejects(reader.chunk(url,digest,original.length),/integrity|length/);
+  assert.equal(store.items.size,0);
+ }
+ const reader=new ChunkReader({openStore:async()=>null,digest:async bytes=>hash(bytes),fetcher:async()=>new Response(original,{headers:{'Content-Length':'3'}})});
+ assert.deepEqual(Buffer.from(await reader.chunk(url,digest,original.length)),original);
+});

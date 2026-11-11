@@ -48,7 +48,7 @@ light::~light()
 #ifdef XR_PLATFORM_WEB
     if (vis.pending)
     {
-        if (vis.query_generation == RImplementation.occq_generation()) RImplementation.occq_get(vis.query_id);
+        RImplementation.occq_cancel(vis.query_id, vis.query_generation);
         vis.pending = false;
     }
 #endif
@@ -218,7 +218,7 @@ void light::spatial_move()
 #ifdef XR_PLATFORM_WEB
     if (vis.pending)
     {
-        if (vis.query_generation == RImplementation.occq_generation()) RImplementation.occq_get(vis.query_id);
+        RImplementation.occq_cancel(vis.query_id, vis.query_generation);
         vis.pending = false;
     }
     vis.visible = true;

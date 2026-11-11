@@ -376,6 +376,7 @@ public:
     u32 occq_begin(u32& ID) { return HWOCC.occq_begin(ID); }
     void occq_end(u32& ID) { HWOCC.occq_end(ID); }
     auto occq_get(u32& ID, bool* ready = nullptr) { return HWOCC.occq_get(ID, ready); }
+    void occq_cancel(u32& ID, u32 generation) { HWOCC.occq_cancel(ID, generation); }
 
     ICF void apply_object(CBackend& cmd_list, IRenderable* O)
     {

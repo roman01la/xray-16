@@ -34,7 +34,7 @@ test('public gateway isolates admin, verifies uploads, atomically publishes and 
   assert.equal(await head.text(),'');
   assert.equal((await fetch(base+chunk,{redirect:'manual'})).status,200);
   await writeFile(root+'/cdn-ready.json',JSON.stringify([hash]));
-  const redirect=await fetch(base+chunk,{redirect:'manual'});assert.equal(redirect.status,307);assert.equal(redirect.headers.get('location'),'https://cdn.example/chunks/'+hash+'.bin');
+  const redirect=await fetch(base+chunk,{redirect:'manual'});assert.equal(redirect.status,307);assert.equal(redirect.headers.get('location'),'https://cdn.example/chunks/'+hash+'.bin.gz');
   const asset=await fetch(base+path);assert.equal(await asset.text(),bytes.toString());assert.equal(asset.headers.get('cross-origin-embedder-policy'),'require-corp');assert.match(asset.headers.get('cache-control'),/immutable/);
   assert.equal((await fetch(base+path,{headers:{'If-None-Match':'"'+hash+'"'}})).status,304);
   const identity=await (await fetch(base+'/identity/entities?after=abc&generation=2',{headers:{'X-Zone-Identity':'player-secret'}})).json();assert.deepEqual(identity,{url:'/identity/entities?after=abc&generation=2',identity:'player-secret',auth:'Bearer '+token,origin});
