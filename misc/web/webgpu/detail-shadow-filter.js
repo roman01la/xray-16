@@ -172,6 +172,7 @@ export class DetailShadowFilter {
       if (frame - e.frame <= STALE_FRAMES) continue;
       this.entries.delete(g);
       for (const bundle of this.bundles) {
+        if (!bundle) continue; // Earlier cascades may have no renderable casters.
         const output = bundle.outputs?.get(g);
         if (!output) continue;
         this.r.retired.push(output);
@@ -182,6 +183,7 @@ export class DetailShadowFilter {
   }
   release() {
     for (const bundle of this.bundles) {
+      if (!bundle) continue;
       if (bundle.args) this.r.retired.push(bundle.args);
       if (bundle.params) this.r.retired.push(bundle.params);
       for (const output of bundle.outputs?.values() ?? []) this.r.retired.push(output);

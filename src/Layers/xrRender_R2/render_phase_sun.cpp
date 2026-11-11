@@ -322,8 +322,14 @@ void render_sun::render()
                 // shadow audit). Draws are flushed so earlier batched draws keep
                 // the previous marker. Cascades render serially (mt_render is 0).
                 static const bool audit = strstr(Core.Params,"-web_shadow_audit") != nullptr;
-                static const bool markCascades = audit || strstr(Core.Params,"-no_grass_shadow_filter") == nullptr;
-                if(markCascades) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=$0;},cascade_ind+1);
+                static const bool filterGrass = strstr(Core.Params,"-no_grass_shadow_filter") == nullptr;
+                static const bool markCascades = audit || filterGrass;
+                if(markCascades) EM_ASM({
+                    const renderer = globalThis.__xrayWebGPU;
+                    renderer.flushNativeDraws();
+                    renderer.nativeGrassShadowFilterEnabled = !!$1;
+                    renderer.nativeShadowCascade = $0;
+                },cascade_ind+1,static_cast<int>(filterGrass));
 #endif
                 dsgraph.render_graph(0);
                 if (ps_r2_ls_flags.test(R2FLAG_SUN_DETAILS) && int(cascade_ind) < ps_r2_sun_details_cascades)

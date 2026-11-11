@@ -1812,6 +1812,8 @@ export class GPUFrontend {
   // nativeShadowCascade around their flushed draw ranges; everything else
   // (main view, spot shadow maps) keeps the original draws.
   grassShadowJob(p, geometry, record, count, instances, first, baseVertex) {
+    // Audit cascade markers remain available even when compaction is disabled.
+    if (this.nativeGrassShadowFilterEnabled === false) return null;
     const cascade = this.nativeShadowCascade | 0;
     const filter = this.grassShadowFilter ??= new DetailShadowFilter(this);
     filter.beginFrame(diagnostics.frames);
