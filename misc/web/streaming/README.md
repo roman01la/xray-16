@@ -249,7 +249,9 @@ a cold game-data cache; use a separate origin/profile for a future cold-load tes
 The CDN migration tool (`server/tools/migrate-cdn.py`) writes every chunk as
 `chunks/<decoded-sha256>.bin.gz` with `Content-Encoding: gzip`. It uses offline
 level-6 compression and verifies uploaded bytes by reading back and decompressing
-them. There is no uncompressed CDN download fallback. A resumed migration verifies
+them. One worker is the default to fit the 512 MB gateway machine; `--workers`
+can be raised on a separate build host. Failures cancel queued work and leave
+the readiness list unchanged. There is no uncompressed CDN download fallback. A resumed migration verifies
 existing compressed objects; old raw objects can supply input if volume copies
 were already removed.
 

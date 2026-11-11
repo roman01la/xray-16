@@ -5,7 +5,7 @@ import argparse,base64,concurrent.futures,hashlib,json,pathlib,time
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-p=argparse.ArgumentParser();p.add_argument('--root',default='/data/web');p.add_argument('--credentials',default='/data/private/tigris.json');p.add_argument('--origin',default='https://roman-stalker-wan.fly.dev');p.add_argument('--workers',type=int,choices=range(1,5),default=2);p.add_argument('--prune-volume',action='store_true',help='Remove verified bulk chunks after CDN gateway cutover');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--root',default='/data/web');p.add_argument('--credentials',default='/data/private/tigris.json');p.add_argument('--origin',default='https://roman-stalker-wan.fly.dev');p.add_argument('--workers',type=int,choices=range(1,5),default=1);p.add_argument('--prune-volume',action='store_true',help='Remove verified bulk chunks after CDN gateway cutover');args=p.parse_args()
 root=pathlib.Path(args.root);creds_path=pathlib.Path(args.credentials)
 if creds_path.stat().st_mode&0o077:raise SystemExit('Credentials must be private')
 creds=json.loads(creds_path.read_text());bucket=creds['BUCKET_NAME']
@@ -42,8 +42,14 @@ def transfer(item):
  return size,False,len(encoded)
 started=time.monotonic();total=done=skipped=wire=0
 with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
- for future in concurrent.futures.as_completed([pool.submit(transfer,item) for item in chunks.items()]):
-  size,reused,encoded_size=future.result();done+=1;total+=size;skipped+=reused;wire+=encoded_size
+ futures=[pool.submit(transfer,item) for item in chunks.items()]
+ for future in concurrent.futures.as_completed(futures):
+  try:size,reused,encoded_size=future.result()
+  except Exception:
+   for pending in futures:pending.cancel()
+   print('CDN_COPY_FAILED; pending work cancelled, readiness unchanged',flush=True)
+   raise
+  done+=1;total+=size;skipped+=reused;wire+=encoded_size
   if done%10==0 or done==len(chunks):print(json.dumps({'verified':done,'objects':len(chunks),'bytes':total,'reused':skipped,'seconds':round(time.monotonic()-started,1)}),flush=True)
 ready=root/('cdn-ready.'+uuid.uuid4().hex+'.tmp');ready.write_text(json.dumps(sorted(chunks)));ready.chmod(0o644);os.replace(ready,root/'cdn-ready.json')
 removed=0
