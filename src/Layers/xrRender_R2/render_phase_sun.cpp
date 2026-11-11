@@ -318,8 +318,12 @@ void render_sun::render()
                 dsgraph.cmd_list.set_xform_view(Fidentity);
                 dsgraph.cmd_list.set_xform_project(sun->X.D[cascade_ind].combine);
 #ifdef XR_PLATFORM_WEB
+                // Explicit cascade metadata for grass shadow compaction (and the
+                // shadow audit). Draws are flushed so earlier batched draws keep
+                // the previous marker. Cascades render serially (mt_render is 0).
                 static const bool audit = strstr(Core.Params,"-web_shadow_audit") != nullptr;
-                if(audit) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=$0;},cascade_ind+1);
+                static const bool markCascades = audit || strstr(Core.Params,"-no_grass_shadow_filter") == nullptr;
+                if(markCascades) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=$0;},cascade_ind+1);
 #endif
                 dsgraph.render_graph(0);
                 if (ps_r2_ls_flags.test(R2FLAG_SUN_DETAILS))
@@ -334,7 +338,7 @@ void render_sun::render()
                     dsgraph.render_sorted(); // strict-sorted geoms
                 }
 #ifdef XR_PLATFORM_WEB
-                if(audit) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=0;});
+                if(markCascades) EM_ASM({globalThis.__xrayWebGPU.flushNativeDraws();globalThis.__xrayWebGPU.nativeShadowCascade=0;});
 #endif
             }
 

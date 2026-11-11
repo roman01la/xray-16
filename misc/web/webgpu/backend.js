@@ -2,6 +2,7 @@ import { QueueAudit } from "./queue-audit.js";
 import { FluidRenderer } from "./fluid-renderer.js";
 import { skipZeroTerrainLayers } from "./terrain-zero-layers.js";
 import { DetailStorage } from "./detail-storage.js";
+import { DetailShadowFilter } from "./detail-shadow-filter.js";
 import { TessellationCache } from "./tessellation-cache.js";
 import { installDetailInstancing } from "./detail-instancing.js";
 import { initializeShaderCompilerClient } from "./shader-compiler-client.mjs";
@@ -1024,7 +1025,7 @@ export class GPUFrontend {
     if (!token) return;
     this.flush();
     const info = this.info(token);
-    if(this.detailArena?.release(info))this.detailArena=null;
+    if(this.detailArena?.release(info)){this.detailArena=null;this.grassShadowFilter?.release();this.grassShadowFilter=null;}
     info?.gpu?.destroy();
     if (this.vao.element === token) this.vao.element = null;
     token.deleted = true;
@@ -1799,10 +1800,33 @@ export class GPUFrontend {
         const fallback = (p.tessellationFallback ??= {...p,key:p.key+":tessellation-budget-fallback",tessellation:null});
         this.encodeDraw(fallback, geometry, primitive, indexFormat, count, instances, first, baseVertex, firstInstance);
       }
-    } else this.encodePreparedDraw(record, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase);
+    } else {
+      const indirect = p.detailInstancing && indexFormat === "uint16"
+        ? this.grassShadowJob(p, geometry, record, count, instances, first, baseVertex) : null;
+      if (indirect) this.encodePreparedDraw({...record, bindings: indirect.bindings}, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase, indirect);
+      else this.encodePreparedDraw(record, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase);
+    }
     if (profileEnabled) profile.drawEncodingMs = (profile.drawEncodingMs || 0) + performance.now() - drawMark;
   }
-  encodePreparedDraw(record, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase) {
+  // Grass sun-shadow compaction. The engine marks sun cascades explicitly via
+  // nativeShadowCascade around their flushed draw ranges; everything else
+  // (main view, spot shadow maps) keeps the original draws.
+  grassShadowJob(p, geometry, record, count, instances, first, baseVertex) {
+    const cascade = this.nativeShadowCascade | 0;
+    const filter = this.grassShadowFilter ??= new DetailShadowFilter(this);
+    filter.beginFrame(diagnostics.frames);
+    if (!cascade) {
+      if (this.attachments().colors.filter(Boolean).length >= 2)
+        filter.captureMain(p, geometry, count, instances, first, baseVertex);
+      return null;
+    }
+    const job = filter.cascadeJob(p, geometry, cascade);
+    if (!job) return null;
+    const info = this.info(geometry.attrs.get(12).buffer);
+    return {args: job.args, offset: job.slot * 20,
+      bindings: record.bindings.map(b => b.info === info ? {buffer: job.output, offset: 0} : b)};
+  }
+  encodePreparedDraw(record, geometry, indexFormat, count, instances, first, baseVertex, firstInstance, uniformBase, indirect) {
     const s = this.state, bindings = record.bindings, indexed = indexFormat !== undefined;
     const {colors, depth} = this.attachments();
     const pass = this.begin();
@@ -1860,7 +1884,8 @@ export class GPUFrontend {
         pass.setIndexBuffer(b.gpu, indexFormat);
         cached.index = b.gpu; cached.indexFormat = indexFormat;
       }
-      pass.drawIndexed(
+      if (indirect) pass.drawIndexedIndirect(indirect.args, indirect.offset);
+      else pass.drawIndexed(
         count,
         instances,
         first, baseVertex, firstInstance,
@@ -2111,6 +2136,8 @@ export class GPUFrontend {
       if(this.detailArena)Object.assign(diagnostics,{detailStorageBytes:this.detailArena.bytes,
         detailStorageSlots:this.detailArena.entries.size,detailRecordUploadBytes:this.detailArena.metrics.recordBytes,
         detailIndexUploadBytes:this.detailArena.metrics.indexBytes,detailExpandedRecords:this.detailArena.metrics.expandedRecords,detailExpandedRanges:this.detailArena.metrics.expandedRanges,detailStorageEvictions:this.detailArena.metrics.evictions});
+      if(this.grassShadowFilter)Object.assign(diagnostics,{grassShadowCompacts:this.grassShadowFilter.metrics.compacts,
+        grassShadowJobs:this.grassShadowFilter.metrics.jobs,grassShadowFallbacks:this.grassShadowFilter.metrics.fallbacks});
       diagnostics.passBatchEnabled = this.passBatchEnabled;
       diagnostics.bindingBatchEnabled = this.bindingBatchEnabled;
       diagnostics.stateBatchEnabled = this.stateBatchEnabled;
