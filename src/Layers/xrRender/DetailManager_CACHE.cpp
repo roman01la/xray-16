@@ -59,6 +59,9 @@ void CDetailManager::cache_Task(int gx, int gz, Slot* D)
     D->type = stPending;
     D->sx = sx;
     D->sz = sz;
+#ifdef XR_PLATFORM_WEB
+    D->web_lastDistSq = -1.f;
+#endif
 
     D->vis.box.vMin.set(sx * dm_slot_size, DS.r_ybase(), sz * dm_slot_size);
     D->vis.box.vMax.set(D->vis.box.vMin.x + dm_slot_size, DS.r_ybase() + DS.r_yheight(), D->vis.box.vMin.z + dm_slot_size);

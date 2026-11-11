@@ -20,6 +20,10 @@
 
 #include "xrCore/Threading/TaskManager.hpp"
 
+#ifdef XR_PLATFORM_WEB
+#include <emscripten.h>
+#endif
+
 #if defined(XR_ARCHITECTURE_X86) || defined(XR_ARCHITECTURE_X64) || defined(XR_ARCHITECTURE_E2K) \
     || defined(XR_ARCHITECTURE_PPC64) || defined(XR_ARCHITECTURE_WASM64) || defined(XR_ARCHITECTURE_WASM32)
 #include <xmmintrin.h>
@@ -293,6 +297,38 @@ void CDetailManager::UpdateVisibleM()
     float fade_range = fade_limit - fade_start;
     float r_ssaCHEAP = 16 * r_ssaDISCARD;
 
+#ifdef XR_PLATFORM_WEB
+    if (web_classifyFadeLimit != fade_limit || web_classifySsaDiscard != r_ssaDISCARD)
+    {
+        web_classifyFadeLimit = fade_limit;
+        web_classifySsaDiscard = r_ssaDISCARD;
+        ++web_classifyParamsVersion;
+    }
+    ++web_grassStats.dispatches;
+    if (web_haveLastEye)
+    {
+        const float eyeDeltaSq = web_lastEye.distance_to_sqr(EYE);
+        if (eyeDeltaSq > 0.f)
+        {
+            ++web_grassStats.eyeMoves;
+            if (eyeDeltaSq > web_grassStats.eyeMaxDeltaSq)
+                web_grassStats.eyeMaxDeltaSq = eyeDeltaSq;
+        }
+    }
+    web_lastEye = EYE;
+    web_haveLastEye = true;
+    const bool web_timeRefresh = web_profileDetails;
+    // Fade/classification reads the eye through a 1/1024 m grid. The camera
+    // position oscillates by single float ULPs while standing still, which
+    // cannot change any visible fade result but would miss the exact-input
+    // cache and re-dirty every scheduled slot. Frustum, occlusion and cache
+    // updates keep the exact camera.
+    Fvector web_fadeEye;
+    web_fadeEye.set(floorf(EYE.x * 1024.f) / 1024.f, floorf(EYE.y * 1024.f) / 1024.f, floorf(EYE.z * 1024.f) / 1024.f);
+#else
+    const Fvector& web_fadeEye = EYE;
+#endif
+
     // Initialize 'vis' and 'cache'
     // Collect objects for rendering
     RImplementation.BasicStats.DetailVisibility.Begin();
@@ -349,14 +385,29 @@ void CDetailManager::UpdateVisibleM()
                 if (Device.dwFrame > S.frame)
                 {
                     // Calc fade factor (per slot)
-                    float dist_sq = EYE.distance_to_sqr(S.vis.sphere.P);
+                    float dist_sq = web_fadeEye.distance_to_sqr(S.vis.sphere.P);
                     if (dist_sq > fade_limit)
                         continue;
+
+                    S.frame = Device.dwFrame + Random.randI(15, 30);
+#ifdef XR_PLATFORM_WEB
+                    // The rebuild below reads only this distance, the fade/ssa
+                    // thresholds and the slot contents; equal inputs rewrite every
+                    // scale, class and group bit-identically, so keep r_items as-is.
+                    const bool web_refreshNeeded =
+                        S.web_lastDistSq != dist_sq || S.web_lastParamsVersion != web_classifyParamsVersion;
+                    S.web_lastDistSq = dist_sq;
+                    S.web_lastParamsVersion = web_classifyParamsVersion;
+                    web_grassStats.refreshed += web_refreshNeeded;
+                    web_grassStats.skipped += !web_refreshNeeded;
+                    const double web_refreshStart = (web_timeRefresh && web_refreshNeeded) ? emscripten_get_now() : 0.0;
+                    if (web_refreshNeeded)
+#endif
+                    {
                     float alpha = (dist_sq < fade_start) ? 0.f : (dist_sq - fade_start) / fade_range;
                     float alpha_i = 1.f - alpha;
                     float dist_sq_rcp = 1.f / dist_sq;
 
-                    S.frame = Device.dwFrame + Random.randI(15, 30);
                     for (int sp_id = 0; sp_id < dm_obj_in_slot; sp_id++)
                     {
                         SlotPart& sp = S.G[sp_id];
@@ -381,7 +432,11 @@ void CDetailManager::UpdateVisibleM()
                             // Membership may change inside the same SlotItemVec, so
                             // comparing the outer visible-list pointers alone is insufficient.
                             if (Item.scale_calculated != scale || Item.web_visibleClass != vis_id)
+                            {
+                                web_grassStats.scaleChanges += Item.scale_calculated != scale;
+                                web_grassStats.classChanges += Item.web_visibleClass != vis_id;
                                 xray::detail_cache::invalidate(sp.r_items, Item.web_visibleClass, vis_id);
+                            }
                             Item.web_visibleClass = static_cast<u8>(vis_id);
 #endif
                             Item.scale_calculated = scale;
@@ -393,6 +448,11 @@ void CDetailManager::UpdateVisibleM()
                             // 2 visible[vis_id][sp.id].push_back(&Item);
                         }
                     }
+                    }
+#ifdef XR_PLATFORM_WEB
+                    if (web_timeRefresh && web_refreshNeeded)
+                        web_grassStats.refreshMs += emscripten_get_now() - web_refreshStart;
+#endif
                 }
                 for (int sp_id = 0; sp_id < dm_obj_in_slot; sp_id++)
                 {

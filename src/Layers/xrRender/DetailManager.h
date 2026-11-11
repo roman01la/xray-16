@@ -109,6 +109,13 @@ public:
         int sx, sz; // координаты слота X x Y
         vis_data vis; //
         SlotPart G[dm_obj_in_slot]; //
+#ifdef XR_PLATFORM_WEB
+        // Exact inputs of the last scheduled fade/classification refresh.
+        // -1 never equals a real squared distance, so a new, recycled or
+        // re-decompressed slot always refreshes.
+        float web_lastDistSq = -1.f;
+        u32 web_lastParamsVersion = 0;
+#endif
 
         Slot()
         {
@@ -166,6 +173,24 @@ public:
     struct WebVisibility { xr_vector<u64> revisions; size_t cursor=0; u64 version=0; bool changed=false; };
     xr_vector<WebVisibility> web_visibleState[3];
     bool webPrepareOnly = false;
+    // Threshold epoch for the per-slot exact-input refresh cache.
+    u32 web_classifyParamsVersion = 1;
+    float web_classifyFadeLimit = -1.f;
+    float web_classifySsaDiscard = -1.f;
+    // Written only inside the calc task; read and reset on the render thread,
+    // which always joins that task first.
+    struct WebGrassStats
+    {
+        u32 dispatches = 0, eyeMoves = 0, refreshed = 0, skipped = 0;
+        u32 scaleChanges = 0, classChanges = 0;
+        float eyeMaxDeltaSq = 0.f;
+        double refreshMs = 0.0;
+    } web_grassStats;
+    Fvector web_lastEye{};
+    bool web_haveLastEye = false;
+    bool web_profileDetails = false;
+    // Instances drawn last frame per class (0 still, 1 wave1, 2 wave2).
+    u32 web_classInstances[3] = {};
 #endif
     vis_list m_visibles[3]; // 0=still, 1=Wave1, 2=Wave2
 

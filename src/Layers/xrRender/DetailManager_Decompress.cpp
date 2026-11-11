@@ -78,6 +78,7 @@ void CDetailManager::cache_Decompress(Slot* S)
     // Slot pool reuse can preserve pointer identities while replacing every value.
     for (auto& part : S->G)
         for (auto& items : part.r_items) ++items.revision;
+    S->web_lastDistSq = -1.f;
 #endif
     Slot& D = *S;
     D.type = stReady;

@@ -60,6 +60,21 @@ void CDetailManager::hw_Render(CBackend& cmd_list)
     cmd_list.set_Geometry(hw_Geom);
 
 #ifdef XR_PLATFORM_WEB
+    // The calc task that writes these statistics was joined before Render.
+    web_profileDetails = WebGPUDetailProfilingEnabled();
+    if (web_grassStats.dispatches >= 100)
+    {
+        if (web_profileDetails)
+            Msg("WEB_GRASS dispatches=%u eyeMoves=%u eyeMaxDelta=%.9f refreshed=%u skipped=%u"
+                " scaleChanges=%u classChanges=%u refreshMs=%.3f still=%u wave1=%u wave2=%u",
+                web_grassStats.dispatches, web_grassStats.eyeMoves, sqrtf(web_grassStats.eyeMaxDeltaSq),
+                web_grassStats.refreshed, web_grassStats.skipped,
+                web_grassStats.scaleChanges, web_grassStats.classChanges, web_grassStats.refreshMs,
+                web_classInstances[0], web_classInstances[1], web_classInstances[2]);
+        web_grassStats = {};
+    }
+    web_classInstances[0] = web_classInstances[1] = web_classInstances[2] = 0;
+
     // Prepare every material before the first consuming draw so gathers can
     // share a compute pass. Each batch retains its original draw order.
     {
@@ -242,6 +257,7 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
             else
                 ++reusedBatches;
             if (profileDetails) preparationMs += emscripten_get_now() - preparationStart;
+            if (!webPrepareOnly) web_classInstances[var_id] += instanceCount;
 #endif
 #ifdef XR_PLATFORM_WEB
             if (!webPrepareOnly)
