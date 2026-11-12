@@ -105,6 +105,19 @@ test('browser client sends device info and gameplay summary without hidden-tab f
   assert.ok(socPosts.some(post=>post.event==='playtime' && post.data.sessionId===socPending));
   assert.ok(socPosts.some(post=>post.event==='install'));
   assert.ok(storage.has('xray-analytics-playtime-v1:'+legacyPending));
+  const csPending=randomUUID();
+  storage.set('xray-analytics-playtime-v1:cs:'+csPending,pending(csPending));
+  globalThis.window=new EventTarget();
+  globalThis.document=new EventTarget();
+  const firstCsPost=posts.length;
+  startCampaignAnalytics('cs');
+  globalThis.window.dispatchEvent(new CustomEvent('xray-stream-progress',{detail:{phase:'install',ready:true,firstInstall:true}}));
+  await new Promise(setImmediate);
+  const csPosts=posts.slice(firstCsPost);
+  assert.ok(csPosts.every(post=>post.gameId==='cs'&&post.browserId===sample.browserId));
+  assert.ok(csPosts.some(post=>post.event==='playtime'&&post.data.sessionId===csPending));
+  assert.ok(csPosts.some(post=>post.event==='install'));
+  assert.ok(storage.has('xray-analytics-playtime-v1:'+legacyPending));
  }finally{for(const [key,descriptor]of saved){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key]}}
 });
 

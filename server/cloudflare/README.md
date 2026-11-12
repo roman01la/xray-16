@@ -97,6 +97,26 @@ The authenticated dashboard has a campaign selector. Visits, installs, device
 sessions, FPS and playtime are reported per campaign. Older CoP builds can still
 send events without a campaign ID.
 
+### Adding Clear Sky
+
+Stage Clear Sky using `misc/web/tools/stage-cs.mjs` with the optimized engine,
+normalized Ukrainian-voice game directory and content-addressed pack. Publish
+with `server/tools/publish-web.py --game cs`, then pass its publication directory
+to `stage.py --cs-publication` alongside the CoP and SoC publications.
+
+Before deploying the three-game Worker, apply `schema-cs.sql` after the existing
+schemas. It adds Clear Sky analytics tables and a separate movement table while retaining both existing games' rows. Upload and
+verify all Clear Sky chunks through `upload-chunks.py` before deploying the
+candidate static directory. Gzip delivery and incremental asset identity are
+shared by all three titles. Run `verify-browser.mjs` against the deployed origin
+to check all available game entries.
+
+Clear Sky uses `cs` for analytics, crash reports and its isolated browser data.
+It ships English and Ukrainian text with Ukrainian voices. Its startup wallpaper,
+card and original favicon are included in the root selector. The current local
+candidate and outstanding manual checks are recorded in
+`misc/web/CLEAR-SKY-INTEGRATION.md`.
+
 ### Movement tracks
 
 Apply `schema-positions.sql` before publishing a movement-enabled build. The
@@ -114,7 +134,7 @@ map artwork and uses a coordinate grid. The browser list shows the most recent
 200 tracked users and also accepts a pasted browser ID.
 
 Regenerate map assets with `node server/tools/export-analytics-maps.mjs GAME
-GAME_DATA server/web/analytics-maps/GAME`, where `GAME` is `cop` or `soc` and
+GAME_DATA server/web/analytics-maps/GAME`, where `GAME` is `cop`, `soc` or `cs` and
 `GAME_DATA` is the corresponding prepared original game directory.
 
 ### Crash reporting

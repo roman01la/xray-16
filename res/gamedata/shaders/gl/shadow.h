@@ -158,25 +158,27 @@ float shadow_extreme_quality( float3 tc )
             float4 d4;
             float  b;
 
-			d4.w = textureLodOffset (s_dmap, tc.xy, 0, int2( col, row ) ).x;
+			// Loop indices cannot be GLSL texture offsets. Shift normalized
+			// coordinates by the same texel distance for this dynamic kernel.
+			d4.w = textureLod (s_dmap, tc.xy + float2( col, row ) / float(SMAP_size), 0.0 ).x;
 			b = ( tc.z <= d4.w ) ? (0.0) : (1.0); 
 			vmask[ col + FS2 + 0 ] += ( ( tc.z <= d4.w ) ? ( uint(1) << uint( row + FS2 + 0 ) ) : uint(0) );
 			blockerCount     += b;
             avgBlockerDepth  += d4.w * b;
 			
-			d4.z = textureLodOffset (s_dmap, tc.xy, 0, int2( col+1, row ) ).x;
+			d4.z = textureLod (s_dmap, tc.xy + float2( col+1, row ) / float(SMAP_size), 0.0 ).x;
 			b = ( tc.z <= d4.z ) ? (0.0) : (1.0); 
 			vmask[ col + FS2 + 1 ] += ( ( tc.z <= d4.z ) ? ( uint(1) << uint( row + FS2 + 0 ) ) : uint(0) );
 			blockerCount     += b;
             avgBlockerDepth  += d4.z * b;
 			
-			d4.x = textureLodOffset (s_dmap, tc.xy, 0, int2( col, row+1 ) ).x;
+			d4.x = textureLod (s_dmap, tc.xy + float2( col, row+1 ) / float(SMAP_size), 0.0 ).x;
 			vmask[ col + FS2 + 0 ] += ( ( tc.z <= d4.x ) ? ( uint(1) << uint( row + FS2 + 1 ) ) : uint(0) );
 			b = ( tc.z <= d4.x ) ? (0.0) : (1.0); 
 			blockerCount     += b;
             avgBlockerDepth  += d4.x * b;
 
-			d4.y = textureLodOffset (s_dmap, tc.xy, 0, int2( col+1, row+1 ) ).x;
+			d4.y = textureLod (s_dmap, tc.xy + float2( col+1, row+1 ) / float(SMAP_size), 0.0 ).x;
 			vmask[ col + FS2 + 1 ] += ( ( tc.z <= d4.y ) ? ( uint(1) << uint( row + FS2 + 1 ) ) : uint(0) );
 			b = ( tc.z <= d4.y ) ? (0.0) : (1.0); 
 			blockerCount     += b;
@@ -209,13 +211,13 @@ float shadow_extreme_quality( float3 tc )
         for( int col = -FS2; col <= FS2; col += 2 )
         {
 #if ( defined(SM_5) ) || ( defined(SM_4_1) )
-            v1[(col+FS2)/2] = textureGatherOffset (s_smap, tc.xy, tc.z, 
-                                                   int2( col, row ) );
+            v1[(col+FS2)/2] = textureGather (s_smap,
+                tc.xy + float2( col, row ) / float(SMAP_size), tc.z );
 #else
-            v1[(col+FS2)/2].w = ( ( vmask[ col + FS2 + 0 ] & ( uint(1) << uint( row + FS2 + 0 ) ) ) ? 1.0 : 0.0 );
-            v1[(col+FS2)/2].z = ( ( vmask[ col + FS2 + 1 ] & ( uint(1) << uint( row + FS2 + 0 ) ) ) ? 1.0 : 0.0 );
-            v1[(col+FS2)/2].x = ( ( vmask[ col + FS2 + 0 ] & ( uint(1) << uint( row + FS2 + 1 ) ) ) ? 1.0 : 0.0 );
-            v1[(col+FS2)/2].y = ( ( vmask[ col + FS2 + 1 ] & ( uint(1) << uint( row + FS2 + 1 ) ) ) ? 1.0 : 0.0 );
+            v1[(col+FS2)/2].w = ( ( vmask[ col + FS2 + 0 ] & ( uint(1) << uint( row + FS2 + 0 ) ) ) != uint(0) ? 1.0 : 0.0 );
+            v1[(col+FS2)/2].z = ( ( vmask[ col + FS2 + 1 ] & ( uint(1) << uint( row + FS2 + 0 ) ) ) != uint(0) ? 1.0 : 0.0 );
+            v1[(col+FS2)/2].x = ( ( vmask[ col + FS2 + 0 ] & ( uint(1) << uint( row + FS2 + 1 ) ) ) != uint(0) ? 1.0 : 0.0 );
+            v1[(col+FS2)/2].y = ( ( vmask[ col + FS2 + 1 ] & ( uint(1) << uint( row + FS2 + 1 ) ) ) != uint(0) ? 1.0 : 0.0 );
 #endif
 		  if( col == -FS2 )
 		  {

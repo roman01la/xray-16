@@ -1,4 +1,5 @@
-function installTrackViewer() {
+// Keep embedded browser code independent of Worker bundler helper functions.
+export const trackViewerScript = String.raw`(function installTrackViewer() {
   const panel = document.querySelector('#movement');
   const user = panel.querySelector('[name=user]');
   const session = panel.querySelector('[name=session]');
@@ -129,6 +130,4 @@ function installTrackViewer() {
     if(data.users.length){user.value=data.users[0].browser_id;void chooseUser();}
     else status.textContent='No movement recorded yet. New gameplay sessions sample every 10 seconds and upload each minute.';
   }).catch(error=>{status.textContent=error.message;});
-}
-
-export const trackViewerScript = '('+installTrackViewer.toString()+')();';
+})();`;

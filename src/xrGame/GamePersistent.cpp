@@ -21,6 +21,7 @@
 #include "xrUICore/XML/UITextureMaster.h"
 
 #include "ai_space.h"
+#include "xrScriptEngine/script_engine.hpp"
 #if defined(XR_PLATFORM_POSIX) && !defined(XR_PLATFORM_WEB)
 #include "alife_simulator.h"
 #endif
@@ -441,6 +442,10 @@ void CGamePersistent::game_loaded()
             if (!m_intro->Start("game_loaded"))
                 m_intro->Destroy();
         }
+        else if (ClearSkyMode && !allow_game_intro())
+        {
+            start_game_intro();
+        }
     }
 }
 
@@ -455,6 +460,16 @@ void CGamePersistent::start_game_intro()
 {
     if (!allow_game_intro())
     {
+        // Clear Sky's movie completion starts the playable Marsh introduction.
+        // Preserve that transition when the browser skips the movie, as in
+        // IX-Ray's ixr_marsh_intro handling for new games without an intro.
+        if (ClearSkyMode && g_pGameLevel && g_pGameLevel->bReady &&
+            xr_strcmp(m_game_params.m_new_or_load, "new") == 0)
+        {
+            luabind::functor<void> startMarshIntro;
+            if (GEnv.ScriptEngine->functor("xr_effects.start_marsh_intro", startMarshIntro))
+                startMarshIntro();
+        }
         return;
     }
 

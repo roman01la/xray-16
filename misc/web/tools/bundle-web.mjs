@@ -48,6 +48,9 @@ export async function bundleWeb(frontend, output) {
       plugins:[{
         name:'browser-release-sources',
         setup(builder) {
+          builder.onResolve({filter:/^\.\/browser-window\.mjs$/}, () => ({
+            path:join(repo,'misc/web/page/browser-window.mjs'),
+          }));
           builder.onLoad({filter:/\.(?:mjs|js)$/},async args => {
             const file = basename(args.path);
             const path = dirname(args.path) === frontend && webOverrides.has(file)

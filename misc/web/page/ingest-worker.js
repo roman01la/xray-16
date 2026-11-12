@@ -188,7 +188,7 @@ async function seedUserConfig(app, useBrowserLanguage, localization) {
     const saves = await app.getDirectoryHandle("savedgames");
     let hasSave = false;
     for await (const [name, handle] of saves.entries()) {
-      if (handle.kind === "file" && /\.scop$/i.test(name)) {
+      if (handle.kind === "file" && /\.(scop|sav)$/i.test(name)) {
         hasSave = true;
         break;
       }
@@ -236,10 +236,10 @@ async function syncEngineData(root, appDirectory = '_appdata_', hosted = false) 
     await ensureDir(game, ["_appdata_", sub]);
   const prepareConfig = async () => {
     const app = await ensureDir(game, appDirectory.split("/"));
-    if (root === "stream-cop" || root === "stream-soc") {
+    if (["stream-cop", "stream-soc", "stream-cs"].includes(root)) {
       const detectLanguage = hosted && appDirectory === "_appdata_" &&
         (root === "stream-cop" || localization?.languages?.length > 1);
-      await seedUserConfig(app, detectLanguage, root === "stream-soc" ? localization : undefined);
+      await seedUserConfig(app, detectLanguage, root === "stream-cop" ? undefined : localization);
     }
     try {
       await migrateStockBindings(app);
@@ -259,7 +259,7 @@ async function readSaveTimes(root) {
   const saves = await app.getDirectoryHandle("savedgames");
   const entries = [];
   for await (const [name, handle] of saves.entries()) {
-    if (handle.kind !== "file" || !name.endsWith(".scop")) continue;
+    if (handle.kind !== "file" || !/\.(scop|sav)$/i.test(name)) continue;
     try {
       const {lastModified} = await handle.getFile();
       entries.push(`${Math.floor(lastModified / 1000)}\t/opfs/${root}/_appdata_/savedgames/${name}\0`);

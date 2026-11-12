@@ -11,7 +11,7 @@ export function validateBackup(value) {
   for (const file of value.files) {
     if (
       !file || typeof file.name !== "string" ||
-      !/^[^\\/\x00-\x1f]{1,160}\.(scop|dds)$/i.test(file.name) ||
+      !/^[^\\/\x00-\x1f]{1,160}\.(scop|sav|dds)$/i.test(file.name) ||
       names.has(file.name.toLowerCase())
     )
       throw Error("Invalid or duplicate save filename");
@@ -49,7 +49,7 @@ export async function prepareSaveBackup(directory, gameId = "cop") {
   const files = [];
   let totalBytes = 0;
   for await (const [name, handle] of directory.entries()) {
-    if (handle.kind !== "file" || !/\.(scop|dds)$/i.test(name)) continue;
+    if (handle.kind !== "file" || !/\.(scop|sav|dds)$/i.test(name)) continue;
     const file = await handle.getFile();
     totalBytes += file.size;
     if (totalBytes > 96 * 1024 * 1024)
@@ -76,7 +76,7 @@ async function saveDigest(bytes) {
 
 const IMPORT_JOURNAL = ".xray-save-import.json";
 export const saveLockName = (root) => `xray-saved-games:${root}`;
-const saveStem = (name) => name.replace(/\.(scop|dds)$/i, "").toLowerCase();
+const saveStem = (name) => name.replace(/\.(scop|sav|dds)$/i, "").toLowerCase();
 
 // Validate and decode the whole document before creating anything in OPFS.
 export async function readSaveBackup(file, gameId = "cop") {
@@ -91,10 +91,10 @@ export async function readSaveBackup(file, gameId = "cop") {
         await saveDigest(bytes) !== sha256)) throw Error(`Save checksum failed: ${name}`);
     files.push({ name, bytes });
   }
-  if (!files.some(({ name }) => /\.scop$/i.test(name))) throw Error("Backup contains no saved games");
+  if (!files.some(({ name }) => /\.(scop|sav)$/i.test(name))) throw Error("Backup contains no saved games");
   for (const { name, bytes } of files) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (/\.scop$/i.test(name)) {
+    if (/\.(scop|sav)$/i.test(name)) {
       // Match X-Ray's save header checks, and bound the decompression allocation.
       if (bytes.length < 13 || view.getUint32(0, true) !== 0xffffffff ||
           view.getUint32(4, true) < 7 || !view.getUint32(8, true) ||
@@ -140,9 +140,9 @@ export async function restoreSaveBackup(directory, files) {
   await recoverSaveImport(directory);
   const existing = new Set();
   for await (const [name] of directory.entries()) existing.add(saveStem(name));
-  const saves = new Set(files.filter(f => /\.scop$/i.test(f.name)).map(f => saveStem(f.name)));
+  const saves = new Set(files.filter(f => /\.(scop|sav)$/i.test(f.name)).map(f => saveStem(f.name)));
   const planned = files.filter(f => saves.has(saveStem(f.name)) && !existing.has(saveStem(f.name)));
-  const imported = new Set(planned.filter(f => /\.scop$/i.test(f.name)).map(f => saveStem(f.name))).size;
+  const imported = new Set(planned.filter(f => /\.(scop|sav)$/i.test(f.name)).map(f => saveStem(f.name))).size;
   if (!planned.length) return { imported: 0, skipped: saves.size };
   try {
     await writeFile(directory, IMPORT_JOURNAL, JSON.stringify({
@@ -165,7 +165,8 @@ export async function restoreSaveBackup(directory, files) {
 }
 
 export async function importSaveBackup(root, file) {
-  const files = await readSaveBackup(file, root === "stream-soc" ? "soc" : "cop");
+  const gameId = root === "stream-cs" ? "cs" : root === "stream-soc" ? "soc" : "cop";
+  const files = await readSaveBackup(file, gameId);
   if (!navigator.locks) throw Error("Save import needs a browser with Web Locks support.");
   return navigator.locks.request(saveLockName(root), { ifAvailable: true }, async lock => {
     if (!lock) throw Error("Close other game tabs before importing saves.");

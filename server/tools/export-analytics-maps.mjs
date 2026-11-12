@@ -6,8 +6,8 @@ import {join,resolve} from 'node:path';
 import {execFileSync} from 'node:child_process';
 
 const [game,source,output] = process.argv.slice(2);
-if (!['cop','soc'].includes(game) || !source || !output)
-  throw Error('Usage: export-analytics-maps.mjs cop|soc GAME_DATA OUTPUT');
+if (!['cop','soc','cs'].includes(game) || !source || !output)
+  throw Error('Usage: export-analytics-maps.mjs cop|soc|cs GAME_DATA OUTPUT');
 
 function sections(bytes) {
   const result = new Map();

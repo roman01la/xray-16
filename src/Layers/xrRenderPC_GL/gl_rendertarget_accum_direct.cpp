@@ -325,7 +325,7 @@ void CRenderTarget::accum_direct(CBackend& cmd_list, u32 sub_phase)
         //	Igor: draw volumetric here
         // if (ps_r2_ls_flags.test(R2FLAG_SUN_SHAFTS))
         if (RImplementation.o.advancedpp && (ps_r_sun_shafts > 0))
-            accum_direct_volumetric(sub_phase, Offset, m_shadow);
+            accum_direct_volumetric(RCache, sub_phase, Offset, m_shadow);
     }
 }
 
@@ -685,7 +685,7 @@ void CRenderTarget::accum_direct_cascade(CBackend& cmd_list, u32 sub_phase, Fmat
         //	Igor: draw volumetric here
         // if (ps_r2_ls_flags.test(R2FLAG_SUN_SHAFTS))
         if (RImplementation.o.advancedpp && (ps_r_sun_shafts > 0) && sub_phase == SE_SUN_FAR)
-            accum_direct_volumetric(sub_phase, Offset, m_shadow);
+            accum_direct_volumetric(cmd_list, sub_phase, Offset, m_shadow);
     }
 }
 
@@ -1093,7 +1093,7 @@ void CRenderTarget::accum_direct_lum(CBackend& cmd_list)
     }
 }
 
-void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, const Fmatrix& mShadow)
+void CRenderTarget::accum_direct_volumetric(CBackend& cmd_list, u32 sub_phase, const u32 Offset, const Fmatrix& mShadow)
 {
     PIX_EVENT(accum_direct_volumetric);
 
@@ -1107,9 +1107,9 @@ void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, con
     if ((sub_phase != SE_SUN_NEAR) && (sub_phase != SE_SUN_FAR))
         return;
 
-    phase_vol_accumulator(RCache);
+    phase_vol_accumulator(cmd_list);
 
-    RCache.set_ColorWriteEnable();
+    cmd_list.set_ColorWriteEnable();
 
     ref_selement Element = s_accum_direct_volumetric->E[0];
 
@@ -1131,24 +1131,24 @@ void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, con
         Device.mView.transform_dir(L_dir, fuckingsun->direction);
         L_dir.normalize();
 
-        //	Use g_combine_2UV that was set up by accum_direct
-        //	RCache.set_Geometry			(g_combine_2UV);
+        // Reuse the geometry prepared by the caller in this command list.
+        // Cascaded shadows use a cuboid, while the legacy path uses a quad.
 
         // setup
-        // RCache.set_Element			(s_accum_direct_volumetric->E[sub_phase]);
-        RCache.set_Element(Element);
+        // cmd_list.set_Element			(s_accum_direct_volumetric->E[sub_phase]);
+        cmd_list.set_Element(Element);
         if (useMinMaxSMThisFrame || !RImplementation.o.oldshadowcascades)
         {
-            RCache.set_CullMode(CULL_CCW);
+            cmd_list.set_CullMode(CULL_CCW);
         }
-        RCache.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, 0.f);
-        RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, 0.f);
-        RCache.set_c("m_shadow", mShadow);
+        cmd_list.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, 0.f);
+        cmd_list.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, 0.f);
+        cmd_list.set_c("m_shadow", mShadow);
         Fmatrix m_Texgen;
         m_Texgen.identity();
-        RCache.xforms.set_W(m_Texgen);
-        RCache.xforms.set_V(Device.mView);
-        RCache.xforms.set_P(Device.mProject);
+        cmd_list.xforms.set_W(m_Texgen);
+        cmd_list.xforms.set_V(Device.mView);
+        cmd_list.xforms.set_P(Device.mProject);
         //u_compute_texgen_screen(m_Texgen);
         float _w = float(Device.dwWidth);
         float _h = float(Device.dwHeight);
@@ -1163,9 +1163,9 @@ void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, con
             0.5f + o_w, 0.5f + o_h, 0.0f, 1.0f
             //0.5f, 0.5f , 0.0f, 1.0f
         };
-        m_Texgen.mul(m_TexelAdjust, RCache.xforms.m_wvp);
-        RCache.set_c("m_texgen", m_Texgen);
-        //		RCache.set_c				("m_sunmask",			m_clouds_shadow);
+        m_Texgen.mul(m_TexelAdjust, cmd_list.xforms.m_wvp);
+        cmd_list.set_c("m_texgen", m_Texgen);
+        //		cmd_list.set_c				("m_sunmask",			m_clouds_shadow);
 
         // nv-DBT
         float zMin, zMax;
@@ -1183,7 +1183,7 @@ void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, con
             zMax = ps_r2_sun_far;
         }
 
-        RCache.set_c("volume_range", zMin, zMax, 0.f, 0.f);
+        cmd_list.set_c("volume_range", zMin, zMax, 0.f, 0.f);
 
         Fvector center_pt;
         center_pt.mad(Device.vCameraPosition, Device.vCameraDirection, zMin);
@@ -1197,16 +1197,16 @@ void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, con
         //	TODO: DX11: Check if DX11 has analog for NV DBT
         //		if (u_DBT_enable(zMin,zMax))	{
         // z-test always
-        //			RCache.set_ZFunc(D3DCMP_ALWAYS);
+        //			cmd_list.set_ZFunc(D3DCMP_ALWAYS);
         //			HW.pDevice->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
         //		}
         //		else
         {
             //	TODO: DX11: Implement via different passes
             if (SE_SUN_NEAR == sub_phase)
-                RCache.set_ZFunc(D3DCMP_GREATER);
+                cmd_list.set_ZFunc(D3DCMP_GREATER);
             else
-                RCache.set_ZFunc(D3DCMP_ALWAYS);
+                cmd_list.set_ZFunc(D3DCMP_ALWAYS);
         }
 
         // Fetch4 : enable
@@ -1217,46 +1217,46 @@ void CRenderTarget::accum_direct_volumetric(u32 sub_phase, const u32 Offset, con
         //		}
 
         // setup stencil: we have to draw to both lit and unlit pixels
-        // RCache.set_Stencil			(TRUE,D3DCMP_LESSEQUAL,dwLightMarkerID,0xff,0x00);
+        // cmd_list.set_Stencil			(TRUE,D3DCMP_LESSEQUAL,dwLightMarkerID,0xff,0x00);
         // if( ! RImplementation.o.msaa )
         {
             if (RImplementation.o.oldshadowcascades)
-                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+                cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
             else
-                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 8, 0, 16);
+                cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 8, 0, 16);
         }
         /*else
         {
             // per pixel
-            RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+            cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
 
             // per sample
             if (RImplementation.o.msaa_opt)
             {
-                RCache.set_Element(s_accum_direct_volumetric_msaa[0]->E[0]);
-                RCache.set_Stencil(TRUE, D3DCMP_ALWAYS, 0xff, 0xff, 0xff);
+                cmd_list.set_Element(s_accum_direct_volumetric_msaa[0]->E[0]);
+                cmd_list.set_Stencil(TRUE, D3DCMP_ALWAYS, 0xff, 0xff, 0xff);
                 if (SE_SUN_NEAR == sub_phase)
-                    RCache.set_ZFunc(D3DCMP_GREATER);
+                    cmd_list.set_ZFunc(D3DCMP_GREATER);
                 else
-                    RCache.set_ZFunc(D3DCMP_LESSEQUAL);
-                RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+                    cmd_list.set_ZFunc(D3DCMP_LESSEQUAL);
+                cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
             }
             else
             {
                 for (u32 i = 0; i < RImplementation.o.msaa_samples; ++i)
                 {
-                    RCache.set_Element(s_accum_direct_volumetric_msaa[i]->E[0]);
+                    cmd_list.set_Element(s_accum_direct_volumetric_msaa[i]->E[0]);
                     StateManager.SetSampleMask(u32(1) << i);
-                    RCache.set_Stencil(TRUE, D3DCMP_ALWAYS, 0xff, 0xff, 0xff);
+                    cmd_list.set_Stencil(TRUE, D3DCMP_ALWAYS, 0xff, 0xff, 0xff);
                     if (SE_SUN_NEAR == sub_phase)
-                        RCache.set_ZFunc(D3DCMP_GREATER);
+                        cmd_list.set_ZFunc(D3DCMP_GREATER);
                     else
-                        RCache.set_ZFunc(D3DCMP_LESSEQUAL);
-                    RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+                        cmd_list.set_ZFunc(D3DCMP_LESSEQUAL);
+                    cmd_list.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
                 }
                 StateManager.SetSampleMask(0xffffffff);
             }
-            RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
+            cmd_list.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);
         }*/
 
         // Fetch4 : disable

@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {ChunkReader,CHUNK_BYTES} from '../streaming/chunk-reader.mjs';
 import {validatePack,streamingConfig} from '../page/streaming.js';
+import {gameInstallDirectory} from '../../../server/web/opfs-store.mjs';
+test('each campaign keeps its own installed game data', () => {
+  assert.equal(gameInstallDirectory('cop'), 'xray-install-v1');
+  assert.equal(gameInstallDirectory('soc'), 'xray-install-soc-v1');
+  assert.equal(gameInstallDirectory('cs'), 'xray-install-cs-v1');
+  assert.equal(new Set(['cop', 'soc', 'cs'].map(gameInstallDirectory)).size, 3);
+});
 const hash=b=>createHash('sha256').update(b).digest('hex');
 function fixture(){
  const a=new Uint8Array(CHUNK_BYTES).fill(65),b=new Uint8Array(5).fill(66),c=new Uint8Array(CHUNK_BYTES).fill(67);

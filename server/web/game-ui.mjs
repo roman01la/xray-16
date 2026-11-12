@@ -1,8 +1,10 @@
+import {installBrowserWindowMode} from './browser-window.mjs';
 import {requireGameCompatibility, showCompatibilityFailure} from './compatibility.mjs';
 import {ARCHIVE_CHUNKS, ARCHIVE_DESCRIPTORS, gameInstallDirectory, LEGACY_CHUNKS, LEGACY_DESCRIPTORS} from './opfs-store.mjs';
 import {startCampaignAnalytics} from './analytics-client.mjs';
 
-const gameId=document.documentElement.dataset.game==='soc'?'soc':'cop';
+const selectedGame=document.documentElement.dataset.game;
+const gameId=['soc','cs'].includes(selectedGame)?selectedGame:'cop';
 const streamRoot=`stream-${gameId}`;
 startCampaignAnalytics(gameId);
 // Reporting must not prevent startup when a browser blocks or cannot fetch it.
@@ -10,51 +12,7 @@ void import('./crash-reporter.mjs').then(({installCrashReporter}) => {
  installCrashReporter(gameId);
 }).catch(error => console.warn('Crash reporting unavailable', error));
 
-// Request fullscreen on an element owned by the top document. Keyboard
-// Lock cannot be requested by the release iframe itself.
-const frame=window.frameElement;
-const fullscreenTarget=frame ?? document.documentElement;
-const fullscreenDocument=fullscreenTarget.ownerDocument;
-const isFullscreen=()=>fullscreenDocument.fullscreenElement===fullscreenTarget;
-if(fullscreenDocument.fullscreenEnabled && fullscreenTarget.requestFullscreen){
- const keyboard=fullscreenDocument.defaultView.navigator.keyboard;
- let locked=false,pending=false,activeDocument=true;
- const syncKeyboard=async()=>{
-  if(!activeDocument || !isFullscreen()){
-   if(locked){keyboard.unlock();locked=false;}
-   return;
-  }
-  if(locked || pending || !keyboard?.lock)return;
-  pending=true;
-  try{
-   await keyboard.lock(['Escape']);
-   if(activeDocument && isFullscreen())locked=true;
-   else keyboard.unlock();
-  } catch { /* Keep ordinary fullscreen when Keyboard Lock is unavailable. */ }
-  finally{pending=false;}
- };
- window.xrayBrowserFullscreen={
-  isActive:isFullscreen,
-  async set(enabled){
-   try{
-    if(enabled && !isFullscreen())await fullscreenTarget.requestFullscreen();
-    if(!enabled && isFullscreen())await fullscreenDocument.exitFullscreen();
-   } catch(error) { console.warn('Could not change the game window mode:',error); }
-  },
- };
- fullscreenDocument.addEventListener('fullscreenchange',syncKeyboard);
- window.addEventListener('pagehide',()=>{
-  activeDocument=false;
-  fullscreenDocument.removeEventListener('fullscreenchange',syncKeyboard);
-  syncKeyboard();
- });
- window.addEventListener('pageshow',()=>{
-  activeDocument=true;
-  fullscreenDocument.addEventListener('fullscreenchange',syncKeyboard);
-  syncKeyboard();
- });
- syncKeyboard();
-}
+installBrowserWindowMode();
 
 // SDL listens for canvas mouse input and document mouse releases. Keep
 // unlocked movement and the click that captures the mouse out of the engine.

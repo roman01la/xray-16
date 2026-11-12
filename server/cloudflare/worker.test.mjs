@@ -1,7 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFileSync} from 'node:fs';
 import {record,summary,prune,tracks} from './analytics-d1.mjs';import worker from './worker.mjs';
+import {crashEnvelope} from './crash-sentry.mjs';
+const schemaCs=readFileSync(new URL('./schema-cs.sql',import.meta.url),'utf8');
 const schemaSoc=readFileSync(new URL('./schema-soc.sql',import.meta.url),'utf8');
-function fixture({migrate=true}={}){const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));if(migrate)sqlite.exec(schemaSoc);sqlite.exec(readFileSync(new URL('./schema-positions.sql',import.meta.url),'utf8'));sqlite.exec('PRAGMA foreign_keys=ON');
+function fixture({migrate=true}={}){const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));if(migrate)sqlite.exec(schemaSoc);sqlite.exec(readFileSync(new URL('./schema-positions.sql',import.meta.url),'utf8'));if(migrate)sqlite.exec(schemaCs);sqlite.exec('PRAGMA foreign_keys=ON');
  const db={prepare(sql){return {bind(...args){this.args=args;return this;},args:[],async run(){return sqlite.prepare(sql).run(...this.args);},async all(){return {results:sqlite.prepare(sql).all(...this.args)};},sql};},async batch(statements){sqlite.exec('BEGIN');try{const rows=statements.map(s=>({results:sqlite.prepare(s.sql).all(...s.args)}));sqlite.exec('COMMIT');return rows;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};return {db,sqlite};}
 const browserId='11111111-1111-4111-8111-111111111111';
 const event=(name,id=crypto.randomUUID())=>({browserId,eventId:id,event:name});
@@ -52,6 +54,7 @@ test('adding SoC preserves CoP history and separates every metric for the same b
   const previous=await summary(db,10);
   sqlite.exec(schemaSoc);
   sqlite.exec(schemaSoc);
+  sqlite.exec(schemaCs);
   assert.deepEqual(await summary(db,10),previous);
   assert.equal((await summary(db,10,'soc')).browsers,0);
 
@@ -159,4 +162,59 @@ test('movement batches are atomic, idempotent, campaign-scoped and authenticated
   await prune(db,31*86400000);
   assert.equal((await tracks(db,'soc')).users.length,0);
  } finally {sqlite.close();}
+});
+
+
+test('Clear Sky migration preserves both campaigns and separates all telemetry',async()=>{
+ const {db,sqlite}=fixture();
+ const sessionId=crypto.randomUUID(),release='b'.repeat(64);
+ try {
+  for(const [index,gameId] of ['cop','soc','cs'].entries()) {
+   const base={...event('new_campaign'),gameId};
+   await record(db,base,100);
+   await record(db,{...base,event:'device',data:{sessionId,release,gpuDescription:gameId}},100);
+   await record(db,{...base,event:'performance',data:{sessionId,release,frames:300*(index+1),elapsedMs:10000}},100);
+   await record(db,{...base,event:'playtime',data:{sessionId,release,elapsedMs:1000*(index+1)}},100);
+   await record(db,{...base,event:'movement',data:{sessionId,release,points:[{t:100,map:gameId==='cs'?'marsh':'zaton',x:index,y:1,z:2}]}},100);
+  }
+  sqlite.exec(schemaCs);
+  sqlite.exec(schemaCs);
+  for(const [index,gameId] of ['cop','soc','cs'].entries()) {
+   const result=await summary(db,100,gameId);
+   assert.equal(result.browsers,1);
+   assert.equal(result.performance[0].fps,30*(index+1));
+   assert.equal(result.performance[0].gpu,gameId);
+   assert.equal(result.playtime.totalMs,1000*(index+1));
+   assert.equal((await tracks(db,gameId,{browserId,sessionId})).points[0].x,index);
+  }
+  await prune(db,31*86400000);
+  assert.equal((await summary(db,31*86400000,'cs')).performance.length,0);
+  assert.equal((await summary(db,31*86400000,'cs')).playtime.totalMs,3000);
+ }finally{sqlite.close();}
+});
+
+test('Clear Sky crashes carry their own campaign tag and preserve the native assertion',()=>{
+ const envelope=crashEnvelope({game:'cs',release:'a'.repeat(64),level:'marsh',kind:'assertion',
+  message:'Expression : _valid(bi.mTransform)\nFunction : CLBone',stack:'at xr_3da.wasm:0x211a95'},
+  'https://abc@o123.ingest.us.sentry.io/456');
+ const captured=JSON.parse(envelope.trimEnd().split('\n')[2]);
+ assert.equal(captured.tags.game,'cs');
+ assert.equal(captured.tags.map,'marsh');
+ assert.deepEqual(captured.fingerprint,['cs','assertion','_valid(bi.mTransform)','CLBone']);
+});
+
+test('Clear Sky tracks preserve the original two-game table',()=>{
+ const sqlite=new DatabaseSync(':memory:');
+ try {
+  const positions=readFileSync(new URL('./schema-positions.sql',import.meta.url),'utf8');
+  sqlite.exec(positions);
+  const insert=()=>sqlite.prepare('INSERT INTO analytics_positions VALUES (?,?,?,?,?,?,?,?,?)');
+  insert().run('cop',browserId,'session',1,'zaton',1,2,3,1);
+  insert().run('soc',browserId,'session',1,'l01_escape',1,2,3,1);
+  assert.throws(()=>insert().run('cs',browserId,'session',1,'marsh',1,2,3,1));
+  sqlite.exec(schemaCs);
+  sqlite.prepare('INSERT INTO analytics_cs_positions VALUES (?,?,?,?,?,?,?,?,?)').run('cs',browserId,'session',1,'marsh',1,2,3,1);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM analytics_positions').get().n,2);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM analytics_cs_positions').get().n,1);
+ }finally{sqlite.close();}
 });

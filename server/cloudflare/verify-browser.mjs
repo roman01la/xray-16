@@ -19,7 +19,7 @@ try{
  const frame=document.querySelector('iframe');
  const buttons=[...document.querySelectorAll('button[data-game][data-entry]')];
  const entries=buttons.length?buttons.map(button=>[button.dataset.game,button.dataset.entry]):[['cop',frame.getAttribute('src')]];
- if(location.pathname!=='/' || (buttons.length && (frame.hasAttribute('src') || buttons.length!==2)))
+ if(location.pathname!=='/' || (buttons.length && (frame.hasAttribute('src') || !([2,3].includes(buttons.length)))))
    throw Error('Game picker did not open at the site root');
  const sha=async b=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',b)),x=>x.toString(16).padStart(2,'0')).join('');
  const titles=[];
@@ -50,7 +50,7 @@ try{
 })()`});
  if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description||result.exceptionDetails.text);
  const verified=result.result.value;
- if(verified.titles.length===2){
+ if(verified.titles.length>1){
   for(const {game} of verified.titles){
    await send('Page.navigate',{url:base});
    const clicked=await send('Runtime.evaluate',{awaitPromise:true,returnByValue:true,expression:`(async()=>{

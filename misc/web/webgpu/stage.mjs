@@ -23,6 +23,7 @@ for (const file of [
   "audio-worklet.mjs",
   "ingest-worker.js",
   "stock-bindings.mjs",
+  "browser-window.mjs",
   "engine_data.json",
   "storage-manager.js",
   "save-format.js",
@@ -119,7 +120,8 @@ loader = loader.replace(canvasReceived,
 // Pack installation completes before engine creation. Game reads never fetch.
 const streamHook=/new module\.ChunkReader(?:\(\))?(?=\);)/;
 if(!streamHook.test(loader))throw Error('Streaming reader hook changed');
-const gameId = process.env.XRAY_WEB_GAME_ID === "soc" ? "soc" : "cop";
+const selectedGame = process.env.XRAY_WEB_GAME_ID;
+const gameId = ["soc", "cs"].includes(selectedGame) ? selectedGame : "cop";
 loader=loader.replace(streamHook, `new module.ChunkReader({mode:'installed',gameId:'${gameId}'})`);
 await writeFile(join(output, "xr_3da.js"), loader);
 let main =

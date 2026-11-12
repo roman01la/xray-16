@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage an existing immutable release without changing its URLs or file hashes."""
 import argparse,hashlib,html,json,pathlib,re,shutil
-p=argparse.ArgumentParser();p.add_argument('--publication',required=True);p.add_argument('--soc-publication');p.add_argument('--retain',action='append',default=[]);p.add_argument('--retained-assets',type=pathlib.Path);p.add_argument('--output',default=str(pathlib.Path(__file__).parent/'.assets'));a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--publication',required=True);p.add_argument('--soc-publication');p.add_argument('--cs-publication');p.add_argument('--retain',action='append',default=[]);p.add_argument('--retained-assets',type=pathlib.Path);p.add_argument('--output',default=str(pathlib.Path(__file__).parent/'.assets'));a=p.parse_args()
 web=pathlib.Path(__file__).resolve().parents[1]/'web'
 out=pathlib.Path(a.output);out.mkdir(parents=True,exist_ok=True)
 def publication(folder, game):
@@ -14,6 +14,7 @@ def publication(folder, game):
 
 current=publication(a.publication,'cop')
 soc=publication(a.soc_publication,'soc') if a.soc_publication else None
+cs=publication(a.cs_publication,'cs') if a.cs_publication else None
 def stage_files(folder, retained_assets=None):
  base=pathlib.Path(folder);m=json.loads((base/'manifest.json').read_text());sources=json.loads((base/'sources.json').read_text())
  for url,item in m['files'].items():
@@ -32,20 +33,29 @@ def stage_files(folder, retained_assets=None):
 
 for folder in a.retain:
  stage_files(folder,a.retained_assets)
-stage_files(a.publication)
+stage_files(a.publication,a.retained_assets)
 if soc:
- stage_files(a.soc_publication)
+ stage_files(a.soc_publication,a.retained_assets)
+if cs:
+ stage_files(a.cs_publication)
 shutil.copytree(web/'analytics-maps',out/'analytics-maps',dirs_exist_ok=True)
 entry=html.escape(current['entry'],quote=True);icon=current['entry'].split('?')[0].rsplit('/',1)[0]+'/favicon.ico'
-if soc:
+if soc or cs:
     picker=(web/'game-picker.html').read_text()
-    picker=picker.replace('__COP_ENTRY__',entry).replace('__SOC_ENTRY__',html.escape(soc['entry'],quote=True))
+    for game,manifest in [('cop',current),('soc',soc),('cs',cs)]:
+        if manifest:
+            picker=picker.replace('__'+game.upper()+'_ENTRY__',html.escape(manifest['entry'],quote=True))
+        else:
+            picker=re.sub(r'<button[^>]*data-game="'+game+r'"[^>]*>[\s\S]*?</button>','',picker)
+            picker=re.sub(r'<div class="backdrop backdrop-'+game+r'"[^>]*></div>','',picker)
     (out/'index.html').write_text(picker)
     shutil.copyfile(out/icon.lstrip('/'),out/'favicon.ico')
     shutil.copyfile(out/'favicon.ico',out/'favicon-cop.ico')
-    soc_icon=soc['entry'].split('?')[0].rsplit('/',1)[0]+'/favicon.ico'
-    shutil.copyfile(out/soc_icon.lstrip('/'),out/'favicon-soc.ico')
-    for name in ('startup-wallpaper.webp','startup-wallpaper-soc.webp','game-card-cop.webp','game-card-soc.webp'):
+    for game,manifest in [('soc',soc),('cs',cs)]:
+        if manifest:
+            game_icon=manifest['entry'].split('?')[0].rsplit('/',1)[0]+'/favicon.ico'
+            shutil.copyfile(out/game_icon.lstrip('/'),out/f'favicon-{game}.ico')
+    for name in ('startup-wallpaper.webp','startup-wallpaper-soc.webp','startup-wallpaper-cs.webp','game-card-cop.webp','game-card-soc.webp','game-card-cs.webp'):
         shutil.copyfile(web/name,out/name)
     shutil.copytree(web/'picker',out/'picker',dirs_exist_ok=True)
 else:
@@ -65,4 +75,4 @@ else:
 (out/'_redirects').write_text('/ /index.html 200\n/packs/:pack/chunks/* https://assets.stalker-online.xyz/chunks/:splat.gz 302\n')
 count=sum(1 for f in out.rglob('*') if f.is_file())
 if count>20000:raise ValueError('Too many static assets')
-print(json.dumps({'files':count,'entry':current['entry'],'socEntry':soc['entry'] if soc else None,'output':str(out)}))
+print(json.dumps({'files':count,'entry':current['entry'],'socEntry':soc['entry'] if soc else None,'csEntry':cs['entry'] if cs else None,'output':str(out)}))

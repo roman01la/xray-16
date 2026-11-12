@@ -9,7 +9,7 @@ const clean = value => value
   .replace(/(?:[A-Z]:[\\/]|\/|\\)(?:[^\n<>:"|?*]+[\\/])+([^\s\\/]+)/gi, '$1');
 
 export function crashEnvelope(report, dsn) {
-  if (!report || !['soc', 'cop'].includes(report.game) ||
+  if (!report || !['soc', 'cop', 'cs'].includes(report.game) ||
       typeof report.release !== 'string' || !/^[a-f0-9]{64}$/.test(report.release) ||
       !kinds.has(report.kind) || typeof report.message !== 'string' || !report.message.trim() ||
       report.message.length > 1500 || typeof report.stack !== 'string' || report.stack.length > 3500)

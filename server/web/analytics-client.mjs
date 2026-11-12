@@ -22,7 +22,7 @@ export function startCampaignAnalytics(gameId = 'cop') {
       params.get('storage') === 'manage' || params.get('saves') === 'import' || params.has('save')) return;
 
   // Keep CoP's existing pending events readable after a release update.
-  const suffix = gameId === 'soc' ? ':soc' : '';
+  const suffix = gameId === 'cop' ? '' : ':' + gameId;
   const installKey = 'xray-analytics-pending-install-v1' + suffix;
   const browser = getBrowserId().catch(() => null);
   async function send(event,eventId,data) {

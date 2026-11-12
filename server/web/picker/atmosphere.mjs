@@ -7,6 +7,7 @@ struct Scene {
   cover: vec2f,
   seconds: f32,
   soc: f32,
+  cs: f32,
 }
 @group(0) @binding(0) var<uniform> scene: Scene;
 
@@ -74,11 +75,16 @@ fn roadside(uv: vec2f, t: f32) -> vec4f {
   return over(color(vec3f(0.66, 0.70, 0.70), rain),
               color(vec3f(0.49, 0.51, 0.49), mistMask * smoothstep(0.30, 0.81, mist) * 0.14));
 }
+fn wetland(uv: vec2f, t: f32) -> vec4f {
+  let low = smoothstep(0.46, 0.60, uv.y) * (1.0 - smoothstep(0.84, 0.98, uv.y));
+  let fog = cloud(uv * vec2f(8, 35) - vec2f(t * 0.13, t * 0.018));
+  return color(vec3f(0.57, 0.64, 0.65), low * smoothstep(0.34, 0.84, fog) * 0.20);
+}
 @fragment fn weather(in: Screen) -> @location(0) vec4f {
   let uv = (in.uv - 0.5) * scene.cover + 0.5;
-  if (scene.soc <= 0.0) { return marsh(uv, scene.seconds); }
-  if (scene.soc >= 1.0) { return roadside(uv, scene.seconds); }
-  return mix(marsh(uv, scene.seconds), roadside(uv, scene.seconds), scene.soc);
+  let cop = max(0.0, 1.0 - scene.soc - scene.cs);
+  return marsh(uv, scene.seconds) * cop + roadside(uv, scene.seconds) * scene.soc
+    + wetland(uv, scene.seconds) * scene.cs;
 }
 `;
 const plants = common + /* wgsl */ `
@@ -100,10 +106,12 @@ struct Leaf {
   let t = scene.seconds;
   let gust = sin(t * 1.4 + placement.x * 11.0) * 0.059 +
              sin(t * 2.8 + placement.y * 18.0) * 0.023;
-  let bend = h * h * (gust + mix(0.07, -0.08, material.x));
+  let bend = h * h * (gust + mix(0.07, -0.08, min(material.x, 1.0)));
   let point = placement.xy + vec2f((x + bend) * ${1 / wallpaperAspect}, -h + z * 0.13) * placement.z;
   let screen = (point - 0.5) / scene.cover + 0.5;
-  let weight = mix(1.0 - scene.soc, scene.soc, material.x);
+  var weight = max(0.0, 1.0 - scene.soc - scene.cs);
+  if (material.x > 1.5) { weight = scene.cs; }
+  else if (material.x > 0.5) { weight = scene.soc; }
   let shade = material.y * mix(0.67, 1.09, clamp(h, 0.0, 1.0));
   return Leaf(vec4f(screen * vec2f(2, -2) + vec2f(-1, 1), 0, 1), uv, shade, weight);
 }
@@ -123,6 +131,10 @@ const vegetation = {
     [0.100, 0.969, 0.113, 2.01, 0.82], [0.169, 0.942, 0.072, 0.42, 0.76],
     [0.817, 0.919, 0.080, 1.62, 0.73], [0.878, 0.967, 0.112, 0.74, 0.78],
     [0.958, 0.988, 0.163, 2.16, 0.71], [1.004, 1.015, 0.210, 0.37, 0.72],
+  ] },
+  cs: { texture: 'reeds.webp', scene: 2, placements: [
+    [0.035,1.015,0.20,0.8,0.80], [0.12,0.98,0.12,1.8,0.82],
+    [0.85,0.99,0.13,0.4,0.77], [0.98,1.015,0.20,2.0,0.80],
   ] },
   soc: { texture: 'brush.webp', scene: 1, placements: [
     [0.041, 0.990, 0.162, 0.87, 0.70], [0.128, 0.967, 0.118, 1.67, 0.73],
@@ -158,6 +170,7 @@ async function plantMesh(device, pipeline, uniform, sampler, model, { texture, s
     return {
       vertices: upload(device, Float32Array.from(model.vertices), GPUBufferUsage.VERTEX),
       indices: upload(device, Uint16Array.from(model.indices), GPUBufferUsage.INDEX),
+      scene,
       instances: upload(device, Float32Array.from(placements.flatMap(([x, y, h, angle, shade]) =>
         [x, y, h, angle, scene, shade])), GPUBufferUsage.VERTEX),
       indexCount: model.indices.length,
@@ -176,7 +189,7 @@ async function plantMesh(device, pipeline, uniform, sampler, model, { texture, s
   }
 }
 
-export async function startAtmosphere(canvas, socBackdrop, signal) {
+export async function startAtmosphere(canvas, backdrops, signal) {
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'low-power' });
   if (!adapter || signal.aborted) return;
   const context = canvas.getContext('webgpu');
@@ -227,11 +240,11 @@ export async function startAtmosphere(canvas, socBackdrop, signal) {
       });
     const [weather, plant, models] = await Promise.all([weatherPipeline, plantPipeline, vegetationData]);
     if (disposed) return;
-    const data = new Float32Array(4);
+    const data = new Float32Array(8);
     const uniform = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     const meshes = await Promise.all(Object.entries(vegetation).map(async ([game, style]) =>
-      plantMesh(device, plant, uniform, sampler, models[game], style, signal)));
+      plantMesh(device, plant, uniform, sampler, models[game] ?? models.cop, style, signal)));
     if (disposed) return;
     const weatherBindGroup = device.createBindGroup({
       layout: weather.getBindGroupLayout(0),
@@ -259,7 +272,8 @@ export async function startAtmosphere(canvas, socBackdrop, signal) {
       data[0] = Math.min(1, w / h / wallpaperAspect);
       data[1] = Math.min(1, h / w * wallpaperAspect);
       data[2] = (now - started) * 0.001;
-      data[3] = Number(getComputedStyle(socBackdrop).opacity);
+      data[3] = backdrops.soc ? Number(getComputedStyle(backdrops.soc).opacity) : 0;
+      data[4] = backdrops.cs ? Number(getComputedStyle(backdrops.cs).opacity) : 0;
       device.queue.writeBuffer(uniform, 0, data);
 
       const encoder = device.createCommandEncoder();
@@ -271,8 +285,10 @@ export async function startAtmosphere(canvas, socBackdrop, signal) {
       pass.setBindGroup(0, weatherBindGroup);
       pass.draw(3);
       pass.setPipeline(plant);
-      for (const [i, mesh] of meshes.entries()) {
-        if ((i === 0 && data[3] >= 1) || (i === 1 && data[3] <= 0)) continue;
+      for (const mesh of meshes) {
+        const scene = mesh.scene;
+        const opacity = scene === 2 ? data[4] : scene === 1 ? data[3] : 1 - data[3] - data[4];
+        if (opacity <= 0) continue;
         pass.setBindGroup(0, mesh.bindGroup);
         pass.setVertexBuffer(0, mesh.vertices);
         pass.setVertexBuffer(1, mesh.instances);

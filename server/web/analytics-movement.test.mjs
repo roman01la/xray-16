@@ -3,6 +3,27 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createMovementTracker,validMovementData} from './analytics-movement.mjs';
 import {validateAnalyticsEvent} from './analytics-http.mjs';
+import {runInNewContext} from 'node:vm';
+import {trackViewerScript} from './analytics-tracks.mjs';
+
+test('embedded track viewer runs without server-side bundler helpers', async () => {
+  const status = {};
+  const element = {value:'', addEventListener(){}, replaceChildren(){}, append(){}};
+  const canvas = {...element, hidden:true, getContext:()=>({})};
+  const panel = {
+    dataset:{game:'cop'},
+    querySelector:selector => selector === '[role=status]' ? status : selector === 'canvas' ? canvas : element,
+  };
+  runInNewContext(trackViewerScript, {
+    document:{querySelector:()=>panel},
+    URLSearchParams,
+    ResizeObserver:class { observe(){} },
+    fetch:async()=>({ok:true,json:async()=>({users:[]})}),
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(status.textContent, /No movement recorded yet/);
+  assert.doesNotMatch(trackViewerScript, /__name/);
+});
 
 function storage() {
   const data=new Map();

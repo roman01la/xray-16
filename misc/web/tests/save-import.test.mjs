@@ -62,12 +62,25 @@ test('invalid entries anywhere in a backup are rejected before OPFS is touched',
 });
 
 test('save backups are scoped to the campaign and old backups remain valid for CoP',async()=>{
-  const backup=await prepareSaveBackup(directory({'quicksave.scop':save()}),'soc');
-  assert.equal((await readSaveBackup(backup.blob,'soc')).length,1);
-  await assert.rejects(readSaveBackup(backup.blob),/belongs to another game/);
+  for (const gameId of ['soc', 'cs']) {
+    const backup=await prepareSaveBackup(directory({'quicksave.scop':save()}),gameId);
+    assert.equal((await readSaveBackup(backup.blob,gameId)).length,1);
+    await assert.rejects(readSaveBackup(backup.blob),/belongs to another game/);
+  }
   const legacy=doc([entry('quicksave.scop')]);
   assert.equal((await readSaveBackup(legacy)).length,1);
   await assert.rejects(readSaveBackup(legacy,'soc'),/belongs to another game/);
+});
+
+test('legacy campaign saves retain their extension and thumbnail on backup and restore', async () => {
+  const backup = await prepareSaveBackup(directory({'player - quicksave.sav':save(), 'player - quicksave.dds':thumbnail()}), 'cs');
+  const files = await readSaveBackup(backup.blob, 'cs');
+  const target = directory();
+  assert.deepEqual(await restoreSaveBackup(target, files), {imported:1, skipped:0});
+  assert.deepEqual(new Uint8Array(await target.data.get('player - quicksave.sav').arrayBuffer()), save());
+  assert(target.data.has('player - quicksave.dds'));
+  const existing = directory({'player - quicksave.scop':save(18)});
+  assert.deepEqual(await restoreSaveBackup(existing, files), {imported:0, skipped:1});
 });
 
 test('failed file writes roll back every new file and preserve existing saves',async()=>{

@@ -44,5 +44,9 @@ test('gate precedes release downloads and runtime imports; publishing keeps it i
  assert.ok(ui.indexOf('await requireGameCompatibility()')<ui.indexOf('await holdInstalledGame()'));
  assert.ok(ui.indexOf('await requireGameCompatibility()')<ui.indexOf("await import('./release-cache.mjs')"));
  const cache=await readFile(new URL('./release-cache.mjs',import.meta.url),'utf8');assert.match(cache,/\['', 'compatibility.mjs', 'index.html'/);
- const publish=await readFile(new URL('../tools/publish-web.py',import.meta.url),'utf8');assert.match(publish,/bootstrap=\{'compatibility.mjs'/);
+ const publish=await readFile(new URL('../tools/publish-web.py',import.meta.url),'utf8');
+ assert.match(publish,/bootstrap=\{'index.html','game-ui.mjs'/);
+ assert.match(publish,/bundle-web\.mjs/);
+ const bundler=await readFile(new URL('../../misc/web/tools/bundle-web.mjs',import.meta.url),'utf8');
+ assert.match(bundler,/'game-ui\.mjs'/);assert.match(bundler,/bundle:true/);
 });

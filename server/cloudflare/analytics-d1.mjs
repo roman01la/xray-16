@@ -1,7 +1,12 @@
 import {playtimeQueries} from '../web/analytics-playtime.mjs';
+import {analyticsGames} from '../web/analytics-events.mjs';
 
 // Keep the existing CoP tables compatible with the live Worker during rollout.
-const tablePrefix = gameId => gameId === 'soc' ? 'analytics_soc' : 'analytics';
+const tablePrefix = gameId => {
+  if (!analyticsGames.has(gameId ?? 'cop')) throw Error('Unknown analytics game');
+  return !gameId || gameId === 'cop' ? 'analytics' : 'analytics_' + gameId;
+};
+const positionTable = gameId => gameId === 'cs' ? 'analytics_cs_positions' : 'analytics_positions';
 const performanceQuery = prefix => `SELECT coalesce(json_extract(d.data,'$.os'),'Unknown') AS os,coalesce(json_extract(d.data,'$.browser'),'Unknown') AS browser,
         coalesce(nullif(json_extract(d.data,'$.gpuDescription'),''),nullif(json_extract(d.data,'$.gpuDevice'),''),nullif(json_extract(d.data,'$.gpuVendor'),''),'Unknown') AS gpu,
         json_extract(d.data,'$.cores') AS cores,json_extract(p.data,'$.vsync') AS vsync,json_extract(p.data,'$.fpsCap') AS cap,
@@ -18,7 +23,7 @@ export async function record(db,{browserId,eventId,event,data,gameId},now=Date.n
   const events=`${prefix}_events`, browsers=`${prefix}_browsers`;
   const q=(sql,...values)=>db.prepare(sql).bind(...values);
   if(event==='movement') return db.batch(data.points.map(p => q(
-    'INSERT OR IGNORE INTO analytics_positions VALUES (?,?,?,?,?,?,?,?,?)',
+    `INSERT OR IGNORE INTO ${positionTable(gameId)} VALUES (?,?,?,?,?,?,?,?,?)`,
     gameId ?? 'cop',browserId,data.sessionId,p.t,p.map,p.x,p.y,p.z,now)));
   if(event==='playtime')return q(playtimeQueries(`${prefix}_playtime`).playtimeUpsert,browserId,data.sessionId,data.elapsedMs,now).run();
   if(event==='device')return q(`INSERT INTO ${prefix}_devices VALUES (?,?,?,?) ON CONFLICT(browser_id,session_id) DO UPDATE SET received_at=excluded.received_at,data=excluded.data`,browserId,data.sessionId,now,JSON.stringify(data)).run();
@@ -45,23 +50,23 @@ export async function summary(db,now=Date.now(),gameId='cop') {
 }
 export async function prune(db,now=Date.now()) {
   // Hourly batches avoid scanning/deleting old samples on every event request.
-  return db.batch([...['cop','soc'].flatMap(gameId => ['performance','devices'].map(table =>
+  return db.batch([...[...analyticsGames.keys()].flatMap(gameId => ['performance','devices'].map(table =>
     db.prepare(`DELETE FROM ${tablePrefix(gameId)}_${table} WHERE received_at<?`).bind(now-30*86400000),
-  )), db.prepare('DELETE FROM analytics_positions WHERE received_at<?').bind(now-30*86400000)]);
+  )), ...['analytics_positions','analytics_cs_positions'].map(table=>db.prepare(`DELETE FROM ${table} WHERE received_at<?`).bind(now-30*86400000))]);
 }
 
 export async function tracks(db, gameId, {browserId,sessionId,after=0} = {}) {
   if (!browserId) {
     const result = await db.prepare(`SELECT browser_id,count(*) AS samples,max(sampled_at) AS last_seen
-      FROM analytics_positions WHERE game_id=? GROUP BY browser_id ORDER BY last_seen DESC LIMIT 200`).bind(gameId).all();
+      FROM ${positionTable(gameId)} WHERE game_id=? GROUP BY browser_id ORDER BY last_seen DESC LIMIT 200`).bind(gameId).all();
     return {users:result.results};
   }
   if (!sessionId) {
     const result = await db.prepare(`SELECT session_id,min(sampled_at) AS first_seen,max(sampled_at) AS last_seen,count(*) AS samples
-      FROM analytics_positions WHERE game_id=? AND browser_id=? GROUP BY session_id ORDER BY last_seen DESC LIMIT 200`).bind(gameId,browserId).all();
+      FROM ${positionTable(gameId)} WHERE game_id=? AND browser_id=? GROUP BY session_id ORDER BY last_seen DESC LIMIT 200`).bind(gameId,browserId).all();
     return {sessions:result.results};
   }
-  const result = await db.prepare(`SELECT sampled_at AS t,map,x,y,z FROM analytics_positions
+  const result = await db.prepare(`SELECT sampled_at AS t,map,x,y,z FROM ${positionTable(gameId)}
     WHERE game_id=? AND browser_id=? AND session_id=? AND sampled_at>?
     ORDER BY sampled_at LIMIT 1001`).bind(gameId,browserId,sessionId,after).all();
   const points = result.results.slice(0,1000);

@@ -27,7 +27,7 @@ export async function installStreaming(manifestURL, root, onProgress) {
     const {ChunkReader,gameStorageError}=await import('./chunk-reader.mjs');
     const response=await fetch(url);if(!response.ok)throw Error('Cannot load game pack: HTTP '+response.status);
     const pack=validatePack(await response.json()),base=new URL('./',url);
-    const gameId=root==='stream-soc'?'soc':'cop';
+    const gameId=root==='stream-cs'?'cs':root==='stream-soc'?'soc':'cop';
     const install=()=>new ChunkReader({mode:'install',gameId,budget:0,onProgress:report}).install(
       pack.files.map(file=>({url:new URL(file.path,base).href,size:file.size})));
     if(navigator.locks)await navigator.locks.request('xray-game-pack-install',install);

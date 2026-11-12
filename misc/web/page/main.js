@@ -8,13 +8,16 @@ if (!globalThis.XRAY_WEBGPU) {
 }
 
 import "./storage-manager.js";
+import {installBrowserWindowMode} from "./browser-window.mjs";
+installBrowserWindowMode();
 import { acquireSaveSession } from "./save-format.js";
 let releaseSaveSession;
 window.addEventListener("pagehide", () => { releaseSaveSession?.(); releaseSaveSession = undefined; });
 window.addEventListener("pageshow", event => { if(event.persisted)location.reload(); });
 const streamURL = new URLSearchParams(location.search).get("stream");
 // The staged page identifies the title; never infer it from a save name.
-const gameId = document.documentElement.dataset.game === "soc" ? "soc" : "cop";
+const selectedGame = document.documentElement.dataset.game;
+const gameId = ["soc", "cs"].includes(selectedGame) ? selectedGame : "cop";
 const streamRoot = `stream-${gameId}`;
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
@@ -221,6 +224,7 @@ $("launch").onclick = async () => {
   ];
   if (streaming) args.push("-stream_mount", streaming.mount);
   if (gameId === "soc") args.push("-soc");
+  if (gameId === "cs") args.push("-cs");
   args.push(...$("extra-args").value.split(/\s+/).filter(Boolean));
   print("launching: " + args.join(" "));
 

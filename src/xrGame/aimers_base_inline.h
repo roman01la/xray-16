@@ -15,6 +15,21 @@ inline void aimers::base::fill_bones(u32 const (&bones)[bone_count0], u16 const 
 {
     static_assert(bone_count0 <= bone_count1, "Invalid arrays passed.");
 
+    if (ClearSkyMode)
+    {
+        // IX-Ray reads the evaluated model-local pose for aiming. Re-evaluating
+        // a temporary channel here can produce invalid legacy CS bone chains.
+        for (const u32 index : bones)
+        {
+            VERIFY(index < bone_count1);
+            local_bones[index] = m_kinematics.LL_GetTransform(bones_ids[index]);
+            VERIFY(_valid(local_bones[index]));
+            global_bones[index].mul_43(m_start_transform, local_bones[index]);
+            VERIFY(_valid(global_bones[index]));
+        }
+        return;
+    }
+
     u16 const root_bone_id = m_kinematics.LL_GetBoneRoot();
     CBoneInstance& root_bone = m_kinematics.LL_GetBoneInstance(root_bone_id);
     BoneCallback callback = root_bone.callback();

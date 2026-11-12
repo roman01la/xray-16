@@ -2,4 +2,5 @@ export const analyticsEvents = new Set(['visit','install','start_game','new_camp
 export const analyticsGames = new Map([
   ['cop', 'Call of Pripyat'],
   ['soc', 'Shadow of Chernobyl'],
+  ['cs', 'Clear Sky'],
 ]);

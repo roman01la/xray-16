@@ -2,7 +2,7 @@
 """Stage immutable single-player release URLs for Cloudflare publication."""
 import argparse,hashlib,json,os,pathlib,shutil,subprocess
 P=pathlib.Path
-parser=argparse.ArgumentParser();parser.add_argument('--frontend',required=True);parser.add_argument('--pack',required=True);parser.add_argument('--output',required=True);parser.add_argument('--game',choices=('cop','soc'),default='cop');parser.add_argument('--wasm-symbols',type=P);args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--frontend',required=True);parser.add_argument('--pack',required=True);parser.add_argument('--output',required=True);parser.add_argument('--game',choices=('cop','soc','cs'),default='cop');parser.add_argument('--wasm-symbols',type=P);args=parser.parse_args()
 repo=P(__file__).resolve().parents[2];output=P(args.output).resolve();output.mkdir(parents=True,exist_ok=True)
 frontend_dir=P(args.frontend).resolve()
 if json.loads((frontend_dir/'engine_data.json').read_text()).get('gameId','cop')!=args.game:
@@ -22,10 +22,11 @@ def collect(root,skip=False):
 frontend=collect(frontend_dir,True)
 frontend['License.txt']=record(repo/'License.txt')
 page=(repo/'server/web/game.html').read_text()
-if args.game=='soc':
- page=(page.replace('data-game="cop"','data-game="soc"')
-       .replace('Call of Pripyat','Shadow of Chernobyl')
-       .replace('/app/41700/STALKER_Call_of_Pripyat/','/app/4500/'))
+if args.game!='cop':
+ title,store={'soc':('Shadow of Chernobyl','/app/4500/'),'cs':('Clear Sky','/app/20510/')}[args.game]
+ page=(page.replace('data-game="cop"',f'data-game="{args.game}"')
+       .replace('Call of Pripyat',title)
+       .replace('/app/41700/STALKER_Call_of_Pripyat/',store))
 index=output/'index.html'
 index.write_text(page)
 frontend['index.html']=record(index)
@@ -36,7 +37,7 @@ frontend={name:item for name,item in frontend.items() if not name.endswith(('.js
 for path in sorted(bundle_dir.rglob('*')):
  if path.is_file() and path.suffix in ('.js','.mjs'):
   frontend[path.relative_to(bundle_dir).as_posix()]=record(path)
-wallpaper='startup-wallpaper-soc.webp' if args.game=='soc' else 'startup-wallpaper.webp'
+wallpaper='startup-wallpaper.webp' if args.game=='cop' else f'startup-wallpaper-{args.game}.webp'
 frontend['startup-wallpaper.webp']=record(repo/'server/web'/wallpaper)
 bootstrap={'index.html','game-ui.mjs','release-cache.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
 release_index=output/'release-files.json'
