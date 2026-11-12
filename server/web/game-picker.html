@@ -10,12 +10,13 @@
   *{box-sizing:border-box}
   html,body{margin:0;width:100%;height:100%;background:#10110e;color:#e9e6db;font-family:system-ui,sans-serif}
   main{min-height:100%;display:grid;place-items:center;padding:clamp(20px,5vw,64px);isolation:isolate}
-  .backdrop{position:fixed;inset:0;z-index:-1;background:center/cover no-repeat;pointer-events:none}
+  .backdrop{position:fixed;inset:0;z-index:-3;background:center/cover no-repeat;pointer-events:none}
   .backdrop-cop{background-image:url('/startup-wallpaper.webp')}
   .backdrop-soc{background-image:url('/startup-wallpaper-soc.webp');opacity:0;transition:opacity .45s ease}
   main:has([data-game="soc"]:hover) .backdrop-soc,
   main:not(:has(button:hover)):has([data-game="soc"]:focus-visible) .backdrop-soc{opacity:1}
-  .backdrop::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,#10110eb8,#10110e65 65%,#10110e30)}
+  #atmosphere{position:fixed;inset:0;z-index:-2;width:100%;height:100%;pointer-events:none}
+  main::after{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at center,#10110eb8,#10110e65 65%,#10110e30)}
   section{width:min(100%,820px);text-align:center}
   h1{font-size:clamp(32px,7vw,66px);font-weight:750;letter-spacing:.09em;margin:0;text-shadow:0 2px 18px #000}
   p{color:#e9e6db;text-shadow:0 1px 8px #000}
@@ -32,11 +33,12 @@
   iframe{display:block;width:100%;height:100%;border:0}
   [hidden]{display:none}
   @media(max-width:540px){.games{grid-template-columns:1fr;margin:20px auto 0;max-width:380px}button{aspect-ratio:16/8}}
-  @media(prefers-reduced-motion:reduce){*,*::after{transition:none!important}}
+  @media(prefers-reduced-motion:reduce){*,*::after{transition:none!important}#atmosphere{display:none}}
 </style>
 <main id="picker">
   <div class="backdrop backdrop-cop" aria-hidden="true"></div>
   <div class="backdrop backdrop-soc" aria-hidden="true"></div>
+  <canvas id="atmosphere" aria-hidden="true" hidden></canvas>
   <section aria-labelledby="title">
     <h1 id="title">S.T.A.L.K.E.R.</h1>
     <p>Choose a game to play in your browser.</p>
@@ -58,6 +60,29 @@
   const picker = document.querySelector('#picker');
   const frame = document.querySelector('#game-frame');
   const favicon = document.querySelector('#game-icon');
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  let atmosphere;
+  function syncAtmosphere() {
+    if (picker.hidden || motion.matches || document.hidden || !navigator.gpu) {
+      atmosphere?.abort();
+      atmosphere = undefined;
+      return;
+    }
+    if (atmosphere) return;
+    atmosphere = new AbortController();
+    const { signal } = atmosphere;
+    import('/picker/atmosphere.mjs').then(({ startAtmosphere }) => {
+      if (!signal.aborted) return startAtmosphere(
+        document.querySelector('#atmosphere'), document.querySelector('.backdrop-soc'), signal);
+    }).catch(error => {
+      if (!signal.aborted) console.warn('Game picker atmosphere unavailable', error);
+    });
+  }
+  motion.addEventListener('change', syncAtmosphere);
+  document.addEventListener('visibilitychange', syncAtmosphere);
+  window.addEventListener('pagehide', () => { atmosphere?.abort(); atmosphere = undefined; });
+  window.addEventListener('pageshow', syncAtmosphere);
+  syncAtmosphere();
   for (const button of picker.querySelectorAll('[data-entry]')) {
     button.addEventListener('click', () => {
       const entry = new URL(button.dataset.entry, location.origin);
@@ -67,6 +92,7 @@
       favicon.href = `/favicon-${button.dataset.game}.ico`;
       frame.src = entry.href;
       picker.hidden = true;
+      syncAtmosphere();
       frame.hidden = false;
       frame.focus();
     });

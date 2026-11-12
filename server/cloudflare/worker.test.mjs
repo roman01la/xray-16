@@ -1,8 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFileSync} from 'node:fs';
-import {record,summary,prune} from './analytics-d1.mjs';import worker from './worker.mjs';
+import {record,summary,prune,tracks} from './analytics-d1.mjs';import worker from './worker.mjs';
 const schemaSoc=readFileSync(new URL('./schema-soc.sql',import.meta.url),'utf8');
-function fixture({migrate=true}={}){const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));if(migrate)sqlite.exec(schemaSoc);sqlite.exec('PRAGMA foreign_keys=ON');
- const db={prepare(sql){return {bind(...args){this.args=args;return this;},args:[],async run(){return sqlite.prepare(sql).run(...this.args);},sql};},async batch(statements){sqlite.exec('BEGIN');try{const rows=statements.map(s=>({results:sqlite.prepare(s.sql).all(...s.args)}));sqlite.exec('COMMIT');return rows;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};return {db,sqlite};}
+function fixture({migrate=true}={}){const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));if(migrate)sqlite.exec(schemaSoc);sqlite.exec(readFileSync(new URL('./schema-positions.sql',import.meta.url),'utf8'));sqlite.exec('PRAGMA foreign_keys=ON');
+ const db={prepare(sql){return {bind(...args){this.args=args;return this;},args:[],async run(){return sqlite.prepare(sql).run(...this.args);},async all(){return {results:sqlite.prepare(sql).all(...this.args)};},sql};},async batch(statements){sqlite.exec('BEGIN');try{const rows=statements.map(s=>({results:sqlite.prepare(s.sql).all(...s.args)}));sqlite.exec('COMMIT');return rows;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};return {db,sqlite};}
 const browserId='11111111-1111-4111-8111-111111111111';
 const event=(name,id=crypto.randomUUID())=>({browserId,eventId:id,event:name});
 test('D1 preserves visit sessions, install uniqueness and retry idempotency',async()=>{
@@ -133,4 +133,30 @@ test('crash ingestion forwards one scrubbed fatal event and rejects invalid repo
  env.CRASH_LIMIT = {limit:async()=>({success:false})};
  assert.equal((await worker.fetch(request(JSON.stringify(report)),env)).status,429);
  assert.equal(forwarded,1);
+});
+
+test('movement batches are atomic, idempotent, campaign-scoped and authenticated',async()=>{
+ const {db,sqlite}=fixture(), sessionId=crypto.randomUUID();
+ const data={sessionId,release:'a'.repeat(64),points:Array.from({length:6},(_,i)=>({t:(i+1)*10000,map:'l01_escape',x:i,y:2,z:-20+i}))};
+ const sample={...event('movement'),gameId:'soc',data};
+ try {
+  await record(db,sample,100000);await record(db,sample,110000);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM analytics_positions').get().n,6);
+  assert.equal((await tracks(db,'cop')).users.length,0);
+  assert.equal((await tracks(db,'soc')).users[0].browser_id,browserId);
+  assert.equal((await tracks(db,'soc',{browserId})).sessions[0].samples,6);
+  assert.equal((await tracks(db,'soc',{browserId,sessionId,after:30000})).points.length,3);
+  const env={DB:db,ORIGIN:'https://stalker-online.xyz',ANALYTICS_PASSWORD:'test-secret'};
+  const url=env.ORIGIN+'/analytics/tracks?game=soc&browser='+browserId+'&session='+sessionId;
+  assert.equal((await worker.fetch(new Request(url),env)).status,401);
+  const headers={Authorization:'Basic '+btoa('analytics:test-secret')};
+  const result=await worker.fetch(new Request(url,{headers}),env);
+  assert.equal(result.status,200);assert.equal((await result.json()).points.length,6);
+  assert.equal((await worker.fetch(new Request(env.ORIGIN+'/analytics/tracks?browser=unsafe',{headers}),env)).status,400);
+  sqlite.exec("CREATE TRIGGER movement_fail BEFORE INSERT ON analytics_positions WHEN NEW.x=8 BEGIN SELECT RAISE(ABORT,'test failure'); END");
+  await assert.rejects(record(db,{...sample,data:{...data,points:[{t:70000,map:'l02_garbage',x:7,y:0,z:0},{t:80000,map:'l02_garbage',x:8,y:0,z:0}]}},120000));
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM analytics_positions').get().n,6);
+  await prune(db,31*86400000);
+  assert.equal((await tracks(db,'soc')).users.length,0);
+ } finally {sqlite.close();}
 });

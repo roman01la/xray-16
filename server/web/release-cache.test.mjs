@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {test} from 'node:test';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 import {cacheReleaseFiles, validateReleaseFiles} from './release-cache.mjs';
 import {migrateLegacyCache, sha256} from './opfs-store.mjs';
 
 const record = bytes => ({sha256: createHash('sha256').update(bytes).digest('hex'), size: Buffer.byteLength(bytes)});
+
+test('every published bootstrap dependency bypasses the installed-game service worker', () => {
+  const handlers = new Map();
+  class ServiceWorkerGlobalScope { static [Symbol.hasInstance]() { return true; } }
+  const self = new ServiceWorkerGlobalScope();
+  self.addEventListener = (type, handler) => handlers.set(type,handler);
+  const source = readFileSync(new URL('./release-cache.mjs',import.meta.url),'utf8')
+    .replace(/^import .*;$/m,'').replaceAll('export ','')
+    .replaceAll('import.meta.url',JSON.stringify('https://game.example/releases/version/release-cache.mjs'));
+  vm.runInNewContext(source,{URL,ServiceWorkerGlobalScope,self});
+  const publisher = readFileSync(new URL('../tools/publish-web.py',import.meta.url),'utf8');
+  const names = [...publisher.match(/bootstrap=\{([^}]+)\}/)[1].matchAll(/'([^']+)'/g)].map(match=>match[1]);
+  assert.ok(names.includes('game-ui.mjs'));
+  assert.ok(names.includes('release-cache.mjs'));
+  for (const name of names) handlers.get('fetch')({
+    request:{method:'GET',url:'https://game.example/releases/version/'+name},
+    respondWith:()=>assert.fail('Bootstrap dependency was intercepted: '+name),
+  });
+});
 
 test('an update keeps the same engine binaries and fetches only the changed release file', async () => {
   const stored = new Map(), requests = [];

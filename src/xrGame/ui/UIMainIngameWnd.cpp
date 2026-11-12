@@ -269,12 +269,48 @@ void CUIMainIngameWnd::Init()
     }
 
     HUD_SOUND_ITEM::LoadSound("maingame_ui", "snd_new_contact", m_contactSnd, SOUND_TYPE_IDLE);
+    m_hudAspect = UI().is_widescreen() ? 16.f / 9.f : 4.f / 3.f;
+    UpdateHudAspect();
+}
+
+void CUIMainIngameWnd::UpdateHudAspect()
+{
+#ifdef XR_PLATFORM_WEB
+    if (!ShadowOfChernobylMode)
+        return;
+    const float aspect = float(Device.dwWidth) / Device.dwHeight;
+    if (fsimilar(aspect, m_hudAspect))
+        return;
+    const float factor = m_hudAspect / aspect;
+    // SoC's XML layouts target either 4:3 or 16:9. Preserve the shape of
+    // each HUD group while its edge or centre remains anchored on resize.
+    const auto resize = [factor](CUIWindow* window)
+    {
+        const float centre = window->GetWndCenterPos().x;
+        const float anchor = centre < UI_BASE_WIDTH / 3.f ? 0.f :
+            centre > UI_BASE_WIDTH * 2.f / 3.f ? UI_BASE_WIDTH : UI_BASE_WIDTH / 2.f;
+        window->RescaleHorizontal(factor, anchor);
+    };
+    for (auto* child : GetChildWndList())
+    {
+        if (child == m_ui_hud_states)
+        {
+            for (auto* indicator : child->GetChildWndList())
+                resize(indicator);
+        }
+        else
+            resize(child);
+    }
+    UIZoneMap->RescaleHorizontal(factor);
+    m_hudAspect = aspect;
+#endif
 }
 
 float UIStaticDiskIO_start_time = 0.0f;
 void CUIMainIngameWnd::Draw()
 {
     ZoneScoped;
+    UpdateHudAspect();
 
     CActor* pActor = smart_cast<CActor*>(Level().CurrentViewEntity());
 

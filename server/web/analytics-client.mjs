@@ -1,3 +1,4 @@
+import {createMovementTracker} from './analytics-movement.mjs';
 const browserKey = 'xray-analytics-browser-v1';
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
@@ -55,6 +56,10 @@ export function startCampaignAnalytics(gameId = 'cop') {
   }
 
   const sessionId=crypto.randomUUID(), release=location.pathname.split('/')[2];
+  let movementStorage;
+  try { movementStorage=localStorage; } catch {}
+  const movement = createMovementTracker({gameId, sessionId, release, send, storage:movementStorage});
+  setInterval(() => { void movement.flush(); }, 60000);
   let device={}, lastDevice='', windowStart=performance.now(), totals=null, lastRender={};
   // Persist cumulative checkpoints, not deltas, so retrying cannot inflate totals.
   const playtimePrefix='xray-analytics-playtime-v1'+suffix+':';
@@ -124,9 +129,9 @@ export function startCampaignAnalytics(gameId = 'cop') {
     for(const [bin,n] of Object.entries(a.hist))totals.hist[bin]=(totals.hist[bin]||0)+n;
     if(performance.now()-windowStart>=60000)flushPerformance();
   });
-  document.addEventListener('visibilitychange',()=>{if(document.hidden){flushPerformance();flushPlaytime();}});
-  window.addEventListener('pagehide',()=>{flushPerformance();flushPlaytime();});
-  window.addEventListener('online',flushPlaytime);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){flushPerformance();flushPlaytime();void movement.flush();}});
+  window.addEventListener('pagehide',()=>{flushPerformance();flushPlaytime();void movement.flush();});
+  window.addEventListener('online',()=>{flushPlaytime();void movement.flush();});
   void send('visit');
   void sendInstall();
   window.addEventListener('xray-stream-progress',({detail}) => {
@@ -134,6 +139,8 @@ export function startCampaignAnalytics(gameId = 'cop') {
   });
   window.addEventListener('xray-game-start-pressed',() => {void send('start_game');});
   window.addEventListener('xray-engine-log',({detail}) => {
+    const position = /^XRAY_ANALYTICS position ([a-zA-Z0-9_]+)[\\/]? ([-\d.]+) ([-\d.]+) ([-\d.]+)$/.exec(detail);
+    if (position && !document.hidden) movement.add({map:position[1].toLowerCase(),t:Date.now(),x:Number(position[2]),y:Number(position[3]),z:Number(position[4])});
     if (detail === 'XRAY_ANALYTICS new_campaign') void send('new_campaign');
     if (detail === 'XRAY_ANALYTICS load_save') void send('load_save');
   });

@@ -24,6 +24,12 @@ The current Wrangler OAuth login cannot edit zone DNS records.
 
 1. Build and stage the game normally, then run `server/tools/publish-web.py --frontend FRONTEND --pack PACK --output PUBLICATION`
    to create an immutable publication manifest and source index.
+   Install build dependencies once with `npm ci --prefix misc/web`. Publishing
+   bundles browser code into nine JavaScript files per game. The compiler client
+   retains one shared module identity between the page and engine loader.
+   Source maps and the bundler dependency report stay under `PUBLICATION/bundles`
+   and are excluded from the public asset manifest. The source modules remain
+   readable and the development staging workflow continues to use them directly.
 2. Run `stage.py --publication PUBLICATION --retain PREVIOUS_PUBLICATION` here.
    It verifies hashes and stages assets into ignored `.assets/`, retaining a previous
    release for open tabs/rollback. The game URL stays `/` through a static internal
@@ -73,6 +79,11 @@ installed game data are scoped to each campaign. CoP keeps its existing paths
 and historical metrics. SoC uses the Ukrainian voice pack and ships nine text
 languages in the multilingual build.
 
+The picker has a WebGPU atmosphere layer with original Zaton/Cordon vegetation,
+water mist and rain. It crossfades with the selected wallpaper, stops when hidden
+or when a game opens, and uses the static artwork when reduced motion is enabled
+or WebGPU is unavailable.
+
 Apply `schema-soc.sql` to D1 before deploying the two-campaign Worker. The
 script can run more than once and leaves the existing CoP tables and current
 Worker operational. A new database needs both `schema.sql` and `schema-soc.sql`.
@@ -85,6 +96,26 @@ npx wrangler@4.160.0 d1 execute stalker-online-analytics --remote \
 The authenticated dashboard has a campaign selector. Visits, installs, device
 sessions, FPS and playtime are reported per campaign. Older CoP builds can still
 send events without a campaign ID.
+
+### Movement tracks
+
+Apply `schema-positions.sql` before publishing a movement-enabled build. The
+engine samples the living player actor every 10 seconds during active gameplay.
+The browser sends batches every 60 seconds and flushes remaining samples when
+the page is hidden or closed. Per-session browser storage retains failed batches.
+The database deduplicates by campaign, browser, session and sample timestamp.
+Movement rows expire after 30 days in the existing scheduled cleanup.
+
+The password-protected `/analytics/tracks` endpoint and dashboard let you select
+a browser ID, game session and level. Maps use the original artwork and world
+bounds, with hoverable coordinates, timestamps and zoom. Teleports, loading gaps
+and level transitions break the line. The Monolith control room has no original
+map artwork and uses a coordinate grid. The browser list shows the most recent
+200 tracked users and also accepts a pasted browser ID.
+
+Regenerate map assets with `node server/tools/export-analytics-maps.mjs GAME
+GAME_DATA server/web/analytics-maps/GAME`, where `GAME` is `cop` or `soc` and
+`GAME_DATA` is the corresponding prepared original game directory.
 
 ### Crash reporting
 

@@ -464,6 +464,18 @@ CUIWindow* CUIWindow::FindChild(const shared_str name)
     return NULL;
 }
 
+void CUIWindow::RescaleHorizontal(float factor, float anchor)
+{
+    Fvector2 position = GetWndPos();
+    position.x = anchor + (position.x - anchor) * factor;
+    SetWndPos(position);
+    Fvector2 size = GetWndSize();
+    size.x *= factor;
+    SetWndSize(size);
+    for (auto* child : m_ChildWndList)
+        child->RescaleHorizontal(factor);
+}
+
 void CUIWindow::SetParent(CUIWindow* pNewParent)
 {
     R_ASSERT(!(m_pParentWnd && m_pParentWnd->IsChild(this)));

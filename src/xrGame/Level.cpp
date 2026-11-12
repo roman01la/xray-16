@@ -474,6 +474,19 @@ void CLevel::OnFrame()
     }
     // Inherited update
     inherited::OnFrame();
+#ifdef XR_PLATFORM_WEB
+    if (IsGameTypeSingle() && !Device.Paused() && !Device.dwPrecacheFrame &&
+        Device.dwTimeGlobal - m_analyticsPositionTime >= 10000)
+    {
+        m_analyticsPositionTime = Device.dwTimeGlobal;
+        if (const auto* actor = smart_cast<CActor*>(CurrentEntity()); actor && actor->g_Alive())
+        {
+            const auto& position = actor->Position();
+            Msg("XRAY_ANALYTICS position %s %.3f %.3f %.3f", name().c_str(),
+                position.x, position.y, position.z);
+        }
+    }
+#endif
     // Draw client/server stats
     if (!GEnv.isDedicatedServer && psDeviceFlags.test(rsStatistic))
     {

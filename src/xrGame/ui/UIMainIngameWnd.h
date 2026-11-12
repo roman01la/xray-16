@@ -28,6 +28,8 @@ public:
     pcstr GetDebugType() override { return "CUIMainIngameWnd"; }
 
 protected:
+    void UpdateHudAspect();
+    float m_hudAspect{};
     CUIStatic* UIStaticDiskIO{};
     CUIStatic* UIStaticQuickHelp{};
     CUIMotionIcon* UIMotionIcon{};

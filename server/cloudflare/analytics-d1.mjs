@@ -17,6 +17,9 @@ export async function record(db,{browserId,eventId,event,data,gameId},now=Date.n
   const prefix=tablePrefix(gameId);
   const events=`${prefix}_events`, browsers=`${prefix}_browsers`;
   const q=(sql,...values)=>db.prepare(sql).bind(...values);
+  if(event==='movement') return db.batch(data.points.map(p => q(
+    'INSERT OR IGNORE INTO analytics_positions VALUES (?,?,?,?,?,?,?,?,?)',
+    gameId ?? 'cop',browserId,data.sessionId,p.t,p.map,p.x,p.y,p.z,now)));
   if(event==='playtime')return q(playtimeQueries(`${prefix}_playtime`).playtimeUpsert,browserId,data.sessionId,data.elapsedMs,now).run();
   if(event==='device')return q(`INSERT INTO ${prefix}_devices VALUES (?,?,?,?) ON CONFLICT(browser_id,session_id) DO UPDATE SET received_at=excluded.received_at,data=excluded.data`,browserId,data.sessionId,now,JSON.stringify(data)).run();
   if(event==='performance')return q(`INSERT OR IGNORE INTO ${prefix}_performance VALUES (?,?,?,?,?)`,eventId,browserId,data.sessionId,now,JSON.stringify(data)).run();
@@ -42,7 +45,25 @@ export async function summary(db,now=Date.now(),gameId='cop') {
 }
 export async function prune(db,now=Date.now()) {
   // Hourly batches avoid scanning/deleting old samples on every event request.
-  return db.batch(['cop','soc'].flatMap(gameId => ['performance','devices'].map(table =>
+  return db.batch([...['cop','soc'].flatMap(gameId => ['performance','devices'].map(table =>
     db.prepare(`DELETE FROM ${tablePrefix(gameId)}_${table} WHERE received_at<?`).bind(now-30*86400000),
-  )));
+  )), db.prepare('DELETE FROM analytics_positions WHERE received_at<?').bind(now-30*86400000)]);
+}
+
+export async function tracks(db, gameId, {browserId,sessionId,after=0} = {}) {
+  if (!browserId) {
+    const result = await db.prepare(`SELECT browser_id,count(*) AS samples,max(sampled_at) AS last_seen
+      FROM analytics_positions WHERE game_id=? GROUP BY browser_id ORDER BY last_seen DESC LIMIT 200`).bind(gameId).all();
+    return {users:result.results};
+  }
+  if (!sessionId) {
+    const result = await db.prepare(`SELECT session_id,min(sampled_at) AS first_seen,max(sampled_at) AS last_seen,count(*) AS samples
+      FROM analytics_positions WHERE game_id=? AND browser_id=? GROUP BY session_id ORDER BY last_seen DESC LIMIT 200`).bind(gameId,browserId).all();
+    return {sessions:result.results};
+  }
+  const result = await db.prepare(`SELECT sampled_at AS t,map,x,y,z FROM analytics_positions
+    WHERE game_id=? AND browser_id=? AND session_id=? AND sampled_at>?
+    ORDER BY sampled_at LIMIT 1001`).bind(gameId,browserId,sessionId,after).all();
+  const points = result.results.slice(0,1000);
+  return {points,next:result.results.length>1000 ? points.at(-1).t : null};
 }

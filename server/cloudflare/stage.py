@@ -35,6 +35,7 @@ for folder in a.retain:
 stage_files(a.publication)
 if soc:
  stage_files(a.soc_publication)
+shutil.copytree(web/'analytics-maps',out/'analytics-maps',dirs_exist_ok=True)
 entry=html.escape(current['entry'],quote=True);icon=current['entry'].split('?')[0].rsplit('/',1)[0]+'/favicon.ico'
 if soc:
     picker=(web/'game-picker.html').read_text()
@@ -46,6 +47,7 @@ if soc:
     shutil.copyfile(out/soc_icon.lstrip('/'),out/'favicon-soc.ico')
     for name in ('startup-wallpaper.webp','startup-wallpaper-soc.webp','game-card-cop.webp','game-card-soc.webp'):
         shutil.copyfile(web/name,out/name)
+    shutil.copytree(web/'picker',out/'picker',dirs_exist_ok=True)
 else:
     (out/'index.html').write_text(f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>S.T.A.L.K.E.R. — Call of Pripyat</title><link rel="icon" href="{icon}" type="image/x-icon"><style>html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:#000}}iframe{{display:block;width:100%;height:100%;border:0}}</style><iframe src="{entry}" title="S.T.A.L.K.E.R.: Call of Pripyat" allowfullscreen></iframe></html>''')
 (out/'_headers').write_text('''/*

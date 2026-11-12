@@ -59,6 +59,9 @@ class client_site;
 
 class CLevel : public IGame_Level, public IPureClient
 {
+#ifdef XR_PLATFORM_WEB
+    u32 m_analyticsPositionTime{};
+#endif
 public:
     struct AIStatistics
     {

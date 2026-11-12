@@ -51,7 +51,8 @@ test('device/performance validation, deduplication, weighted FPS and escaped das
  }finally{db.close()}
 });
 
-test('browser client sends device info and gameplay summary without hidden-tab frames',async()=>{
+test('browser client sends device info and gameplay summary without hidden-tab frames',async t=>{
+ t.mock.timers.enable({apis:['setInterval','Date'],now:1700000000000});
  const saved=new Map(),keys=['window','document','navigator','screen','location','localStorage','fetch','innerWidth','innerHeight','devicePixelRatio','crossOriginIsolated'];
  for(const key of keys)saved.set(key,Object.getOwnPropertyDescriptor(globalThis,key));
  const posts=[],storage=new Map(),window=new EventTarget(),document=new EventTarget();document.hidden=false;
@@ -60,6 +61,15 @@ test('browser client sends device info and gameplay summary without hidden-tab f
  try{
   for(const [key,value]of Object.entries(values))Object.defineProperty(globalThis,key,{value,configurable:true,writable:true});
   const {startCampaignAnalytics}=await import('./analytics-client.mjs');startCampaignAnalytics();
+  for(let i=0;i<5;i++) {
+   t.mock.timers.tick(10000);
+   window.dispatchEvent(new CustomEvent('xray-engine-log',{detail:'XRAY_ANALYTICS position l01_escape\\ 30.000 2.000 -100.000'}));
+  }
+  await new Promise(setImmediate);
+  assert.equal(posts.filter(p=>p.event==='movement').length,0,'positions wait for the minute batch');
+  t.mock.timers.tick(10000);await new Promise(setImmediate);
+  assert.equal(posts.find(p=>p.event==='movement').data.points.length,5);
+  assert.equal(posts.find(p=>p.event==='movement').data.points[0].map,'l01_escape');
   const detail={width:1280,height:720,pacing:{vsync:true,limitMs:1000/60},adapter:{vendor:'TestGPU'},gameplayPerformance:{frames:360,elapsedMs:6000,maxMs:30,stalls50:0,stalls100:0,hist:{17:360}}};
   document.hidden=true;window.dispatchEvent(new CustomEvent('xray-performance',{detail}));
   document.hidden=false;window.dispatchEvent(new CustomEvent('xray-performance',{detail}));window.dispatchEvent(new Event('pagehide'));

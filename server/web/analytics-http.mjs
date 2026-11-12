@@ -1,9 +1,11 @@
+import {validMovementData} from './analytics-movement.mjs';
+import {trackViewerScript} from './analytics-tracks.mjs';
 import {performanceSortingScript} from './analytics-sort.mjs';
 import {analyticsEvents, analyticsGames} from './analytics-events.mjs';
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export function validateAnalyticsEvent(value) {
-  const telemetry = ['device','performance','playtime'].includes(value?.event);
+  const telemetry = ['device','performance','playtime','movement'].includes(value?.event);
   if (!value || typeof value !== 'object' ||
       Object.keys(value).some(key => !['event','browserId','eventId','gameId', ...(telemetry ? ['data'] : [])].includes(key)) ||
       !analyticsEvents.has(value.event) || typeof value.browserId !== 'string' ||
@@ -17,6 +19,7 @@ export function validateAnalyticsEvent(value) {
     const deviceKeys='sessionId release userAgent platform browser os mobile cores memoryGB screenWidth screenHeight availableWidth availableHeight dpr colorDepth touchPoints language webgpu crossOriginIsolated connection saveData architecture bitness model osVersion gpuVendor gpuArchitecture gpuDevice gpuDescription gpuFallback gpuFeatures maxTextureDimension2D maxBufferSize'.split(' ');
     const perfKeys='sessionId release width height viewportWidth viewportHeight vsync fpsCap validationErrors frames elapsedMs avgFps p50Ms p95Ms p99Ms maxMs stalls50 stalls100'.split(' ');
     if(!data||typeof data!=='object'||Array.isArray(data)||!uuid.test(data.sessionId)||!/^[a-f0-9]{64}$/.test(data.release))return null;
+    if(value.event==='movement') return validMovementData(data) ? {...record,data} : null;
     if(value.event==='playtime'){
       if(Object.keys(data).length!==3||!Number.isSafeInteger(data.elapsedMs)||data.elapsedMs<1||data.elapsedMs>31536000000)return null;
       return {...record,data};
@@ -94,6 +97,7 @@ th button:focus-visible{outline:2px solid #c9d6a5;outline-offset:2px}
 nav{display:flex;flex-wrap:wrap;gap:.5rem}
 nav a{color:inherit;padding:.35rem .6rem;border:1px solid #65684f}
 nav a[aria-current="page"]{background:#373c2a;font-weight:600}
+.track-controls{display:flex;flex-wrap:wrap;gap:1rem;margin:1rem 0}.track-controls label{display:flex;flex-direction:column;gap:.3rem}.track-controls input,.track-controls select{font:inherit;padding:.4rem;max-width:100%}.track-controls [name=user]{width:24rem}.track-map{width:100%;max-height:70vh;overflow:auto;background:#0d100b}.track-map canvas{display:block;margin:auto}.track-output{display:block;min-height:1.5em}
 </style>
 <main>
   <h1>Game analytics</h1>
@@ -110,6 +114,19 @@ nav a[aria-current="page"]{background:#373c2a;font-weight:600}
   <p>Since playtime tracking was enabled. Active, visible gameplay only; downloading, loading, menus and engine pauses excluded. Totals persist beyond the 30-day performance retention. Anonymous browser identity; clearing site storage creates a new identity. Concurrent visible game sessions count separately. Latest unreported time may be lost on a crash.</p>
   <table aria-label="Cumulative playtime by browser"><thead><tr><th scope="col">Browser ID</th><th scope="col">Total playtime</th><th scope="col">Game sessions</th></tr></thead><tbody>${playRows}</tbody></table>
   <p>Top 200 browsers by total playtime.</p>
+  <section id="movement" data-game="${escape(gameId)}">
+    <h2>Movement tracks — last 30 days</h2>
+    <p>Samples every 10 seconds during active gameplay, uploaded every minute. Select a browser ID, session and map. The list includes the 200 most recently active tracked browsers. You can also paste a browser ID.</p>
+    <div class="track-controls">
+      <label>User<input name="user" list="track-users" autocomplete="off" placeholder="Browser ID"><datalist id="track-users"></datalist></label>
+      <label>Session<select name="session" aria-label="Game session"></select></label>
+      <label>Map<select name="map" aria-label="Game map"></select></label>
+      <label>Zoom<input name="zoom" type="range" min="1" max="4" step="0.25" value="1"></label>
+    </div>
+    <p role="status">Loading movement data…</p>
+    <output class="track-output" aria-live="polite"></output>
+    <div class="track-map"><canvas hidden aria-label="Player path on the original game map"></canvas></div>
+  </section>
   <h2>Gameplay performance — last 30 days</h2>
   <p>FPS is total rendered frames / observed gameplay time. Hidden tabs, loading and engine pauses excluded. P95 is the mean of per-window P95 frame times (1 ms histogram bins, capped at 1000 ms), not a global percentile. Stall counts are frames over 100 ms. Up to 200 device groups shown.</p>
   <p>Click a column heading to sort; click again to reverse. Render size sorts by pixel count; VSync / FPS cap by VSync, then cap.</p>
@@ -118,6 +135,6 @@ nav a[aria-current="page"]{background:#373c2a;font-weight:600}
   <p>A visit begins when a browser first opens this game or returns after 30 minutes without recorded activity in this game.
      Successful save loads are a signal that players continued a campaign.</p>
 </main>
-<script nonce="${escape(nonce)}">${performanceSortingScript}</script>
+<script nonce="${escape(nonce)}">${performanceSortingScript}\n${trackViewerScript}</script>
 </html>`;
 }

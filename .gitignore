@@ -8,6 +8,7 @@
 # Exclude web build files
 misc/web/dist
 misc/web/out
+misc/web/node_modules/
 
 # exclude binaries and temporary files
 [Bb]in/

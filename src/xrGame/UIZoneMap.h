@@ -29,6 +29,7 @@ public:
 
     void Render();
     void Update();
+    void RescaleHorizontal(float factor);
 
     bool ZoomIn();
     bool ZoomOut();

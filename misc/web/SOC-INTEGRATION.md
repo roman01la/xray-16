@@ -1,8 +1,7 @@
 # Shadow of Chernobyl browser integration
 
-Status (2026-11-12): SoC is playable in the local browser build and integrated
-into the shared startup picker. The deployment candidate includes both campaigns.
-Production still serves Call of Pripyat.
+Status (2026-11-12): Both campaigns are deployed and available through the shared
+startup picker. SoC is also available in the local release build.
 
 See [Cloudflare publishing](../../server/cloudflare/README.md#publishing-both-campaigns)
 for the release procedure. The earlier entries below record compatibility work and
@@ -463,3 +462,13 @@ the Ukrainian audio and text archive is 166.13 MB.
 - Retry the tunnel escort using a save from before the reported crash. The
   script navigation bindings now reject invalid level vertex IDs before
   accessing the graph.
+
+### HUD resize and tunnel regression checks
+
+- While playing, resize from 16:9 to 4:3 and then to an ultrawide window. The
+  minimap, motion indicator and health/ammo panels should keep their proportions
+  and remain attached to their screen corners. Check map markers and clipping.
+- The later tunnel report at `0x8c7017` came from the old local SoC executable.
+  Its disassembly still indexed the navigation graph before checking the vertex
+  ID. The rebuilt local entry includes the guard from the language release.
+  The full scientist escort remains a manual replay check.

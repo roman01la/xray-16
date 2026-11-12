@@ -123,6 +123,21 @@ void CUIZoneMap::Init(bool motionIconAttached)
     }
 }
 
+void CUIZoneMap::RescaleHorizontal(float factor)
+{
+    const auto mapSize = m_activeMap->GetWndSize();
+    m_background.RescaleHorizontal(factor);
+    m_clipFrame.RescaleHorizontal(factor);
+    // The rotating map already corrects its geometry with get_current_kx().
+    // Keep its world zoom and refresh the clipping frame after a resize.
+    m_activeMap->SetWndSize(mapSize);
+    Frect clip;
+    m_clipFrame.GetAbsoluteRect(clip);
+    m_activeMap->WorkingArea() = clip;
+    if (mapSize.x > 0.f && mapSize.y > 0.f)
+        m_activeMap->SetActivePoint(Device.vCameraPosition);
+}
+
 void CUIZoneMap::Render()
 {
     if (!visible)

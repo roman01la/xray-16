@@ -140,6 +140,9 @@ public:
         MoveWndDelta(d.x, d.y);
     }
 
+    // Rescale a complete layout subtree, keeping its root anchored in UI space.
+    void RescaleHorizontal(float factor, float anchor = 0.f);
+
     ////////////////////////////////////
     //работа с дочерними и родительскими окнами
     virtual void AttachChild(CUIWindow* pChild);

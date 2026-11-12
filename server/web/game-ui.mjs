@@ -1,12 +1,14 @@
 import {requireGameCompatibility, showCompatibilityFailure} from './compatibility.mjs';
 import {ARCHIVE_CHUNKS, ARCHIVE_DESCRIPTORS, gameInstallDirectory, LEGACY_CHUNKS, LEGACY_DESCRIPTORS} from './opfs-store.mjs';
 import {startCampaignAnalytics} from './analytics-client.mjs';
-import {installCrashReporter} from './crash-reporter.mjs';
 
 const gameId=document.documentElement.dataset.game==='soc'?'soc':'cop';
 const streamRoot=`stream-${gameId}`;
 startCampaignAnalytics(gameId);
-installCrashReporter(gameId);
+// Reporting must not prevent startup when a browser blocks or cannot fetch it.
+void import('./crash-reporter.mjs').then(({installCrashReporter}) => {
+ installCrashReporter(gameId);
+}).catch(error => console.warn('Crash reporting unavailable', error));
 
 // Request fullscreen on an element owned by the top document. Keyboard
 // Lock cannot be requested by the release iframe itself.

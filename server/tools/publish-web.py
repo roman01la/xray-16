@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Stage immutable single-player release URLs for Cloudflare publication."""
-import argparse,hashlib,json,os,pathlib,shutil
+import argparse,hashlib,json,os,pathlib,shutil,subprocess
 P=pathlib.Path
 parser=argparse.ArgumentParser();parser.add_argument('--frontend',required=True);parser.add_argument('--pack',required=True);parser.add_argument('--output',required=True);parser.add_argument('--game',choices=('cop','soc'),default='cop');parser.add_argument('--wasm-symbols',type=P);args=parser.parse_args()
 repo=P(__file__).resolve().parents[2];output=P(args.output).resolve();output.mkdir(parents=True,exist_ok=True)
@@ -29,10 +29,16 @@ if args.game=='soc':
 index=output/'index.html'
 index.write_text(page)
 frontend['index.html']=record(index)
-for name in ['compatibility.mjs','game-ui.mjs','singleplayer-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','crash-reporter.mjs']:frontend[name]=record(repo/'server/web'/name)
+for name in ['compatibility.mjs','game-ui.mjs','singleplayer-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','analytics-movement.mjs','crash-reporter.mjs']:frontend[name]=record(repo/'server/web'/name)
+bundle_dir=output/'bundles'
+subprocess.run(['node',str(repo/'misc/web/tools/bundle-web.mjs'),str(frontend_dir),str(bundle_dir)],check=True)
+frontend={name:item for name,item in frontend.items() if not name.endswith(('.js','.mjs','.map'))}
+for path in sorted(bundle_dir.rglob('*')):
+ if path.is_file() and path.suffix in ('.js','.mjs'):
+  frontend[path.relative_to(bundle_dir).as_posix()]=record(path)
 wallpaper='startup-wallpaper-soc.webp' if args.game=='soc' else 'startup-wallpaper.webp'
 frontend['startup-wallpaper.webp']=record(repo/'server/web'/wallpaper)
-bootstrap={'compatibility.mjs','index.html','game-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','crash-reporter.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
+bootstrap={'index.html','game-ui.mjs','release-cache.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
 release_index=output/'release-files.json'
 release_index.write_text(json.dumps({name:item for name,item in frontend.items() if name not in bootstrap},sort_keys=True,separators=(',',':')))
 frontend['release-files.json']=record(release_index)

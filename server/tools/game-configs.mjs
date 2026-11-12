@@ -30,13 +30,13 @@ int main(int argc,char**argv){if(argc!=2||lzo_init()!=LZO_E_OK)return 2;unsigned
  }catch(e){await rm(dir,{recursive:true,force:true});throw e;}
  return {decode:(data,size)=>execFileSync(binary,[String(size)],{input:data,maxBuffer:64*1024*1024,timeout:10000}),close:()=>rm(dir,{recursive:true,force:true})};
 }
-async function readGameArchiveFiles(source, accepts, put, maxBytes=16*1024*1024){
+async function readGameArchiveFiles(source, accepts, put, maxBytes=16*1024*1024, includeLevels=false){
  const index=await archiveIndexDecoder();
  let payload;
  try{
   // CoP resources first, patches second, loose overrides last. Later registrations
   // replace whole files, matching CLocatorAPI::Register rather than merging LTX.
-  for(const group of ['resources','patches']){
+  for(const group of includeLevels ? ['levels','resources','patches'] : ['resources','patches']){
    const names=(await readdir(join(source,group))).filter(n=>/\.db\d*$/i.test(n)).sort();
    for(const name of names){
     const file=await open(join(source,group,name));
@@ -55,7 +55,7 @@ async function readGameArchiveFiles(source, accepts, put, maxBytes=16*1024*1024)
      }
      if(!table)continue;
      const entryPoint=/^\s*entry_point\s*=\s*(.*?)\s*$/mi.exec(header||'')?.[1];
-     if(!['gamedata','$fs_root$\\gamedata\\'].includes(entryPoint))throw Error('Unsupported archive entry point: '+group+'/'+name);
+     if(group!=='levels'&&!['gamedata','$fs_root$\\gamedata\\'].includes(entryPoint))throw Error('Unsupported archive entry point: '+group+'/'+name);
      for(let at=0;at<table.length;){
       if(at+18>table.length)throw Error('Truncated archive table');
       const length=table.readUInt16LE(at),end=at+2+length;
@@ -78,12 +78,12 @@ async function readGameArchiveFiles(source, accepts, put, maxBytes=16*1024*1024)
   if(payload)await payload.close();
  }
 }
-export async function readGameFiles(source, paths){
+export async function readGameFiles(source, paths, {includeLevels=false}={}){
  const wanted=new Set(paths.map(configPath));
  const files=new Map();
  await readGameArchiveFiles(source,path=>wanted.has(path),(path,data,origin)=>{
   files.set(path,{data,origin,sha256:createHash('sha256').update(data).digest('hex')});
- },64*1024*1024);
+ },64*1024*1024,includeLevels);
  for(const path of wanted)if(!files.has(path))throw Error('Missing game file: '+path);
  return files;
 }

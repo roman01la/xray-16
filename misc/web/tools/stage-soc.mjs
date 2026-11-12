@@ -82,7 +82,7 @@ execFileSync(process.execPath,[join(repo,'misc/web/webgpu/stage.mjs')],{env:{...
 await copyFile(join(repo,'src/xr_3da/stalker_soc.ico'),join(web,'favicon.ico'));
 await rename(join(web,'index.html'),join(web,'developer.html'));
 const webShell=join(repo,'server/web');
-for(const name of ['compatibility.mjs','game-ui.mjs','singleplayer-ui.mjs','analytics-client.mjs','crash-reporter.mjs','release-cache.mjs'])
+for(const name of ['compatibility.mjs','game-ui.mjs','singleplayer-ui.mjs','analytics-client.mjs','analytics-movement.mjs','crash-reporter.mjs','release-cache.mjs'])
   await copyFile(join(webShell,name),join(web,name));
 await copyFile(join(webShell,'startup-wallpaper-soc.webp'),join(web,'startup-wallpaper.webp'));
 const page=(await readFile(join(webShell,'game.html'),'utf8'))
