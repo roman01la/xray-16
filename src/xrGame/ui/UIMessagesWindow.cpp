@@ -112,12 +112,26 @@ void CUIMessagesWindow::AddIconedPdaMessage(const GAME_NEWS_DATA* news)
     p.x = pItem->UITimeText.GetWndPos().x + pItem->UITimeText.GetWidth() + 3.0f;
     pItem->UICaptionText.SetWndPos(p);
     pItem->UICaptionText.SetTextST(news->news_caption.c_str());
+    if (ShadowOfChernobylMode && !pItem->UICaptionText.GetParent())
+    {
+        // The original HUD uses one multiline text field beside the icon.
+        const float iconRight = pItem->UIIcon.GetWndPos().x + pItem->UIIcon.GetWidth();
+        auto pos = pItem->UIMsgText.GetWndPos();
+        if (pos.x < iconRight)
+        {
+            pItem->UIMsgText.SetWidth(pItem->UIMsgText.GetWidth() - (iconRight - pos.x));
+            pos.x = iconRight;
+            pItem->UIMsgText.SetWndPos(pos);
+        }
+    }
     pItem->UIMsgText.SetTextST(news->news_text.c_str());
     pItem->UIMsgText.AdjustHeightToText();
 
     pItem->SetColorAnimation(
         "ui_main_msgs_short", LA_ONLYALPHA | LA_TEXTCOLOR | LA_TEXTURECOLOR, float(news->show_time));
     pItem->UIIcon.InitTexture(news->texture_name.c_str());
+    if (news->texture_rect.width() > 0 && news->texture_rect.height() > 0)
+        pItem->UIIcon.SetTextureRect(news->texture_rect);
 
     const float h1 = _max(pItem->UIIcon.GetHeight(), pItem->UIMsgText.GetWndPos().y + pItem->UIMsgText.GetHeight());
     pItem->SetHeight(h1 + 3.0f);

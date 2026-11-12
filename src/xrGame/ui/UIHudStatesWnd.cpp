@@ -78,13 +78,15 @@ void CUIHudStatesWnd::InitFromXml(CUIXml& xml, LPCSTR path)
 {
     ZoneScoped;
 
-    CUIXmlInit::InitWindow(xml, path, 0, this);
     XML_NODE stored_root = xml.GetLocalRoot();
+    // IX-Ray supports SoC's flat HUD as well as the newer hud_states container.
+    if (XML_NODE new_root = xml.NavigateToNode(path, 0))
+    {
+        CUIXmlInit::InitWindow(xml, path, 0, this);
+        xml.SetLocalRoot(new_root);
+    }
 
-    XML_NODE new_root = xml.NavigateToNode(path, 0);
-    xml.SetLocalRoot(new_root);
-
-    m_back = UIHelper::CreateStatic(xml, "back", this);
+    m_back = UIHelper::CreateStatic(xml, "back", this, false);
     m_back_v = UIHelper::CreateStatic(xml, "back_v", this, false);
 
     // XXX: replace with UIHelper
@@ -136,10 +138,10 @@ void CUIHudStatesWnd::InitFromXml(CUIXml& xml, LPCSTR path)
     m_resist_back[ALife::infl_psi] = UIHelper::CreateStatic(xml, "resist_back_psi", this, false);
     // electra = no has CStatic!!
 
-    m_indik[ALife::infl_rad] = UIHelper::CreateStatic(xml, "indik_rad", this);
-    m_indik[ALife::infl_fire] = UIHelper::CreateStatic(xml, "indik_fire", this);
-    m_indik[ALife::infl_acid] = UIHelper::CreateStatic(xml, "indik_acid", this);
-    m_indik[ALife::infl_psi] = UIHelper::CreateStatic(xml, "indik_psi", this);
+    m_indik[ALife::infl_rad] = UIHelper::CreateStatic(xml, "indik_rad", this, false);
+    m_indik[ALife::infl_fire] = UIHelper::CreateStatic(xml, "indik_fire", this, false);
+    m_indik[ALife::infl_acid] = UIHelper::CreateStatic(xml, "indik_acid", this, false);
+    m_indik[ALife::infl_psi] = UIHelper::CreateStatic(xml, "indik_psi", this, false);
 
     m_lanim_name = xml.ReadAttrib("indik_rad", 0, "light_anim", "");
 
@@ -150,7 +152,7 @@ void CUIHudStatesWnd::InitFromXml(CUIXml& xml, LPCSTR path)
     m_ui_weapon_fmj_ammo = UIHelper::CreateStatic(xml, "static_fmj_ammo", this, false);
     m_ui_weapon_ap_ammo = UIHelper::CreateStatic(xml, "static_ap_ammo", this, false);
     m_ui_weapon_third_ammo = UIHelper::CreateStatic(xml, "static_third_ammo", this, false); //Alundaio: Option to display a third ammo type
-    m_fire_mode = UIHelper::CreateStatic(xml, "static_fire_mode", this);
+    m_fire_mode = UIHelper::CreateStatic(xml, "static_fire_mode", this, false);
     m_ui_grenade = UIHelper::CreateStatic(xml, "static_grenade", this, false);
 
     m_ui_weapon_icon = UIHelper::CreateStatic(xml, "static_wpn_icon", weaponsParent);
@@ -351,7 +353,7 @@ void CUIHudStatesWnd::UpdateActiveItemInfo(CActor* actor)
         item->GetBriefInfo(m_item_info);
 
         //		UIWeaponBack.SetText		( str_name.c_str() );
-        m_fire_mode->SetText(m_item_info.fire_mode.c_str());
+        if (m_fire_mode) m_fire_mode->SetText(m_item_info.fire_mode.c_str());
         SetAmmoIcon(m_item_info.icon.c_str());
 
         if (m_ui_weapon_cur_ammo)
@@ -416,7 +418,7 @@ void CUIHudStatesWnd::UpdateActiveItemInfo(CActor* actor)
             }
         }
 
-        m_fire_mode->Show(true);
+        if (m_fire_mode) m_fire_mode->Show(true);
 
         if (m_ui_grenade)
         {
@@ -462,7 +464,7 @@ void CUIHudStatesWnd::UpdateActiveItemInfo(CActor* actor)
         if (m_ui_weapon_sign_ammo)
             m_ui_weapon_sign_ammo->Show(false);
 
-        m_fire_mode->Show(false);
+        if (m_fire_mode) m_fire_mode->Show(false);
 
         if (m_ui_grenade)
             m_ui_grenade->Show(false);
@@ -709,6 +711,9 @@ void CUIHudStatesWnd::UpdateIndicatorType(CActor* actor, ALife::EInfluenceType t
         return;
     }
 
+    if (!m_indik[type])
+        return;
+
     constexpr u32 c_white = color_rgba(255, 255, 255, 255);
     constexpr u32 c_green = color_rgba(0, 255, 0, 255);
     constexpr u32 c_yellow = color_rgba(255, 255, 0, 255);
@@ -824,7 +829,7 @@ void CUIHudStatesWnd::UpdateIndicatorType(CActor* actor, ALife::EInfluenceType t
 }
 void CUIHudStatesWnd::SwitchLA(bool state, ALife::EInfluenceType type)
 {
-    if (state == m_cur_state_LA[type])
+    if (state == m_cur_state_LA[type] || !m_indik[type])
     {
         return;
     }
@@ -859,16 +864,16 @@ void CUIHudStatesWnd::DrawZoneIndicators()
 
     UpdateIndicators(actor);
 
-    if (m_indik[ALife::infl_rad]->IsShown())
+    if (m_indik[ALife::infl_rad] && m_indik[ALife::infl_rad]->IsShown())
         m_indik[ALife::infl_rad]->Draw();
 
-    if (m_indik[ALife::infl_fire]->IsShown())
+    if (m_indik[ALife::infl_fire] && m_indik[ALife::infl_fire]->IsShown())
         m_indik[ALife::infl_fire]->Draw();
 
-    if (m_indik[ALife::infl_acid]->IsShown())
+    if (m_indik[ALife::infl_acid] && m_indik[ALife::infl_acid]->IsShown())
         m_indik[ALife::infl_acid]->Draw();
 
-    if (m_indik[ALife::infl_psi]->IsShown())
+    if (m_indik[ALife::infl_psi] && m_indik[ALife::infl_psi]->IsShown())
         m_indik[ALife::infl_psi]->Draw();
 }
 
@@ -895,6 +900,9 @@ void CUIHudStatesWnd::FakeUpdateIndicatorType(u8 t, float power)
     case ALife::infl_psi: texture = "ui_inGame2_triangle_Psy_"; break;
     default: NODEFAULT;
     }
+    if (!m_indik[type])
+        return;
+
     float hit_power = power;
     ALife::EHitType hit_type = m_zone_hit_type[type];
 

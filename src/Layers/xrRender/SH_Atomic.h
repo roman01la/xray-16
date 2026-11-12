@@ -121,6 +121,9 @@ struct ECORE_API SPP : public xr_resource_named
     // Program pipeline object
     // or shader program if ARB_separate_shader_objects is unavailabe
     GLuint pp{};
+#ifdef XR_PLATFORM_WEB
+    u32 vertexInputs{};
+#endif
     R_constant_table constants;
 
     SPP() = default;
@@ -150,6 +153,7 @@ struct ECORE_API SDeclaration : public xr_resource_flagged
 #elif defined(USE_OGL)
     GLuint dcl;
 #   ifdef XR_PLATFORM_WEB
+    u32 vertexInputs{};
     GLuint bound_vb{};
     u32 bound_stride{};
     GLuint bound_ib{};

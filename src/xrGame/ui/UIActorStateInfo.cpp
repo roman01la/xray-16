@@ -92,6 +92,15 @@ void ui_actor_state_wnd::UpdateActorInfo(CInventoryOwner* owner)
 
     const auto& conditions = actor->conditions();
 
+    if (ShadowOfChernobylMode)
+    {
+        // The SoC inventory uses percentage bars for the actor's condition.
+        m_state[stt_health]->set_progress(conditions.GetHealth() * 100.0f);
+        m_state[stt_psi]->set_progress(conditions.GetPsyHealth() * 100.0f);
+        m_state[stt_radia]->set_progress(conditions.GetRadiation() * 100.0f);
+        return;
+    }
+
     // show stamina icon
     value = conditions.GetPower();
     m_state[stt_stamina]->set_progress(value);

@@ -57,6 +57,7 @@ public:
     void ScrollToBegin();
     void ScrollToEnd();
     void ScrollToWindow(CUIWindow* pWnd, float center_y_ratio = 0.5f);
+    void SetItemsSelectable(bool enabled) { m_flags.set(eItemsSelectabe, enabled); }
     bool GetVertFlip() const { return !!m_flags.test(eVertFlip); }
     bool Empty() const { return m_pad->GetChildWndList().empty(); }
 

@@ -11,6 +11,7 @@ class CUIXml;
 class CUIFrameWindow;
 class UIHint;
 
+class CUISoCPdaSection;
 class CUIMapWnd;
 class CUITaskWnd;
 class CUIFactionWarWnd;
@@ -40,6 +41,7 @@ protected:
     shared_str m_sActiveSection;
 
     UIHint* m_hint_wnd;
+    CUISoCPdaSection* m_socSections[5]{};
 
 public:
     // Поддиалоги PDA

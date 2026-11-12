@@ -65,6 +65,7 @@ test('browser client sends device info and gameplay summary without hidden-tab f
   document.hidden=false;window.dispatchEvent(new CustomEvent('xray-performance',{detail}));window.dispatchEvent(new Event('pagehide'));
   await new Promise(setImmediate);
   const sample=posts.find(p=>p.event==='performance');assert.equal(sample.data.frames,360);assert.equal(sample.data.avgFps,60);assert.equal(sample.data.p95Ms,17);assert.equal(sample.data.width,1280);
+  assert.ok(posts.every(post=>post.gameId==='cop'));
   assert.ok(posts.some(p=>p.event==='device'&&p.data.cores===8));
   assert.ok(posts.some(p=>p.event==='playtime'&&p.data.sessionId===priorSession&&p.data.elapsedMs===3000),'pending prior-session checkpoint retried on startup');
   assert.equal(posts.find(p=>p.event==='playtime'&&p.data.sessionId===sample.data.sessionId).data.elapsedMs,6000,'hidden gameplay is excluded');
@@ -78,6 +79,22 @@ test('browser client sends device info and gameplay summary without hidden-tab f
   offline=false;window.dispatchEvent(new Event('online'));await new Promise(setImmediate);
   assert.equal(posts.filter(p=>p.event==='playtime').at(-1).data.elapsedMs,8000,'retry sends cumulative total');
   assert.equal([...storage.keys()].filter(k=>k.startsWith('xray-analytics-playtime-v1:')).length,0,'acknowledged checkpoint removed');
+
+  const legacyPending=randomUUID(),socPending=randomUUID();
+  const pending=sessionId=>JSON.stringify({sessionId,release:'a'.repeat(64),elapsedMs:1500});
+  storage.set('xray-analytics-playtime-v1:'+legacyPending,pending(legacyPending));
+  storage.set('xray-analytics-playtime-v1:soc:'+socPending,pending(socPending));
+  globalThis.window=new EventTarget();
+  globalThis.document=new EventTarget();
+  const firstSocPost=posts.length;
+  startCampaignAnalytics('soc');
+  globalThis.window.dispatchEvent(new CustomEvent('xray-stream-progress',{detail:{phase:'install',ready:true,firstInstall:true}}));
+  await new Promise(setImmediate);
+  const socPosts=posts.slice(firstSocPost);
+  assert.ok(socPosts.every(post=>post.gameId==='soc' && post.browserId===sample.browserId));
+  assert.ok(socPosts.some(post=>post.event==='playtime' && post.data.sessionId===socPending));
+  assert.ok(socPosts.some(post=>post.event==='install'));
+  assert.ok(storage.has('xray-analytics-playtime-v1:'+legacyPending));
  }finally{for(const [key,descriptor]of saved){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key]}}
 });
 

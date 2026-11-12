@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Stage immutable single-player release URLs for Cloudflare publication."""
-import argparse,hashlib,json,os,pathlib
+import argparse,hashlib,json,os,pathlib,shutil
 P=pathlib.Path
-parser=argparse.ArgumentParser();parser.add_argument('--frontend',required=True);parser.add_argument('--pack',required=True);parser.add_argument('--output',required=True);args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--frontend',required=True);parser.add_argument('--pack',required=True);parser.add_argument('--output',required=True);parser.add_argument('--game',choices=('cop','soc'),default='cop');parser.add_argument('--wasm-symbols',type=P);args=parser.parse_args()
 repo=P(__file__).resolve().parents[2];output=P(args.output).resolve();output.mkdir(parents=True,exist_ok=True)
+frontend_dir=P(args.frontend).resolve()
+if json.loads((frontend_dir/'engine_data.json').read_text()).get('gameId','cop')!=args.game:
+ raise ValueError('Frontend is staged for a different game')
 blobs={};entries={}
 def record(path):
  data=path.read_bytes();digest=hashlib.sha256(data).hexdigest();blobs[digest]={'path':str(path.resolve()),'size':len(data)};return {'sha256':digest,'size':len(data)}
@@ -13,23 +16,37 @@ def collect(root,skip=False):
   dirs.sort()
   for name in sorted(files):
    path=P(directory)/name;relative=path.relative_to(root).as_posix()
-   if skip and ('-test.' in name or name == 'index.html'):continue
+   if skip and ('-test.' in name or name in ('index.html','developer.html')):continue
    result[relative]=record(path)
  return result
-frontend=collect(P(args.frontend).resolve(),True)
+frontend=collect(frontend_dir,True)
 frontend['License.txt']=record(repo/'License.txt')
-frontend['index.html']=record(repo/'server/web/game.html')
-for name in ['compatibility.mjs','game-ui.mjs','singleplayer-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','startup-wallpaper.webp']:frontend[name]=record(repo/'server/web'/name)
-bootstrap={'compatibility.mjs','index.html','game-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
+page=(repo/'server/web/game.html').read_text()
+if args.game=='soc':
+ page=(page.replace('data-game="cop"','data-game="soc"')
+       .replace('Call of Pripyat','Shadow of Chernobyl')
+       .replace('/app/41700/STALKER_Call_of_Pripyat/','/app/4500/'))
+index=output/'index.html'
+index.write_text(page)
+frontend['index.html']=record(index)
+for name in ['compatibility.mjs','game-ui.mjs','singleplayer-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','crash-reporter.mjs']:frontend[name]=record(repo/'server/web'/name)
+wallpaper='startup-wallpaper-soc.webp' if args.game=='soc' else 'startup-wallpaper.webp'
+frontend['startup-wallpaper.webp']=record(repo/'server/web'/wallpaper)
+bootstrap={'compatibility.mjs','index.html','game-ui.mjs','release-cache.mjs','opfs-store.mjs','analytics-client.mjs','crash-reporter.mjs','release-files.json','favicon.ico','startup-wallpaper.webp'}
 release_index=output/'release-files.json'
 release_index.write_text(json.dumps({name:item for name,item in frontend.items() if name not in bootstrap},sort_keys=True,separators=(',',':')))
 frontend['release-files.json']=record(release_index)
 pack=collect(P(args.pack).resolve())
 version=lambda value:hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 release,pack_id=version(frontend),version(pack)
+if args.wasm_symbols:
+ symbols=output/'private-symbols'/release
+ symbols.mkdir(parents=True,exist_ok=True)
+ shutil.copyfile(frontend_dir/'xr_3da.wasm',symbols/'xr_3da.wasm')
+ shutil.copyfile(args.wasm_symbols,symbols/'xr_3da.js.symbols')
 for kind,digest,files in [('releases',release,frontend),('packs',pack_id,pack)]:
  entries.update({f'/{kind}/{digest}/{name}':value for name,value in files.items()})
 query=f'stream=/packs/{pack_id}/pack.json'
-manifest={'format':1,'mode':'singleplayer','entry':f'/releases/{release}/index.html?{query}','files':entries}
+manifest={'format':1,'mode':'singleplayer','gameId':args.game,'entry':f'/releases/{release}/index.html?{query}','files':entries}
 (output/'manifest.json').write_text(json.dumps(manifest));(output/'sources.json').write_text(json.dumps(blobs));
 print(json.dumps({'files':len(entries),'uniqueBlobs':len(blobs),'bytes':sum(x['size'] for x in blobs.values()),'release':release,'pack':pack_id}),flush=True)

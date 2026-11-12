@@ -9,6 +9,8 @@
 class CGameTaskManager;
 class CMapLocation;
 class CGameTask;
+class CUIXml;
+class TiXmlNode;
 
 typedef xr_vector<luabind::functor<bool>> task_state_functors;
 
@@ -63,7 +65,7 @@ public:
     shared_str m_map_hint;
     shared_str m_map_location;
     u16 m_map_object_id{};
-    bool m_def_location_enabled{};
+    bool m_def_location_enabled{true};
     CMapLocation* m_linked_map_location{};
 
     // timing
@@ -104,6 +106,7 @@ public:
     void load(IReader& stream) override;
 
 private:
+    void ReadTaskRules(CUIXml& xml, TiXmlNode* node);
     void SendInfo(const xr_vector<shared_str>&);
     bool CheckInfo(const xr_vector<shared_str>&) const;
     void CallAllFuncs(const task_state_functors& v);

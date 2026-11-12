@@ -238,9 +238,11 @@ void CController::Load(LPCSTR section)
         pSettings->r_u32(section, tube_condition_min_delay_line) :
         default_tube_condition_min_delay;
 
-    m_tube_condition_min_distance = pSettings->line_exist(section, tube_condition_min_distance_line) ?
-        pSettings->r_float(section, tube_condition_min_distance_line) :
-        default_tube_condition_min_distance;
+    // SoC stores the same threshold under the older key.
+    const auto distanceLine = pSettings->line_exist(section, tube_condition_min_distance_line) ?
+        tube_condition_min_distance_line : "tube_min_dist";
+    m_tube_condition_min_distance = READ_IF_EXISTS(pSettings, r_float, section, distanceLine,
+        default_tube_condition_min_distance);
 
     m_stamina_hit = READ_IF_EXISTS(pSettings, r_float, section, "stamina_hit", default_stamina_hit);
 

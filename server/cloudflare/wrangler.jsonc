@@ -13,11 +13,13 @@
     "run_worker_first": [
       "/analytics",
       "/analytics/*",
-      "/health"
+      "/health",
+      "/crash-report"
     ]
   },
   "vars": {
-    "ORIGIN": "https://stalker-online.xyz"
+    "ORIGIN": "https://stalker-online.xyz",
+    "SENTRY_DSN": "https://b081ea8d4d348053ba54e9d8556d40c3@o4505784570085376.ingest.us.sentry.io/4512417720958976"
   },
   "d1_databases": [
     {
@@ -27,6 +29,16 @@
     }
   ],
   "ratelimits": [
+    {
+      "name": "CRASH_LIMIT",
+      "namespace_id": "2026111201",
+      "simple": { "limit": 8, "period": 60 }
+    },
+    {
+      "name": "CRASH_GLOBAL",
+      "namespace_id": "2026111202",
+      "simple": { "limit": 120, "period": 60 }
+    },
     {
       "name": "EVENT_LIMIT",
       "namespace_id": "2026111101",

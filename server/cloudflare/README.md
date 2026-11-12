@@ -2,8 +2,8 @@
 
 The browser runs the entire game. Cloudflare serves the immutable engine/frontend
 through Workers Static Assets and gzip game chunks through the `stalker-online-assets`
-R2 bucket at `assets.stalker-online.xyz`. Only analytics, its authenticated dashboard,
-and the health/status endpoints invoke Worker code.
+R2 bucket at `assets.stalker-online.xyz`. Analytics, crash reports, the authenticated
+dashboard and health checks invoke Worker code.
 
 `stalker-online-analytics` in D1 replaces the gateway's SQLite analytics file. The
 schema, event validation and dashboard preserve the existing browser IDs, milestones,
@@ -49,6 +49,54 @@ Keep COOP/COEP headers and immutable asset headers in `_headers`. Do not enable
 `run_worker_first` for static files/chunks: this would consume dynamic Worker quota.
 An engine update does not require uploading unchanged game chunks. The static
 asset deployment skips unchanged file content through Wrangler's hash-based upload.
+
+### Publishing both campaigns
+
+Stage CoP with `misc/web/tools/stage-game.mjs` and SoC with
+`misc/web/tools/stage-soc.mjs` using the same optimized engine build. Publish each
+frontend with its own pack and output directory. Pass `--game soc` for SoC.
+
+Run `stage.py --publication COP_PUBLICATION --soc-publication SOC_PUBLICATION
+--retain PREVIOUS_PUBLICATION --retained-assets PREVIOUS_STATIC_ASSETS --output OUTPUT`.
+The retained static directory supplies the original bytes when files at the old
+publication's source paths have since changed. Stage without `--soc-publication`
+to keep the single-title root.
+
+Upload and verify the SoC chunks with `upload-chunks.py` before deploying the
+static bundle. An unchanged CoP pack reuses its existing R2 objects. Use the
+generated static bundle as the configured `.assets` directory for the deployment.
+Run the browser verification after deployment. It checks selection at the root URL,
+Wasm integrity, isolation, and decoded CDN chunks for both titles.
+
+The root picker downloads the selected campaign only. Saves, settings, and
+installed game data are scoped to each campaign. CoP keeps its existing paths
+and historical metrics. SoC launches with the Ukrainian pack.
+
+Apply `schema-soc.sql` to D1 before deploying the two-campaign Worker. The
+script can run more than once and leaves the existing CoP tables and current
+Worker operational. A new database needs both `schema.sql` and `schema-soc.sql`.
+
+```sh
+npx wrangler@4.160.0 d1 execute stalker-online-analytics --remote \
+  --config server/cloudflare/wrangler.jsonc --file server/cloudflare/schema-soc.sql
+```
+
+The authenticated dashboard has a campaign selector. Visits, installs, device
+sessions, FPS and playtime are reported per campaign. Older CoP builds can still
+send events without a campaign ID.
+
+### Crash reporting
+
+Published releases report fatal assertions, engine worker failures, WebGPU device
+loss and launch exceptions through the same-origin `/crash-report` endpoint. The
+Worker forwards the game, release, map when available, and error stack to the
+project identified by `SENTRY_DSN`. Reporting runs on crashes only. It adds no
+Sentry browser SDK, tracing, or replay.
+
+Pass `--wasm-symbols BIN/xr_3da.js.symbols` when publishing to keep the exact
+release Wasm and its symbol map under `private-symbols/<release>/`. Use the
+release tag to match a Sentry stack to the corresponding build. These files are
+outside the public asset manifest.
 
 ## Fly migration and recovery
 

@@ -13,6 +13,9 @@ let releaseSaveSession;
 window.addEventListener("pagehide", () => { releaseSaveSession?.(); releaseSaveSession = undefined; });
 window.addEventListener("pageshow", event => { if(event.persisted)location.reload(); });
 const streamURL = new URLSearchParams(location.search).get("stream");
+// The staged page identifies the title; never infer it from a save name.
+const gameId = document.documentElement.dataset.game === "soc" ? "soc" : "cop";
+const streamRoot = `stream-${gameId}`;
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
 const logEl = $("log");
@@ -119,12 +122,12 @@ function askWorker(message, timeoutMs) {
 async function refreshState(select) {
   try {
     const { roots } = await askWorker({ type: "status" }, 15000);
-    if (streamURL && !roots.includes("stream-cop")) roots.push("stream-cop");
+    if (streamURL && !roots.includes(streamRoot)) roots.push(streamRoot);
     const picker = $("game");
     picker.replaceChildren(...roots.map((root) => new Option(root, root)));
     picker.hidden = roots.length === 0;
     if (select && roots.includes(select)) picker.value = select;
-    else if (streamURL) picker.value = "stream-cop";
+    else if (streamURL) picker.value = streamRoot;
     $("ingest-status").textContent = roots.length
       ? `${roots.length} game${roots.length > 1 ? "s" : ""} in OPFS`
       : 'no game ingested yet; press "Add game folder"';
@@ -196,7 +199,7 @@ $("launch").onclick = async () => {
   let streaming, saveTimes;
   try {
     releaseSaveSession ??= await acquireSaveSession(root);
-    const pack = streamURL && root === "stream-cop" ? new URL(streamURL, location.href).href : undefined;
+    const pack = streamURL && root === streamRoot ? new URL(streamURL, location.href).href : undefined;
     ({ streaming, saveTimes } = await askWorker({ type: "sync-engine-data", root, pack, includeSaveTimes: true }));
   } catch (e) {
     releaseSaveSession?.(); releaseSaveSession = undefined;
@@ -217,6 +220,7 @@ $("launch").onclick = async () => {
     streaming?.config ?? `/opfs/${root}/fsgame.ltx`,
   ];
   if (streaming) args.push("-stream_mount", streaming.mount);
+  if (gameId === "soc") args.push("-soc");
   args.push(...$("extra-args").value.split(/\s+/).filter(Boolean));
   print("launching: " + args.join(" "));
 
@@ -237,6 +241,9 @@ $("launch").onclick = async () => {
 
     $("status").textContent = "engine running";
   } catch (e) {
+    window.dispatchEvent(new CustomEvent("xray-crash", {
+      detail: {kind: "launch", message: e.message, stack: e.stack},
+    }));
     $("status").textContent =
       "Launch failed: " + e.message + ". Use Restart to retry.";
     print(e.stack || e.message);

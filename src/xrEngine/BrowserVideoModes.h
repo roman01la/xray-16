@@ -21,12 +21,16 @@ struct AspectFamily
     std::array<Size, maxPresets> presets;
 };
 
+inline constexpr AspectFamily widescreen{
+    16.0 / 9, {{{854, 480}, {960, 540}, {1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3200, 1800}, {3840, 2160}}}
+};
+
 inline constexpr AspectFamily families[] = {
     { 5.0 / 4, {{{640, 512}, {800, 640}, {960, 768}, {1280, 1024}, {1600, 1280}, {2560, 2048}}} },
     { 4.0 / 3, {{{640, 480}, {800, 600}, {1024, 768}, {1152, 864}, {1280, 960}, {1600, 1200}, {2048, 1536}, {2880, 2160}}} },
     { 3.0 / 2, {{{720, 480}, {1080, 720}, {1200, 800}, {1440, 960}, {1620, 1080}, {1920, 1280}, {2160, 1440}, {2880, 1920}, {3240, 2160}}} },
     { 16.0 / 10, {{{768, 480}, {960, 600}, {1152, 720}, {1280, 800}, {1440, 900}, {1680, 1050}, {1920, 1200}, {2560, 1600}, {3840, 2400}}} },
-    { 16.0 / 9, {{{854, 480}, {960, 540}, {1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3200, 1800}, {3840, 2160}}} },
+    widescreen,
     { 64.0 / 27, {{{1280, 540}, {1720, 720}, {2560, 1080}, {3440, 1440}, {3840, 1600}}} },
     { 32.0 / 9, {{{1920, 540}, {2560, 720}, {3200, 900}, {3840, 1080}}} },
 };
@@ -38,8 +42,9 @@ inline constexpr bool IsSupported(Size mode)
 
 struct ModeList
 {
-    // The exact display size and the active custom size can add one entry each.
-    std::array<Size, maxPresets + 2> sizes{};
+    // SoC can offer a second aspect family alongside the display's modes.
+    static constexpr std::size_t capacity = 2 * maxPresets + 2;
+    std::array<Size, capacity> sizes{};
     std::size_t count = 0;
 };
 
@@ -77,6 +82,31 @@ inline ModeList ForDisplay(Size display, Size current = {})
 
     std::sort(modes.sizes.begin(), modes.sizes.begin() + modes.count,
         [](Size a, Size b) { return a.height < b.height; });
+    return modes;
+}
+
+inline ModeList ForSoCDisplay(Size display, Size current)
+{
+    auto modes = ForDisplay(display);
+    const auto add = [&modes](Size mode)
+    {
+        const auto end = modes.sizes.begin() + modes.count;
+        if (IsSupported(mode) && std::none_of(modes.sizes.begin(), end, [mode](Size entry)
+            { return entry.width == mode.width && entry.height == mode.height; }))
+            modes.sizes[modes.count++] = mode;
+    };
+
+    // Offer at least the smallest widescreen mode even on a narrow display.
+    const unsigned widthLimit = std::max(display.width, widescreen.presets.front().width);
+    for (const auto mode : widescreen.presets)
+    {
+        if (mode.width <= widthLimit && mode.height <= display.height)
+            add(mode);
+    }
+    add(current);
+
+    std::sort(modes.sizes.begin(), modes.sizes.begin() + modes.count, [](Size a, Size b)
+        { return a.height != b.height ? a.height < b.height : a.width < b.width; });
     return modes;
 }
 

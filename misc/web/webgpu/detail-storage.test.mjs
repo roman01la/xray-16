@@ -48,6 +48,19 @@ test('LRU reuse submits pending compute and invalidates native allocation handle
   assert.equal(arena.release(r.info(a)),false);assert.equal(arena.release(r.info(b)),true);
   assert.ok(arena.pages.every(p=>p.gpu.destroyed));
 });
+test('eviction protects all visible slots in a wasm64 pointer array', () => {
+  const {arena, heap, words, upload} = fixture();
+  const token = {};
+  upload(token, [[1, 0, 5], [2, 0, 5]]);
+  const retainedIndex = words[2];
+  // Slot 1 is the oldest and appears after slot 3. A high word equal to
+  // slot 2's ID must not protect that slot.
+  arena.upload(token, new Uint32Array([3, 0, 0, 5, 2560, 24, 28]),
+    heap, words, new Uint32Array([3, 2, 1, 0]), 2);
+  assert.equal(words[2], retainedIndex);
+  assert.equal(words[4], 0xffffffff);
+  assert.ok(arena.entries.has(3));
+});
 test('count growth allocates safely and source generation changes upload new content',()=>{
   const {arena,upload,gather,words}=fixture(),token={};
   upload(token,[[1,0,2]]);gather(token,[[1,0,2]]);

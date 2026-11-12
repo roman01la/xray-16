@@ -1,8 +1,12 @@
 import {requireGameCompatibility, showCompatibilityFailure} from './compatibility.mjs';
-import {ARCHIVE_CHUNKS, ARCHIVE_DESCRIPTORS, INSTALL_DIRECTORY, LEGACY_CHUNKS, LEGACY_DESCRIPTORS} from './opfs-store.mjs';
+import {ARCHIVE_CHUNKS, ARCHIVE_DESCRIPTORS, gameInstallDirectory, LEGACY_CHUNKS, LEGACY_DESCRIPTORS} from './opfs-store.mjs';
 import {startCampaignAnalytics} from './analytics-client.mjs';
+import {installCrashReporter} from './crash-reporter.mjs';
 
-startCampaignAnalytics();
+const gameId=document.documentElement.dataset.game==='soc'?'soc':'cop';
+const streamRoot=`stream-${gameId}`;
+startCampaignAnalytics(gameId);
+installCrashReporter(gameId);
 
 // Request fullscreen on an element owned by the top document. Keyboard
 // Lock cannot be requested by the release iframe itself.
@@ -56,6 +60,7 @@ const canvas=document.querySelector('#canvas');
 const capture=document.querySelector('#mouse-capture');
 const boot=document.querySelector('#boot');
 const hasMouse=()=>document.pointerLockElement===canvas;
+const syncMouseCapture=()=>{capture.hidden=hasMouse();};
 for(const type of ['keydown','keyup','keypress']){
  window.addEventListener(type,event=>{
   if(!boot.hidden)event.stopImmediatePropagation();
@@ -82,8 +87,14 @@ document.addEventListener('pointerlockchange',()=>{
   for(const button of heldButtons)canvas.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button}));
   releasingButtons=false;
  }
- capture.hidden=hasMouse();
+ syncMouseCapture();
 });
+window.addEventListener('blur',()=>{
+ if(hasMouse())document.exitPointerLock();
+ syncMouseCapture();
+});
+window.addEventListener('focus',syncMouseCapture);
+syncMouseCapture();
 capture.addEventListener('click',async()=>{
  canvas.focus({preventScroll:true});
  try{await canvas.requestPointerLock();}
@@ -91,6 +102,7 @@ capture.addEventListener('click',async()=>{
 });
 
 const params=new URLSearchParams(location.search);
+document.querySelector('#choose-game').hidden=params.get('picker')!=='1'||!frame;
 const managingStorage=params.get('storage')==='manage';
 const importingSaves=params.get('saves')==='import';
 const importButton=document.querySelector('#boot-import');
@@ -112,7 +124,7 @@ importButton.hidden=returningToMenu||managingStorage;
 importButton.disabled=!navigator.locks||!navigator.storage?.getDirectory;
 importButton.addEventListener('click',()=>{
  if(importingSaves){importFile.click();return;}
- const root=params.has('stream')?'stream-cop':document.querySelector('#game').value;
+ const root=params.has('stream')?streamRoot:document.querySelector('#game').value;
  if(!root){backupStatus.textContent='Wait for the game files to be selected, then try again.';return;}
  const url=new URL(location.href);url.searchParams.delete('storage');url.searchParams.set('saves','import');
  if(!params.has('stream'))url.searchParams.set('save-root',root);
@@ -137,18 +149,18 @@ async function clearInstalledGame(){
      catch(error){if(error.name!=='NotFoundError')throw error;}
     };
     try{
-     const install=await root.getDirectoryHandle(INSTALL_DIRECTORY);
+     const install=await root.getDirectoryHandle(gameInstallDirectory(gameId));
      await remove(install,ARCHIVE_CHUNKS);
      await remove(install,ARCHIVE_DESCRIPTORS);
     }catch(error){if(error.name!=='NotFoundError')throw error;}
     for await(const [name,profile] of root.entries()){
-     if(profile.kind!=='directory'||name!=='stream-cop')continue;
+     if(profile.kind!=='directory'||name!==streamRoot)continue;
      const files=await Array.fromAsync(profile.keys());
      for(const file of files){
       if(file!=='_appdata_')await profile.removeEntry(file,{recursive:true});
      }
     }
-    await Promise.all([LEGACY_CHUNKS,LEGACY_DESCRIPTORS].map(name=>globalThis.caches?.delete(name)));
+    if(gameId==='cop')await Promise.all([LEGACY_CHUNKS,LEGACY_DESCRIPTORS].map(name=>globalThis.caches?.delete(name)));
    });
   });
   storageStatus.textContent='Downloaded game data deleted. Your saves and settings are still available.';
@@ -203,7 +215,7 @@ if(importingSaves){
   backupStatus.textContent='Checking and importing saves…';
   try{
    const {importSaveBackup}=await import('./save-format.js');
-   const root=params.has('stream')?'stream-cop':params.get('save-root');
+   const root=params.has('stream')?streamRoot:params.get('save-root');
    const result=await importSaveBackup(root,file);
    backupStatus.textContent=`Imported saves: ${result.imported}. Existing saves kept: ${result.skipped}. Select Return to Game, then Load game.`;
   }catch(error){backupStatus.textContent='Import failed: '+error.message;}
@@ -229,7 +241,7 @@ if(importingSaves){
   globalThis.__xrayRetireLegacyStorage=await preparePublishedRelease((done,total,label)=>{
    status.textContent=label;
    meter.max=total;meter.value=done;
-  });
+  }, gameId);
   if(globalThis.__xrayRetireLegacyStorage)window.addEventListener('xray-stream-progress',({detail})=>{
    if(detail.phase==='install'&&detail.ready)globalThis.caches?.delete(LEGACY_DESCRIPTORS).catch(console.warn);
   });

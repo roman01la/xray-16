@@ -430,15 +430,13 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
     //объекте, если больше 0, то пуля прошивает объект)
 
     SGameMtl* mtl = GMLib.GetMaterialByIdx(target_material);
-    float mtl_ap = mtl->fShootFactor;
-    float shoot_factor = 0.0f; // default >> пуля НЕ пробила материал!
-    float ap = bullet->armor_piercing;
-
-    if (ap > EPS && ap >= mtl_ap)
-    {
-        //пуля пробила материал
-        shoot_factor = ((ap - mtl_ap) / ap);
-    }
+    const float materialFactor = mtl->fShootFactor;
+    const bool legacyMaterials = GMLib.GetLibraryVersion() == GAMEMTL_VERSION_SOC;
+    const float ap = bullet->armor_piercing;
+    // SoC stores passability; later games store the armor piercing required.
+    const float shoot_factor = legacyMaterials
+        ? materialFactor * bullet->material_piercing * speed_factor
+        : (ap > EPS && ap >= materialFactor ? (ap - materialFactor) / ap : 0.f);
 
     hit_res->impulse = 0.0f;
     float speed_scale = 0.0f;
@@ -449,7 +447,7 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
     int bullet_state = 0;
 #endif
 
-    if (fsimilar(mtl_ap, 0.0f)) //Если материал полностью простреливаемый (кусты)
+    if (fsimilar(materialFactor, legacyMaterials ? 1.f : 0.f))
     {
 #ifdef DEBUG
         bullet_state = 2;
@@ -457,13 +455,13 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
         return true;
     }
 
-    if (bullet->flags.magnetic_beam && (shoot_factor > EPS))
+    if (!legacyMaterials && bullet->flags.magnetic_beam && (shoot_factor > EPS))
     {
 #ifdef DEBUG
         bullet_state = 2;
 #endif
         // air resistance of magnetic_beam bullet is armor resistance too
-        bullet->armor_piercing -= mtl_ap * bullet->air_resistance;
+        bullet->armor_piercing -= materialFactor * bullet->air_resistance;
         return true;
     }
 
@@ -474,14 +472,17 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
     random_dir(tgt_dir, new_dir, deg2rad(10.0f));
     float ricoshet_factor = bullet->dir.dotproduct(tgt_dir);
 
-    float f = Random.randF(0.5f, 0.8f); //(0.5f,1.f);
-    if ((f < ricoshet_factor) && !mtl->Flags.test(SGameMtl::flNoRicoshet) && bullet->flags.allow_ricochet)
+    const float f = Random.randF(0.5f, legacyMaterials ? 1.f : 0.8f);
+    const float ricochetThreshold = legacyMaterials ? f + shoot_factor : f;
+    if (ricochetThreshold < ricoshet_factor &&
+        (legacyMaterials || !mtl->Flags.test(SGameMtl::flNoRicoshet)) && bullet->flags.allow_ricochet)
     {
         // уменьшение скорости полета в зависимости от угла падения пули (чем прямее угол, тем больше потеря)
-        bullet->flags.allow_ricochet = 0;
+        if (!legacyMaterials)
+            bullet->flags.allow_ricochet = 0;
         float scale = 1.0f - _abs(bullet->dir.dotproduct(hit_normal)) * m_fCollisionEnergyMin;
         clamp(scale, 0.0f, m_fCollisionEnergyMax);
-        speed_scale = scale;
+        speed_scale = legacyMaterials ? (1.f - materialFactor) * scale : scale;
 
         // вычисление рикошета, делается немного фейком, т.к. пуля остается в точке столкновения
         // и сразу выходит из RayQuery()
@@ -493,7 +494,7 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
         bullet_state = 0;
 #endif
     }
-    else if (shoot_factor < EPS)
+    else if (shoot_factor < (legacyMaterials ? 1.f : EPS))
     {
         //застрявание пули в материале
         speed_scale = 0.0f;
@@ -504,12 +505,13 @@ bool CBulletManager::ObjectHit(SBullet_Hit* hit_res, SBullet* bullet, const Fvec
     else
     {
         //пробивание материала
-        speed_scale = shoot_factor; // mtl->fShootFactor;
+        speed_scale = legacyMaterials ? materialFactor : shoot_factor;
 
         bullet->bullet_pos.mad(bullet->bullet_pos, bullet->dir, EPS); // fake
         //ввести коэффициент случайности при простреливании
         Fvector rand_normal;
-        rand_normal.random_dir(bullet->dir, deg2rad(2.0f), Random);
+        const float spread = legacyMaterials ? 5.f * (1.f - speed_scale) : 2.f;
+        rand_normal.random_dir(bullet->dir, deg2rad(spread), Random);
         bullet->dir.set(rand_normal);
 #ifdef DEBUG
         bullet_state = 2;

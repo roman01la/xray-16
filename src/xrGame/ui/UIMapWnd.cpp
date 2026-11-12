@@ -379,6 +379,13 @@ void CUIMapWnd::Draw()
 
 void CUIMapWnd::MapLocationRelcase(CMapLocation* ml)
 {
+    if (m_cur_location == ml)
+    {
+        m_cur_location = nullptr;
+        if (m_UIPropertiesBox)
+            m_UIPropertiesBox->Hide();
+    }
+
     CUIWindow* owner = m_map_location_hint->GetOwner();
     if (owner)
     {
@@ -844,9 +851,19 @@ void CUIMapWnd::SpotSelected(CUIWindow* w)
         return;
     }
 
-    CGameTask* t = Level().GameTaskManager().HasGameTask(sp->MapLocation(), true);
-    if (t)
+    auto& tasks = Level().GameTaskManager();
+    TASK_OBJECTIVE_ID objectiveId = ROOT_TASK_OBJECTIVE;
+    if (auto* task = tasks.HasGameTask(sp->MapLocation(), true, &objectiveId))
     {
-        Level().GameTaskManager().SetActiveTask(t);
+        if (ShadowOfChernobylMode)
+        {
+            if (auto* previous = tasks.ActiveTask())
+            {
+                if (auto* marker = previous->LinkedMapLocation())
+                    marker->DisablePointer();
+            }
+            sp->MapLocation()->EnablePointer();
+        }
+        tasks.SetActiveTask(task, objectiveId);
     }
 }

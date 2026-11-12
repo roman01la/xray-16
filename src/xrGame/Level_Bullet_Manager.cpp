@@ -58,6 +58,7 @@ SBullet::SBullet(const Fvector& position, const Fvector& direction, float starti
     weapon_id = sendersweapon_id;
     hit_type = e_hit_type;
 
+    material_piercing = cartridge.param_s.kPierce;
     armor_piercing = cartridge.param_s.kAP;
     air_resistance = cartridge.param_s.kAirRes * air_resistance_factor;
     wallmark_size = cartridge.param_s.fWallmarkSize;
@@ -571,6 +572,11 @@ static void update_bullet(
 // return TRUE-продолжить трассировку / FALSE-закончить трассировку
 bool CBulletManager::firetrace_callback(collide::rq_result& result, LPVOID params)
 {
+    const CDB::TRI* triangle = result.O ? nullptr : Level().ObjectSpace.GetStaticTris() + result.element;
+    if (triangle && GMLib.GetLibraryVersion() == GAMEMTL_VERSION_SOC &&
+        fsimilar(GMLib.GetMaterialByIdx(triangle->material)->fShootFactor, 1.f))
+        return TRUE;
+
     bullet_test_callback_data& data = *(bullet_test_callback_data*)params;
     SBullet& bullet = *data.pBullet;
 
@@ -590,10 +596,9 @@ bool CBulletManager::firetrace_callback(collide::rq_result& result, LPVOID param
         return (TRUE);
 
     //статический объект
-    if (!result.O)
+    if (triangle)
     {
-        CDB::TRI const& triangle = *(Level().ObjectSpace.GetStaticTris() + result.element);
-        bullet_manager.RegisterEvent(EVENT_HIT, FALSE, &bullet, collide_position, result, triangle.material);
+        bullet_manager.RegisterEvent(EVENT_HIT, FALSE, &bullet, collide_position, result, triangle->material);
         return (FALSE);
     }
 

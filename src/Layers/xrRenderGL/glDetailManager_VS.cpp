@@ -159,7 +159,48 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
             u32 instanceCount = batch.prepared.count;
             const u64 producerVersion = web_visibleState[var_id][O].version;
             const bool sameProducer = batch.producerVersion==producerVersion && batch.prepared.storage==hw_storageGeneration;
-            if (!batch.buffer || (!sameProducer && !batch.prepared.matches(Device.dwFrame, web_visibilityGeneration, hw_storageGeneration)))
+            const auto packRows = [&](SlotItemVec& items)
+            {
+                if (items.packedRevision == items.revision)
+                    return;
+
+                items.rows.resize(items.size() * 4);
+                Fvector4* row = items.rows.data();
+                for (const auto* instance : items)
+                {
+                    const float scale = instance->scale_calculated;
+                    const Fmatrix& M = instance->mRotY;
+                    (row++)->set(M._11 * scale, M._21 * scale, M._31 * scale, M._41);
+                    (row++)->set(M._12 * scale, M._22 * scale, M._32 * scale, M._42);
+                    (row++)->set(M._13 * scale, M._23 * scale, M._33 * scale, M._43);
+                    (row++)->set(instance->c_sun, instance->c_sun, instance->c_sun, instance->c_hemi);
+                }
+                packedInstances += static_cast<u32>(items.size());
+                items.packedRevision = items.revision;
+            };
+
+            if (ShadowOfChernobylMode && (!batch.buffer || !sameProducer))
+            {
+                // Keep instancing, but bypass the persistent GPU slot cache
+                // and its compute gather for the SoC detail data.
+                web_detailUploadRows.clear();
+                for (auto* items : vis)
+                {
+                    packRows(*items);
+                    web_detailUploadRows.insert(web_detailUploadRows.end(), items->rows.begin(), items->rows.end());
+                }
+                const auto bytes = static_cast<u32>(web_detailUploadRows.size() * sizeof(Fvector4));
+                if (batch.buffer)
+                    UploadWebGPUBuffer(batch.buffer, web_detailUploadRows.data(), bytes);
+                else
+                    CreateWebGPUBuffer(&batch.buffer, web_detailUploadRows.data(), bytes);
+                instanceCount = static_cast<u32>(web_detailUploadRows.size() / 4);
+                batch.prepared = {Device.dwFrame, hw_storageGeneration, instanceCount, web_visibilityGeneration};
+                batch.producerVersion = producerVersion;
+                ++changedBatches;
+            }
+            else if (!ShadowOfChernobylMode &&
+                (!batch.buffer || (!sameProducer && !batch.prepared.matches(Device.dwFrame, web_visibilityGeneration, hw_storageGeneration))))
             {
                 batch.descriptors.clear();
                 batch.dirtySlots.clear();
@@ -184,22 +225,7 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                     indicesChanged |= xray::detail_cache::updateSignatureEntry(batch.signature.data() + currentSignature, *items);
                     if (!xray::detail_cache::needsUpload(*items))
                         continue;
-                    if (items->packedRevision != items->revision)
-                    {
-                        items->rows.resize(items->size()*4);
-                        Fvector4* row = items->rows.data();
-                        for (const auto* instance : *items)
-                        {
-                            const float scale = instance->scale_calculated;
-                            const Fmatrix& M = instance->mRotY;
-                            (row++)->set(M._11 * scale, M._21 * scale, M._31 * scale, M._41);
-                            (row++)->set(M._12 * scale, M._22 * scale, M._32 * scale, M._42);
-                            (row++)->set(M._13 * scale, M._23 * scale, M._33 * scale, M._43);
-                            (row++)->set(instance->c_sun, instance->c_sun, instance->c_sun, instance->c_hemi);
-                        }
-                        packedInstances += static_cast<u32>(items->size());
-                        items->packedRevision = items->revision;
-                    }
+                    packRows(*items);
                     batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items)));
                     batch.descriptors.push_back(static_cast<u32>(items->revision));
                     batch.descriptors.push_back(static_cast<u32>(items->revision >> 32));

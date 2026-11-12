@@ -89,14 +89,24 @@ void CUIMapLocationHint::SetInfoMSpot(CMapSpot* spot)
     CMapLocation* ml = spot->MapLocation();
 
     CGameTask* gt = Level().GameTaskManager().HasGameTask(ml, true);
-    if (gt)
+    if (gt && !m_border)
         SetInfoTask(gt);
     else
-        SetInfoStr(ml->GetHint());
+    {
+        pcstr hint = ml->GetHint();
+        SetInfoStr((!hint || !*hint) && gt ? gt->m_Title.c_str() : hint);
+    }
 }
 
 void CUIMapLocationHint::SetInfoTask(CGameTask* task)
 {
+    // The legacy frame has a single text field and no task icon or time fields.
+    if (m_border)
+    {
+        SetInfoStr(task->m_Title.c_str());
+        return;
+    }
+
     SetInfoMode(2);
     CUIStatic* S = m_info["t_icon"];
 

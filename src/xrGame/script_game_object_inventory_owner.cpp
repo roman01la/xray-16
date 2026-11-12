@@ -3,6 +3,7 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include "pch_script.h"
+#include "xrUICore/XML/UITextureMaster.h"
 #include "script_game_object.h"
 #include "script_game_object_impl.h"
 #include "InventoryOwner.h"
@@ -141,6 +142,26 @@ void _give_news(LPCSTR caption, LPCSTR text, LPCSTR texture_name, int delay, int
         Actor()->AddGameNews(std::move(news_data));
     else
         Actor()->AddGameNews_deffered(std::move(news_data), delay);
+}
+
+void CScriptGameObject::GiveLegacyGameNews(pcstr news, pcstr texture_name, Frect region, int delay, int show_time)
+{
+    GAME_NEWS_DATA data;
+    data.news_text = news;
+    data.texture_name = texture_name;
+    if (show_time != 0)
+        data.show_time = show_time;
+
+    region.rb.add(region.lt);
+    if (auto id = CUITextureMaster::FindRegionId(data.texture_name, region); id.size())
+        data.texture_name = id;
+    else
+        data.texture_rect = region;
+
+    if (delay == 0)
+        Actor()->AddGameNews(std::move(data));
+    else
+        Actor()->AddGameNews_deffered(std::move(data), delay);
 }
 
 void CScriptGameObject::ClearGameNews() const

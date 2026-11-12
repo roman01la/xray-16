@@ -29,4 +29,5 @@ using vLocations = xr_vector<SLocationKey>;
 struct CMapLocationRegistry : public CALifeAbstractRegistry<u16, vLocations>
 {
     void save(IWriter& stream) override;
+    void load(IReader& stream) override;
 };

@@ -1,5 +1,4 @@
 const browserKey = 'xray-analytics-browser-v1';
-const installKey = 'xray-analytics-pending-install-v1';
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 async function getBrowserId() {
@@ -15,12 +14,15 @@ async function getBrowserId() {
     : readOrCreate();
 }
 
-export function startCampaignAnalytics() {
+export function startCampaignAnalytics(gameId = 'cop') {
   const params = new URLSearchParams(location.search);
   if (!/^\/releases\/[a-f0-9]{64}\/index\.html$/.test(location.pathname) ||
       !params.has('stream') ||
       params.get('storage') === 'manage' || params.get('saves') === 'import' || params.has('save')) return;
 
+  // Keep CoP's existing pending events readable after a release update.
+  const suffix = gameId === 'soc' ? ':soc' : '';
+  const installKey = 'xray-analytics-pending-install-v1' + suffix;
   const browser = getBrowserId().catch(() => null);
   async function send(event,eventId,data) {
     try {
@@ -29,7 +31,7 @@ export function startCampaignAnalytics() {
       const response = await fetch('/analytics/event',{
         method:'POST', mode:'same-origin', credentials:'omit', referrerPolicy:'no-referrer',
         keepalive:true, headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({event,browserId,eventId:eventId ?? crypto.randomUUID(),...(data?{data}:{})}),
+        body:JSON.stringify({event,gameId,browserId,eventId:eventId ?? crypto.randomUUID(),...(data?{data}:{})}),
       });
       return response.status === 204;
     } catch {return false;}
@@ -55,7 +57,7 @@ export function startCampaignAnalytics() {
   const sessionId=crypto.randomUUID(), release=location.pathname.split('/')[2];
   let device={}, lastDevice='', windowStart=performance.now(), totals=null, lastRender={};
   // Persist cumulative checkpoints, not deltas, so retrying cannot inflate totals.
-  const playtimePrefix='xray-analytics-playtime-v1:';
+  const playtimePrefix='xray-analytics-playtime-v1'+suffix+':';
   let playtimeMs=0,lastPlaytimeFlush=performance.now();
   async function deliverPlaytime(key,data){
     if(await send('playtime',undefined,data)){

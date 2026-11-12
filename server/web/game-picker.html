@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Play Shadow of Chernobyl and Call of Pripyat in your browser.">
+<meta name="theme-color" content="#10110e">
+<title>S.T.A.L.K.E.R.</title>
+<link id="game-icon" rel="icon" href="/favicon-cop.ico" type="image/x-icon">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%;background:#10110e;color:#e9e6db;font-family:system-ui,sans-serif}
+  main{min-height:100%;display:grid;place-items:center;padding:clamp(20px,5vw,64px);isolation:isolate}
+  .backdrop{position:fixed;inset:0;z-index:-1;background:center/cover no-repeat;pointer-events:none}
+  .backdrop-cop{background-image:url('/startup-wallpaper.webp')}
+  .backdrop-soc{background-image:url('/startup-wallpaper-soc.webp');opacity:0;transition:opacity .45s ease}
+  main:has([data-game="soc"]:hover) .backdrop-soc,
+  main:not(:has(button:hover)):has([data-game="soc"]:focus-visible) .backdrop-soc{opacity:1}
+  .backdrop::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,#10110eb8,#10110e65 65%,#10110e30)}
+  section{width:min(100%,820px);text-align:center}
+  h1{font-size:clamp(32px,7vw,66px);font-weight:750;letter-spacing:.09em;margin:0;text-shadow:0 2px 18px #000}
+  p{color:#e9e6db;text-shadow:0 1px 8px #000}
+  .games{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(12px,2.5vw,24px);margin-top:32px}
+  button{position:relative;display:grid;align-items:end;isolation:isolate;aspect-ratio:16/10;overflow:hidden;padding:0;
+    border:1px solid #8b826a;background:#171a14;color:inherit;font:inherit;text-align:left;cursor:pointer;
+    box-shadow:0 8px 25px #0007;transition:border-color .2s,box-shadow .2s}
+  button img{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;transition:transform .3s ease}
+  button::after{content:'';position:absolute;inset:0;z-index:-1;background:linear-gradient(0deg,#0c0e0bf5 0%,#0c0e0b45 43%,transparent 70%)}
+  button span{display:block;padding:clamp(12px,2vw,22px);font-size:clamp(16px,2.5vw,28px);font-weight:700;text-shadow:0 2px 4px #000}
+  button:is(:hover,:focus-visible){border-color:#e0ca8e;box-shadow:0 8px 30px #000b}
+  button:is(:hover,:focus-visible) img{transform:scale(1.05)}
+  button:focus-visible{outline:2px solid #e0ca8e;outline-offset:4px}
+  iframe{display:block;width:100%;height:100%;border:0}
+  [hidden]{display:none}
+  @media(max-width:540px){.games{grid-template-columns:1fr;margin:20px auto 0;max-width:380px}button{aspect-ratio:16/8}}
+  @media(prefers-reduced-motion:reduce){*,*::after{transition:none!important}}
+</style>
+<main id="picker">
+  <div class="backdrop backdrop-cop" aria-hidden="true"></div>
+  <div class="backdrop backdrop-soc" aria-hidden="true"></div>
+  <section aria-labelledby="title">
+    <h1 id="title">S.T.A.L.K.E.R.</h1>
+    <p>Choose a game to play in your browser.</p>
+    <div class="games">
+      <button type="button" data-game="soc" data-entry="__SOC_ENTRY__">
+        <img src="/game-card-soc.webp" alt="" width="640" height="360">
+        <span>Shadow of Chernobyl</span>
+      </button>
+      <button type="button" data-game="cop" data-entry="__COP_ENTRY__">
+        <img src="/game-card-cop.webp" alt="" width="640" height="360">
+        <span>Call of Pripyat</span>
+      </button>
+    </div>
+    <noscript><p>Enable JavaScript to start a game.</p></noscript>
+  </section>
+</main>
+<iframe id="game-frame" title="S.T.A.L.K.E.R." allowfullscreen hidden></iframe>
+<script type="module">
+  const picker = document.querySelector('#picker');
+  const frame = document.querySelector('#game-frame');
+  const favicon = document.querySelector('#game-icon');
+  for (const button of picker.querySelectorAll('[data-entry]')) {
+    button.addEventListener('click', () => {
+      const entry = new URL(button.dataset.entry, location.origin);
+      entry.searchParams.set('picker', '1');
+      frame.title = button.textContent.trim();
+      document.title = `S.T.A.L.K.E.R. — ${frame.title}`;
+      favicon.href = `/favicon-${button.dataset.game}.ico`;
+      frame.src = entry.href;
+      picker.hidden = true;
+      frame.hidden = false;
+      frame.focus();
+    });
+  }
+</script>
+</html>

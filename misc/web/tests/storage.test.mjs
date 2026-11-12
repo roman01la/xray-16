@@ -100,7 +100,7 @@ test("engine sync replaces same-size stale files and refuses corrupt or failed d
   }
 });
 
-test("unified settings are seeded once in each mode's own app-data directory", async () => {
+test("campaign settings are seeded once in each game's own app-data directory", async () => {
   const source = await readFile(new URL("../page/ingest-worker.js", import.meta.url), "utf8");
   const files = new Map();
   const directory = (path) => ({
@@ -144,13 +144,13 @@ test("unified settings are seeded once in each mode's own app-data directory", a
   });
   vm.runInContext(source.replace("import {migrateStockBindings} from './stock-bindings.mjs';", ""), context);
   context.navigator.languages = ["ja-JP", "pl-PL", "en-US"];
-  for (const [root, appDirectory] of [["stream-cop", "_appdata_"]]) {
-    const config = `/${root}/${appDirectory}/user.ltx`;
-    await context.syncEngineData(root, appDirectory, true);
+  for (const root of ["stream-cop", "stream-soc"]) {
+    const config = `/${root}/_appdata_/user.ltx`;
+    await context.syncEngineData(root, undefined, true);
     assert.equal(files.get(config), root === "stream-cop" ? "_preset Default\ng_language pol\n" : "_preset Default\n");
-    const custom = "_preset Low\r\nvid_mode 1280x720\r\ng_language ukr\r\n";
+    const custom = "_preset Low\r\nvid_mode 1280x720\r\nrs_fps_limit 100\r\nrs_v_sync off\r\ng_language ukr\r\n";
     files.set(config, custom);
-    await context.syncEngineData(root, appDirectory, true);
+    await context.syncEngineData(root, undefined, true);
     assert.equal(files.get(config), custom);
   }
   assert.equal(files.has("/zone-engine-preview-public/_appdata_/user.ltx"), false);

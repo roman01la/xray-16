@@ -57,6 +57,7 @@ public:
     static TEX_INFO FindItem(const shared_str& texture_name, pcstr default_texture = nullptr);
     static bool FindItem(const shared_str& texture_name, TEX_INFO& outValue);
     static bool FindItem(const shared_str& texture_name, pcstr default_texture, TEX_INFO& outValue);
+    static shared_str FindRegionId(const shared_str& file, const Frect& rect);
     static bool ItemExist(const shared_str& texture_name);
 
 protected:

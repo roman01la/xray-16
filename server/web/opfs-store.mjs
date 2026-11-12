@@ -1,4 +1,6 @@
 export const INSTALL_DIRECTORY = 'xray-install-v1';
+export const gameInstallDirectory = gameId =>
+  gameId === 'soc' ? 'xray-install-soc-v1' : INSTALL_DIRECTORY;
 export const ARCHIVE_CHUNKS = 'game-chunks';
 export const ARCHIVE_DESCRIPTORS = 'game-archives';
 export const RELEASE_FILES = 'release-files';

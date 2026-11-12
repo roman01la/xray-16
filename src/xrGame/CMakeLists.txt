@@ -2290,6 +2290,8 @@ target_sources(xrGame PRIVATE
     ui/UIPdaMsgListItem.h
     ui/UIPdaWnd.cpp
     ui/UIPdaWnd.h
+    ui/UISoCPdaSection.cpp
+    ui/UISoCPdaSection.h
     ui/UIRankFaction.cpp
     ui/UIRankFaction.h
     ui/UIRankIndicator.cpp

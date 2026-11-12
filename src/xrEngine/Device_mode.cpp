@@ -24,9 +24,13 @@ SDL_Point BrowserRenderSize(u64 viewport)
     const int width = psDeviceMode.Width;
     const int height = psDeviceMode.Height;
     const auto viewportWidth = u32(viewport >> 32);
-    const auto viewportHeight = u32(viewport);
+    double viewportHeight = u32(viewport);
     if (!viewportWidth || !viewportHeight)
         return {width, height};
+
+    // SoC's original HUD and menus are laid out for 4:3 and wider.
+    if (ShadowOfChernobylMode)
+        viewportHeight = std::min(viewportHeight, viewportWidth * 0.75);
 
     const double scale = std::min(double(width) / viewportWidth, double(height) / viewportHeight);
     // Keep a usable render target even while dragging the window nearly closed.

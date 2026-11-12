@@ -24,6 +24,7 @@
 #include "xrUICore/Hint/UIHint.h"
 #include "xrUICore/Buttons/UIBtnHint.h"
 #include "UITaskWnd.h"
+#include "UISoCPdaSection.h"
 #include "UIFactionWarWnd.h"
 #include "UIActorInfo.h"
 #include "UIRankingWnd.h"
@@ -51,6 +52,8 @@ CUIPdaWnd::CUIPdaWnd() : CUIDialogWnd(CUIPdaWnd::GetDebugType())
 
 CUIPdaWnd::~CUIPdaWnd()
 {
+    for (auto*& section : m_socSections)
+        delete_data(section);
     if (pUIMapWnd)
         delete_data(pUIMapWnd);
     if (pUITaskWnd)
@@ -122,9 +125,22 @@ void CUIPdaWnd::Init()
         if (!pUIMapWnd->Init("pda_map.xml", "map_wnd", false))
             xr_delete(pUIMapWnd);
 
-        pUITaskWnd = xr_new<CUITaskWnd>(m_hint_wnd);
-        if (!pUITaskWnd->Init())
-            xr_delete(pUITaskWnd);
+        if (ShadowOfChernobylMode)
+        {
+            for (unsigned i = 0; i < std::size(m_socSections); ++i)
+            {
+                auto*& section = m_socSections[i];
+                section = xr_new<CUISoCPdaSection>(static_cast<CUISoCPdaSection::Kind>(i));
+                if (!section->Init())
+                    xr_delete(section);
+            }
+        }
+        else
+        {
+            pUITaskWnd = xr_new<CUITaskWnd>(m_hint_wnd);
+            if (!pUITaskWnd->Init())
+                xr_delete(pUITaskWnd);
+        }
 
         pUIFactionWarWnd = xr_new<CUIFactionWarWnd>(m_hint_wnd);
         if (!pUIFactionWarWnd->Init())
@@ -196,7 +212,8 @@ void CUIPdaWnd::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
         if (pWnd == UITabControl)
         {
             const auto& id = UITabControl->GetActiveId();
-            SetActiveSubdialog(id);
+            if (!ShadowOfChernobylMode || id != m_sActiveSection)
+                SetActiveSubdialog(id);
         }
         break;
     }
@@ -227,7 +244,7 @@ void CUIPdaWnd::Show(bool status)
             SetActiveSubdialog(m_sActiveSection);
         else
         {
-            cpcstr subdialog = pUIMapWnd && !pUITaskWnd ? "eptMap" : "eptTasks";
+            cpcstr subdialog = pUIMapWnd && !pUITaskWnd && !m_socSections[0] ? "eptMap" : "eptTasks";
             SetActiveSubdialog(subdialog);
             UITabControl->SetActiveTab(subdialog);
         }
@@ -239,6 +256,8 @@ void CUIPdaWnd::Show(bool status)
         if (m_pActiveDialog)
         {
             m_pActiveDialog->Show(false);
+            if (ShadowOfChernobylMode && UIMainPdaFrame->IsChild(m_pActiveDialog))
+                UIMainPdaFrame->DetachChild(m_pActiveDialog);
             m_pActiveDialog = pUITaskWnd; //hack for script window
         }
         g_btnHint->Discard();
@@ -269,8 +288,8 @@ void CUIPdaWnd::Update()
 
 void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
 {
-    //if (m_sActiveSection == section)
-    //    return;
+    if (ShadowOfChernobylMode && m_sActiveSection == section && m_pActiveDialog)
+        return;
 
     if (m_pActiveDialog)
     {
@@ -280,10 +299,16 @@ void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
         m_pActiveDialog->Show(false);
     }
 
+    if (ShadowOfChernobylMode)
+        m_pActiveDialog = nullptr;
     const std::tuple<shared_str, pcstr, CUIWindow*> availableWindowsList[] =
     {
         { "eptMap",         nullptr, pUIMapWnd },
-        { "eptTasks",       nullptr, pUITaskWnd },
+        { "eptTasks",       nullptr, ShadowOfChernobylMode ? static_cast<CUIWindow*>(m_socSections[0]) : pUITaskWnd },
+        { "eptDiary",       nullptr, m_socSections[1] },
+        { "eptContacts",    nullptr, m_socSections[2] },
+        { "eptStalkersRanking", nullptr, m_socSections[3] },
+        { "eptEncyclopedia", nullptr, m_socSections[4] },
         { "eptFractionWar", nullptr, pUIFactionWarWnd },
         { "eptStatistics",  "ui_pda_actor_info", pUIActorInfo },
         { "eptRanking",     nullptr, pUIRankingWnd },
@@ -322,6 +347,8 @@ void CUIPdaWnd::SetActiveSubdialog(const shared_str& section)
         UIMainPdaFrame->SetKeyboardCapture(m_pActiveDialog, true);
         m_pActiveDialog->Show(true);
         m_sActiveSection = section;
+        if (ShadowOfChernobylMode && UITabControl->GetButtonById(section))
+            UITabControl->SetActiveTab(section);
         SetActiveCaption();
     }
     else
@@ -420,6 +447,8 @@ void CUIPdaWnd::UpdatePda()
     {
         pUITaskWnd->ReloadTaskInfo();
     }
+    if (m_socSections[0] && m_pActiveDialog == m_socSections[0])
+        m_socSections[0]->Refresh();
 }
 
 void CUIPdaWnd::UpdateRankingWnd()

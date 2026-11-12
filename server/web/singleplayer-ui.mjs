@@ -126,6 +126,10 @@ if(fpsCounter||showDiagnostics){
   diagnostics.hidden=false;
  }
  channel.onmessage=({data:d})=>{
+  if(d.type==='crash'){
+   window.dispatchEvent(new CustomEvent('xray-crash',{detail:d}));
+   return;
+  }
   if(fpsCounter&&Number.isFinite(d.fps)){
    fpsCounter.textContent=`${Math.round(d.fps)} FPS`;
    fpsCounter.hidden=false;
@@ -139,6 +143,12 @@ const mb=bytes=>(bytes/1048576).toFixed(1)+' MB';
 const indeterminate=()=>meter.removeAttribute('value');
 const startingEngine=()=>{message.textContent='Starting the engine…';indeterminate();};
 const confirmLeavingGame=event=>event.preventDefault();
+window.addEventListener('xray-crash',({detail})=>{
+ if(broken||detail?.kind==='launch')return;
+ window.removeEventListener('beforeunload',confirmLeavingGame);
+ if(document.pointerLockElement===canvas)document.exitPointerLock();
+ fail('The game stopped unexpectedly. Reload to restart.');
+});
 window.addEventListener('xray-browser-navigation',()=>{
  window.removeEventListener('beforeunload',confirmLeavingGame);
 });
@@ -176,8 +186,9 @@ if(backupButton && !backupButton.hidden && navigator.storage?.getDirectory){
   updateStart();
   try{
    const {openSaveDirectory,prepareSaveBackup}=await import('./save-format.js');
-   const root=new URLSearchParams(location.search).has('stream')?'stream-cop':document.querySelector('#game').value;
-   const backup=await prepareSaveBackup(await openSaveDirectory(root));
+   const gameId=document.documentElement.dataset.game==='soc'?'soc':'cop';
+   const root=new URLSearchParams(location.search).has('stream')?`stream-${gameId}`:document.querySelector('#game').value;
+   const backup=await prepareSaveBackup(await openSaveDirectory(root),gameId);
    const url=URL.createObjectURL(backup.blob);
    const link=document.createElement('a');
    link.href=url;

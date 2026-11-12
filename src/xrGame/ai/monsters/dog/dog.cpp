@@ -115,8 +115,10 @@ void CAI_Dog::Load(LPCSTR section)
 
     /////////////mob home
 
-    anim().AddAnim(eAnimHomeWalkSmelling, "stand_walk_smelling_", -1, &velocity_walk_smell, PS_STAND);
-    anim().AddAnim(eAnimHomeWalkGrowl, "stand_growl_walk_", -1, &velocity_walk_growl, PS_STAND);
+    anim().AddAnim(eAnimHomeWalkSmelling, ShadowOfChernobylMode ? "stand_walk_fwd_" : "stand_walk_smelling_",
+        -1, &velocity_walk_smell, PS_STAND);
+    anim().AddAnim(eAnimHomeWalkGrowl, ShadowOfChernobylMode ? "stand_walk_fwd_" : "stand_growl_walk_",
+        -1, &velocity_walk_growl, PS_STAND);
 
     /////////////end mob home
 
@@ -300,6 +302,20 @@ bool CAI_Dog::get_custom_anim_state() { return b_state_anim; }
 void CAI_Dog::set_custom_anim_state(bool b_state_animation) { b_state_anim = b_state_animation; }
 LPCSTR CAI_Dog::get_current_animation()
 {
+    // The original SoC dog skeletons have fewer idle cycles than the later games.
+    if (ShadowOfChernobylMode)
+    {
+        switch (current_anim)
+        {
+        case 1: case 2: case 3: case 4:
+            return "stand_check_corpse_0";
+        case 5: case 6: case 7:
+            return "stand_threaten_0";
+        case 10: case 11:
+            return "sit_idle_0";
+        }
+    }
+
     switch (current_anim)
     {
     case 1:

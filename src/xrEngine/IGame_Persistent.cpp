@@ -169,6 +169,9 @@ void IGame_Persistent::Level_Set(u32 id)
         return;
     FS.get_path("$level$")->_set(Levels[id].folder);
     Level_Current = id;
+#ifdef XR_PLATFORM_WEB
+    Msg("XRAY_CRASH_LEVEL %s", Levels[id].folder);
+#endif
 
     static string_path path;
     path[0] = 0;
@@ -244,7 +247,9 @@ CInifile* IGame_Persistent::GetArchiveHeader(pcstr name, pcstr ver)
 {
     for (const CLocatorAPI::archive& A : FS.m_archives)
     {
-        if (!A.header)
+        // Resource archives may have loading metadata without describing a map.
+        if (!A.header || !A.header->line_exist("header", "level_name") ||
+            !A.header->line_exist("header", "level_ver"))
             continue;
 
         cpcstr ln = A.header->r_string("header", "level_name");

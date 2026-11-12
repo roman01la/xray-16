@@ -58,10 +58,19 @@ export class DetailStorage {
     span=this.evict(protectedIds,size);if(span)return span;
     throw Error('Visible detail records exceed device storage capacity');
   }
-  upload(token,descriptors,heap,words,visible) {
+  upload(token,descriptors,heap,words,visible,pointerWords=1) {
     if(descriptors.length%7)throw Error("Invalid detail record descriptors");
     this.words=words;const owner=this.r.info(token);
-    let protectedSet;const protectedIds={has:id=>(protectedSet??=new Set(visible)).has(id)};
+    let protectedSet;
+    const protectedIds = {has(id) {
+      if (!protectedSet) {
+        protectedSet = new Set();
+        // Descriptor IDs are the low word of the native slot pointer.
+        for (let i = 0; i < visible.length; i += pointerWords)
+          protectedSet.add(visible[i]);
+      }
+      return protectedSet.has(id);
+    }};
     for(let i=0;i<descriptors.length;i+=7) {
       const id=descriptors[i],lo=descriptors[i+1],hi=descriptors[i+2],n=descriptors[i+3],
         pointer=descriptors[i+4],indexAddress=descriptors[i+5],seenAddress=descriptors[i+6];

@@ -377,6 +377,7 @@ public:
     void OnMesBoxNo(CUIWindow*, void*);
 
     void OnInventoryAction(PIItem pItem, u16 action_type);
+    void OnInventoryItemDestroyed(PIItem item);
     void ShowRepairButton(bool status);
     bool SetInfoCurUpgrade(Upgrade_type* upgrade_type, CInventoryItem* inv_item);
     void SeparateUpgradeItem();

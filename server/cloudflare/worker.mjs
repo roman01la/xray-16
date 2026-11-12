@@ -1,5 +1,7 @@
 import {analyticsDashboard,validateAnalyticsEvent} from '../web/analytics-http.mjs';
+import {analyticsGames} from '../web/analytics-events.mjs';
 import {record,summary,prune} from './analytics-d1.mjs';
+import {crashEnvelope,sentryEndpoint} from './crash-sentry.mjs';
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','Cross-Origin-Opener-Policy':'same-origin','Cross-Origin-Embedder-Policy':'require-corp','Cross-Origin-Resource-Policy':'same-origin'};
 const response=(status,text='',extra={})=>new Response(text,{status,headers:{...headers,...extra}});
 async function equalSecret(a,b){
@@ -19,9 +21,24 @@ async function readBody(request,max){
 }
 export default {
   async fetch(request,env){
-    const path=new URL(request.url).pathname;
+    const {pathname:path,searchParams}=new URL(request.url);
     try{
       if(path==='/health')return response(200,JSON.stringify({status:'ok',mode:'singleplayer',hosting:'cloudflare'}),{'Content-Type':'application/json'});
+      if(path==='/crash-report'){
+        if(request.method!=='POST')return response(405);
+        if(request.headers.get('Origin')!==env.ORIGIN||request.headers.get('Sec-Fetch-Site')==='cross-site')return response(403);
+        if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('Content-Type')||''))return response(415);
+        const endpoint=sentryEndpoint(env.SENTRY_DSN);
+        if(!endpoint)return response(503);
+        const ip=request.headers.get('CF-Connecting-IP')||'unknown';
+        if(await limited(env.CRASH_LIMIT,ip)||await limited(env.CRASH_GLOBAL,'crashes'))return response(429);
+        const raw=await readBody(request,24576);
+        let report;try{report=JSON.parse(raw);}catch{return response(400);}
+        const body=crashEnvelope(report,env.SENTRY_DSN);if(!body)return response(400);
+        const result=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/x-sentry-envelope'},body});
+        if(!result.ok)return response(result.status===429?429:502);
+        return response(204,null);
+      }
       if(path!=='/analytics'&&path!=='/analytics/'&&path!=='/analytics/event')return response(404,'Not found');
       const ip=request.headers.get('CF-Connecting-IP')||'unknown';
       if(path==='/analytics/event'){
@@ -40,9 +57,11 @@ export default {
       if(auth&&(await limited(env.AUTH_LIMIT,ip)||await limited(env.AUTH_GLOBAL,'auth')))return response(429,'Too many requests',{'Retry-After':'60'});
       let credentials='';try{if(/^Basic /i.test(auth))credentials=atob(auth.slice(6));}catch{}
       if(!env.ANALYTICS_PASSWORD||!await equalSecret(credentials,'analytics:'+env.ANALYTICS_PASSWORD))return response(401,'Authentication required',{'WWW-Authenticate':'Basic realm="S.T.A.L.K.E.R. Analytics", charset="UTF-8"'});
+      const gameId=searchParams.get('game')??'cop';
+      if(!analyticsGames.has(gameId))return response(400,'Unknown game');
       if(request.method==='HEAD')return response(200,null,{'Content-Type':'text/html; charset=utf-8'});
       const nonce = crypto.randomUUID();
-      return response(200,analyticsDashboard(await summary(env.DB), nonce),{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; frame-ancestors 'none'`});
+      return response(200,analyticsDashboard(await summary(env.DB,Date.now(),gameId), nonce, gameId),{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; frame-ancestors 'none'`});
     }catch(error){console.error('Request failed',error.status||500);return response(error.status||503,'Request failed');}
   },
   async scheduled(event,env,ctx){ctx.waitUntil(prune(env.DB));},

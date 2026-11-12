@@ -9,7 +9,12 @@ XMLDocument::XMLDocument() : m_xml_file_name(), m_root(nullptr), m_pLocalRoot(nu
 
 XMLDocument::~XMLDocument() { ClearInternal(); }
 
-void XMLDocument::ClearInternal() { m_Doc.Clear(); }
+void XMLDocument::ClearInternal()
+{
+    m_root = nullptr;
+    m_pLocalRoot = nullptr;
+    m_Doc.Clear();
+}
 
 enum class ParseIncludeResult
 {

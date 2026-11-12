@@ -31,7 +31,7 @@ ENGINE_API bool g_bBenchmark = false;
 string512 g_sBenchmarkName;
 
 #ifdef XR_PLATFORM_WEB
-int ps_fps_limit = 0; // Auto: follow the browser display cadence.
+int ps_fps_limit = 60;
 #else
 int ps_fps_limit = 501;
 #endif

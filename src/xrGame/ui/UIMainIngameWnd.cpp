@@ -76,7 +76,9 @@ void CUIMainIngameWnd::Init()
     CUIXml uiXml;
     uiXml.Load(CONFIG_PATH, UI_PATH, UI_PATH_DEFAULT, MAININGAME_XML);
 
-    CUIXmlInit::InitWindow(uiXml, "main", 0, this);
+    // Original SoC HUD elements are rooted directly in the document (IX-Ray).
+    if (uiXml.NavigateToNode("main"))
+        CUIXmlInit::InitWindow(uiXml, "main", 0, this);
 
     Enable(false);
 
@@ -220,7 +222,18 @@ void CUIMainIngameWnd::Init()
         AttachChild(UIMotionIcon);
     }
 
-    UIStaticDiskIO = UIHelper::CreateStatic(uiXml, "disk_io", this);
+    UIStaticDiskIO = UIHelper::CreateStatic(uiXml, "disk_io", this, false);
+    if (!UIStaticDiskIO)
+    {
+        // IX-Ray's fallback for legacy SoC HUD XML.
+        UIStaticDiskIO = xr_new<CUIStatic>("disk_io");
+        UIStaticDiskIO->SetAutoDelete(true);
+        AttachChild(UIStaticDiskIO);
+        UIStaticDiskIO->SetWndPos(Fvector2().set(1000, 750));
+        UIStaticDiskIO->SetWndSize(Fvector2().set(16.f * UI().get_current_kx(), 16.f));
+        UIStaticDiskIO->InitTexture("ui\\ui_disk_io");
+        UIStaticDiskIO->SetStretchTexture(true);
+    }
 
     if (IsGameTypeSingle() && uiXml.NavigateToNode("artefact_panel", 0))
     {

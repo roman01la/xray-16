@@ -20,6 +20,8 @@ struct GAME_NEWS_DATA : public ISerializable
     shared_str news_caption;
     shared_str news_text;
     shared_str texture_name;
+    // Transient crop for legacy script regions that have no named atlas entry.
+    Frect texture_rect{};
     ALife::_TIME_ID receive_time;
 };
 

@@ -55,6 +55,9 @@ public:
     CUI_IB_Static* m_background;
     CUI_IB_FrameLineWnd* m_back_frameline;
 
+protected:
+    bool m_stretchBackground = true;
+
 private:
     void PlaySoundH();
     void PlaySoundT();

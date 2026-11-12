@@ -364,8 +364,8 @@ class CCC_VidMode : public CCC_Token
 {
     u32 _dummy = 0;
 #ifdef XR_PLATFORM_WEB
-    xr_token m_webModes[BrowserVideoModes::maxPresets + 3]{};
-    TStatus m_webLabels[BrowserVideoModes::maxPresets + 2]{};
+    xr_token m_webModes[BrowserVideoModes::ModeList::capacity + 1]{};
+    TStatus m_webLabels[BrowserVideoModes::ModeList::capacity]{};
 #endif
 
 public:
@@ -405,8 +405,10 @@ public:
     {
 #ifdef XR_PLATFORM_WEB
         const auto display = GetBrowserDisplaySize();
-        const auto modes = BrowserVideoModes::ForDisplay({u32(display.x), u32(display.y)},
-            {psDeviceMode.Width, psDeviceMode.Height});
+        const BrowserVideoModes::Size screen{u32(display.x), u32(display.y)};
+        const BrowserVideoModes::Size current{psDeviceMode.Width, psDeviceMode.Height};
+        const auto modes = ShadowOfChernobylMode ? BrowserVideoModes::ForSoCDisplay(screen, current) :
+            BrowserVideoModes::ForDisplay(screen, current);
         for (std::size_t i = 0; i < modes.count; ++i)
         {
             const auto [width, height] = modes.sizes[i];

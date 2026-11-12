@@ -80,6 +80,27 @@ void CMapLocationRegistry::save(IWriter& stream)
     }
 }
 
+void CMapLocationRegistry::load(IReader& stream)
+{
+    CALifeAbstractRegistry<u16, vLocations>::load(stream);
+    if (!ShadowOfChernobylMode)
+        return;
+
+    // SoC task spots are rebuilt from objectives. Drop the copies stored by
+    // older versions, including orphaned spots from finished objectives.
+    for (auto& [id, locations] : m_objects)
+    {
+        const auto obsolete = std::remove_if(locations.begin(), locations.end(), [](SLocationKey& key)
+        {
+            if (!key.location->m_owner_task_id.size())
+                return false;
+            key.destroy();
+            return true;
+        });
+        locations.erase(obsolete, locations.end());
+    }
+}
+
 CMapManager::CMapManager()
 {
     m_uiSpotXml.Load(CONFIG_PATH, UI_PATH, UI_PATH_DEFAULT, "map_spots.xml");

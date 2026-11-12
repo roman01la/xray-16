@@ -24,15 +24,12 @@ class CControllerPsyHit : public CControl_ComCustom<>
         eNone
     } m_sound_state;
 
-    float m_min_tube_dist;
-
     // internal flag if weapon was hidden
     bool m_blocked;
 
     u32 m_time_last_tube;
 
 public:
-    virtual void load(LPCSTR section);
     virtual void reinit();
     virtual void update_frame();
     virtual bool check_start_conditions();

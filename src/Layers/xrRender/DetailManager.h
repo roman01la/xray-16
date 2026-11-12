@@ -238,6 +238,7 @@ public:
         u64 producerVersion = u64(-1);
     };
     xr_vector<WebInstances> hw_instances[3];
+    xr_vector<Fvector4> web_detailUploadRows;
     u32 hw_storageGeneration = 1;
     u64 web_visibilityGeneration = 0;
 #endif

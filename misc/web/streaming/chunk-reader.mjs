@@ -5,7 +5,9 @@ const HASH = /^[a-f0-9]{64}$/;
 const CHUNK_STORE = 'game-chunks';
 const DESCRIPTOR_STORE = 'game-archives';
 const INSTALLED_HANDLE_LIMIT = 64;
-const openOPFS = name => import('./opfs-store.mjs').then(({openInstallStore}) => openInstallStore(name));
+const openOPFS = (name, gameId) => import('./opfs-store.mjs').then(
+  ({openInstallStore, gameInstallDirectory}) => openInstallStore(name, navigator.storage, gameInstallDirectory(gameId)),
+);
 const sha256 = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
 const BOOTSTRAP_MEMORY_LIMIT = 256 * 1024;
 export function gameStorageError(error) {
@@ -25,7 +27,7 @@ export function validateDescriptor(d) {
   return d;
 }
 export class ChunkReader {
-  constructor({onProgress=()=>{},fetcher=(...args)=>fetch(...args), openStore=openOPFS, budget=64*1024*1024, mode='stream', digest=sha256}={}) {
+  constructor({onProgress=()=>{},fetcher=(...args)=>fetch(...args), gameId='cop', openStore=name=>openOPFS(name,gameId), budget=64*1024*1024, mode='stream', digest=sha256}={}) {
     this.fetcher=fetcher;this.openStore=openStore;this.budget=budget;this.digest=digest;this.mode=mode;
     this.descriptors=new Map();this.hot=new Map();this.pending=new Map();this.bytes=0;
     this.stores=new Map();this.installedChunks=new Map();

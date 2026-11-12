@@ -93,7 +93,7 @@ hosted game. [Cloudflare deployment](../../server/cloudflare/README.md)
 
 ## Automatic FPS limit
 
-Fresh browser settings default to **Auto** (`rs_fps_limit 0`), with VSync enabled.
+Fresh browser settings default to **60 FPS** (`rs_fps_limit 60`), with VSync enabled.
 Auto follows the browser's presentation cadence instead of imposing the previous
 60 FPS gameplay cap. With VSync disabled, the measured display rate supplies the
 cap (60 FPS until timing samples are ready). Measurements follow the visible tab;

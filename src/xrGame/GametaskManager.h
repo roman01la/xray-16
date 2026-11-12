@@ -35,7 +35,7 @@ public:
     }
 
     vGameTasks& GetGameTasks();
-    CGameTask* HasGameTask(const CMapLocation* ml, bool only_inprocess);
+    CGameTask* HasGameTask(const CMapLocation* ml, bool only_inprocess, TASK_OBJECTIVE_ID* objective_id = nullptr);
     CGameTask* HasGameTask(const TASK_ID& id, bool only_inprocess);
     CGameTask* GiveGameTaskToActor(const TASK_ID& id, u32 timeToComplete, bool bCheckExisting = true, u32 timer_ttl = 0);
     CGameTask* GiveGameTaskToActor(CGameTask* t, u32 timeToComplete, bool bCheckExisting, u32 timer_ttl);
@@ -58,5 +58,8 @@ public:
     void DumpTasks();
 
 public:
+    static CUIXml& TaskDefinitions();
+
+private:
     inline static CUIXml m_gameTaskXml;
 };

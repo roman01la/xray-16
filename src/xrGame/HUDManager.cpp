@@ -256,6 +256,9 @@ void CHUDManager::net_Relcase(IGameObject* obj)
 {
     ZoneScoped;
 
+    if (pUIGame)
+        pUIGame->OnObjectReleased(obj);
+
     HitMarker.net_Relcase(obj);
 
     VERIFY(m_pHUDTarget);

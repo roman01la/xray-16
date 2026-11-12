@@ -14,11 +14,6 @@
 #include "ActorCondition.h"
 #include "HUDManager.h"
 
-void CControllerPsyHit::load(LPCSTR section)
-{
-    m_min_tube_dist = pSettings->r_float(section, "tube_condition_min_distance");
-}
-
 void CControllerPsyHit::reinit()
 {
     inherited::reinit();
@@ -64,7 +59,8 @@ bool CControllerPsyHit::check_start_conditions()
     if (!tube_ready())
         return false;
 
-    if (m_object->Position().distance_to(Actor()->Position()) < m_min_tube_dist)
+    const float minDistance = static_cast<const CController*>(m_object)->get_tube_min_distance();
+    if (m_object->Position().distance_to(Actor()->Position()) < minDistance)
         return false;
 
     return true;
@@ -204,7 +200,8 @@ bool CControllerPsyHit::check_conditions_final()
     if (!Actor()->g_Alive())
         return false;
 
-    if (m_object->Position().distance_to_xz(Actor()->Position()) < m_min_tube_dist - 2)
+    const float minDistance = static_cast<const CController*>(m_object)->get_tube_min_distance();
+    if (m_object->Position().distance_to_xz(Actor()->Position()) < minDistance - 2)
         return false;
 
     return see_enemy();

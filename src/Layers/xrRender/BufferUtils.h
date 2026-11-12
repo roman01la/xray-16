@@ -32,6 +32,7 @@ void SetNativeWebGPUSampler(GLuint sampler, GLenum parameter, float value);
 int GetNativeWebGPUSampler(GLuint sampler, GLenum parameter);
 GLuint CreateNativeWebGPUShader(GLenum type, const char* const* source, size_t count);
 GLuint LinkNativeWebGPUProgram(GLuint vertex, GLuint fragment);
+u32 NativeWebGPUVertexInputs(GLuint program);
 int NativeWebGPUUniformCount(GLuint program);
 void NativeWebGPUUniformInfo(GLuint program, u32 index, char* name, u32 capacity, int* size, GLenum* type);
 int NativeWebGPUUniformLocation(GLuint program, const char* name);

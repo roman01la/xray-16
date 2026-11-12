@@ -1,3 +1,9 @@
 -- The browser has no desktop exit; keep the stock Q shortcut harmless.
 function main_menu:OnMessageQuitWin()
 end
+
+function main_menu:OnButton_disconnect_clicked()
+    self.message_box:InitMessageBox("message_box_quit_game")
+    self.message_box:SetText("ui_mm_quit_game_message")
+    self.message_box:ShowDialog(true)
+end

@@ -75,7 +75,15 @@ AssertionResult xrDebug::ShowMessage(pcstr title, pcstr message, bool simpleMode
     }
 #elif defined(XR_PLATFORM_WEB)
     emscripten_log(EM_LOG_ERROR | EM_LOG_CONSOLE, "%s: %s", title, message);
-    MAIN_THREAD_EM_ASM({ alert(UTF8ToString($0) + "\n\n" + UTF8ToString($1)); }, title, message);
+    MAIN_THREAD_EM_ASM({
+        const title = UTF8ToString($0);
+        const message = UTF8ToString($1);
+        if (title.toLowerCase() === "fatal error" && document.querySelector("#boot")) {
+            window.dispatchEvent(new CustomEvent("xray-crash", {detail:{kind:"assertion", message}}));
+        } else {
+            alert(title + "\n\n" + message);
+        }
+    }, title, message);
     return simpleMode ? AssertionResult::ok : AssertionResult::abort;
 #else
     if (simpleMode)
@@ -199,7 +207,7 @@ void xrDebug::GatherInfo(char* assertionInfo, size_t bufferSize, const ErrorLoca
     Log(assertionInfo);
     FlushLog();
 
-    buffer = assertionInfo;
+    // Append the stack trace without overwriting the assertion and its cause.
 #if defined(XR_PLATFORM_WINDOWS)
     if (DebuggerIsPresent() || !strstr(GetCommandLine(), "-no_call_stack_assert"))
         return;

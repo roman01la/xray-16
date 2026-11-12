@@ -91,7 +91,9 @@ void CUIZoneMap::Init(bool motionIconAttached)
         m_clock_wnd->SetWndPos(temp);
     }
 
-    if (IsGameTypeSingle())
+    // IX-Ray treats the original SoC minimap as a legacy layout without
+    // the CoP contact-counter subtree. Its contact widget lives in maingame.xml.
+    if (IsGameTypeSingle() && uiXml.NavigateToNode("minimap:static_counter"))
     {
         CUIXmlInit::InitStatic(uiXml, "minimap:static_counter", 0, &m_Counter);
         m_background.AttachChild(&m_Counter);
@@ -103,6 +105,20 @@ void CUIZoneMap::Init(bool motionIconAttached)
             temp = m_Counter.GetWndPos();
             temp.mul(m_background.GetWndSize());
             m_Counter.SetWndPos(temp);
+        }
+    }
+    else if (IsGameTypeSingle() && ShadowOfChernobylMode)
+    {
+        // The original SoC contact counter belongs to the main HUD. Reuse its
+        // original appearance/position while retaining this class's PDA updates.
+        CUIXml legacyHud;
+        legacyHud.Load(CONFIG_PATH, UI_PATH, UI_PATH_DEFAULT, "maingame.xml");
+        if (CUIXmlInit::InitStatic(legacyHud, "static_pda_online", 0, &m_Counter_text, false))
+        {
+            temp = m_Counter_text.GetWndPos();
+            temp.sub(m_background.GetWndPos());
+            m_Counter_text.SetWndPos(temp);
+            m_background.AttachChild(&m_Counter_text);
         }
     }
 }

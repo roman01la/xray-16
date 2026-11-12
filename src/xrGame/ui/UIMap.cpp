@@ -34,9 +34,18 @@ void CUICustomMap::Initialize(shared_str name, LPCSTR sh_name)
         levelIni = xr_new<CInifile>(map_cfg_fn);
     }
 
-    if (levelIni->section_exist("level_map"))
+    // Some SoC levels retain an obsolete map section with x1/x2/z1/z2
+    // instead of bound_rect. The campaign config pairs the correct artwork
+    // with its world bounds; using the obsolete section compresses markers
+    // toward the center of the default 20 km bounds.
+    if (levelIni->section_exist("level_map") &&
+        (!ShadowOfChernobylMode || levelIni->line_exist("level_map", "bound_rect")))
     {
         Init_internal(name, *levelIni, "level_map", sh_name);
+    }
+    else if (ShadowOfChernobylMode && pGameIni->section_exist(name))
+    {
+        Init_internal(name, *pGameIni, name.c_str(), sh_name);
     }
     else
     {
@@ -123,6 +132,14 @@ Fvector2 CUICustomMap::ConvertRealToLocal(
         Frect bound_rect = BoundRect();
         bound_rect.x1 /= UI().get_current_kx();
         bound_rect.x2 /= UI().get_current_kx();
+        if (ShadowOfChernobylMode)
+        {
+            // The old campaign embeds local textures in hand-authored global
+            // rectangles. Project against the drawn rectangle on each axis.
+            res.x = (src.x - bound_rect.x1) / bound_rect.width() * GetWndRect().width();
+            res.y = (bound_rect.y2 - src.y) / bound_rect.height() * GetWndRect().height();
+            return res;
+        }
         res = ConvertRealToLocalNoTransform(src, bound_rect);
         res.x *= UI().get_current_kx();
     }

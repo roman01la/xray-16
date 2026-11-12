@@ -101,7 +101,7 @@ loader =
     )
     .replace(
       hook,
-      "wasmModule=msgData.wasmModule;await installWebGPUBackend(msgData.shaderCompilerPort,msgData.gpuDiagnosticsChannel);createWasm();",
+      "wasmModule=msgData.wasmModule;globalThis.__xrayCrashChannelName=msgData.gpuDiagnosticsChannel?.name;await installWebGPUBackend(msgData.shaderCompilerPort,msgData.gpuDiagnosticsChannel);createWasm();",
     );
 const workerLoad = 'worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule})';
 if (!loader.includes(workerLoad)) throw Error('Emscripten worker transfer hook changed');
@@ -109,7 +109,8 @@ loader = loader.replace(workerLoad, 'const shaderCompilerPort=createShaderCompil
 // Pack installation completes before engine creation. Game reads never fetch.
 const streamHook=/new module\.ChunkReader(?:\(\))?(?=\);)/;
 if(!streamHook.test(loader))throw Error('Streaming reader hook changed');
-loader=loader.replace(streamHook, "new module.ChunkReader({mode:'installed'})");
+const gameId = process.env.XRAY_WEB_GAME_ID === "soc" ? "soc" : "cop";
+loader=loader.replace(streamHook, `new module.ChunkReader({mode:'installed',gameId:'${gameId}'})`);
 await writeFile(join(output, "xr_3da.js"), loader);
 let main =
   "import {startShaderCompiler} from './shader-compiler-client.mjs';\nawait startShaderCompiler();\nglobalThis.XRAY_WEBGPU = true;\n" +

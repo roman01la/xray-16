@@ -9,6 +9,8 @@
 
 CUICheckButton::CUICheckButton()
 {
+    // SoC uses the full row for the label and hit area, but draws the icon at its atlas size.
+    m_stretchBackground = !ShadowOfChernobylMode;
     TextItemControl()->SetTextAlignment(CGameFont::alLeft);
     SetButtonAsSwitch(true);
     m_pDependControl = NULL;

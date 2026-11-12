@@ -45,7 +45,7 @@ export async function openSaveDirectory(root, create = false) {
   return directory;
 }
 
-export async function prepareSaveBackup(directory) {
+export async function prepareSaveBackup(directory, gameId = "cop") {
   const files = [];
   let totalBytes = 0;
   for await (const [name, handle] of directory.entries()) {
@@ -60,11 +60,11 @@ export async function prepareSaveBackup(directory) {
   if (!files.length) throw Error("There are no single-player saves to download yet.");
 
   const created = new Date().toISOString();
-  const backup = validateBackup({ format: "openxray-saves-v1", created, files });
+  const backup = validateBackup({ format: "openxray-saves-v1", gameId, created, files });
   const blob = new Blob([JSON.stringify(backup)], { type: "application/json" });
   if (blob.size > 128 * 1024 * 1024) throw Error("Save backup exceeds 128 MB including metadata. Export a smaller save collection.");
   return {
-    filename: "openxray-saves-" + created.slice(0, 10) + ".json",
+    filename: `openxray-${gameId}-saves-${created.slice(0, 10)}.json`,
     blob,
     count: files.length,
   };
@@ -79,9 +79,10 @@ export const saveLockName = (root) => `xray-saved-games:${root}`;
 const saveStem = (name) => name.replace(/\.(scop|dds)$/i, "").toLowerCase();
 
 // Validate and decode the whole document before creating anything in OPFS.
-export async function readSaveBackup(file) {
+export async function readSaveBackup(file, gameId = "cop") {
   if (!file || file.size > 128 * 1024 * 1024) throw Error("Backup exceeds 128 MB");
   const backup = validateBackup(JSON.parse(await file.text()));
+  if ((backup.gameId ?? "cop") !== gameId) throw Error("This save backup belongs to another game.");
   const files = [];
   for (const { name, data, sha256 } of backup.files) {
     const bytes = decodeBytes(data);
@@ -164,7 +165,7 @@ export async function restoreSaveBackup(directory, files) {
 }
 
 export async function importSaveBackup(root, file) {
-  const files = await readSaveBackup(file);
+  const files = await readSaveBackup(file, root === "stream-soc" ? "soc" : "cop");
   if (!navigator.locks) throw Error("Save import needs a browser with Web Locks support.");
   return navigator.locks.request(saveLockName(root), { ifAvailable: true }, async lock => {
     if (!lock) throw Error("Close other game tabs before importing saves.");

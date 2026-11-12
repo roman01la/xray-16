@@ -400,7 +400,8 @@ void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp)
             {
                 CGameTask* storyTask = Level().GameTaskManager().ActiveTask(eTaskTypeStoryline);
                 CGameTask* additionalTask = Level().GameTaskManager().ActiveTask(eTaskTypeAdditional);
-                const bool border_show = ml_task == storyTask || ml_task == additionalTask;
+                const bool border_show = (ml_task == storyTask || ml_task == additionalTask) &&
+                    (!ShadowOfChernobylMode || ml_task->LinkedMapLocation() == this);
                 if (m_minimap_spot)
                 {
                     m_minimap_spot->show_static_border(border_show);

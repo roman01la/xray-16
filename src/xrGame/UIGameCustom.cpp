@@ -154,6 +154,15 @@ void CUIGameCustom::OnInventoryAction(PIItem item, u16 actionType)
         ActorMenu->OnInventoryAction(item, actionType);
 }
 
+void CUIGameCustom::OnObjectReleased(IGameObject* object)
+{
+    if (ActorMenu && ActorMenu->IsShown())
+    {
+        if (auto* item = smart_cast<CInventoryItem*>(object))
+            ActorMenu->OnInventoryItemDestroyed(item);
+    }
+}
+
 #include "ui/UIGameTutorial.h"
 // XXX nitrocaster: move to appropriate header
 extern CUISequencer* g_tutorial;

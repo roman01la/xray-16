@@ -191,10 +191,10 @@ bool CUITextureMaster::GetTextureWidth(const shared_str& texture_name, float& ou
 
 TEX_INFO CUITextureMaster::FindItem(const shared_str& texture_name, pcstr default_texture /*= nullptr*/)
 {
-    TEX_INFO info;
-
-    VERIFY4(FindItem(texture_name, default_texture, info),
-        "Can't find texture", texture_name.c_str(), default_texture);
+    TEX_INFO info{};
+    info.rect.set(0.f, 0.f, 0.f, 0.f);
+    [[maybe_unused]] const bool found = FindItem(texture_name, default_texture, info);
+    VERIFY4(found, "Can't find texture", texture_name.c_str(), default_texture);
 
     return info;
 }
@@ -222,6 +222,16 @@ bool CUITextureMaster::FindItem(const shared_str& texture_name, pcstr default_te
     }
 
     return false;
+}
+
+shared_str CUITextureMaster::FindRegionId(const shared_str& file, const Frect& rect)
+{
+    for (const auto& [id, info] : m_textures)
+    {
+        if (info.file == file && info.rect.lt.similar(rect.lt) && info.rect.rb.similar(rect.rb))
+            return id;
+    }
+    return {};
 }
 
 bool CUITextureMaster::ItemExist(const shared_str& texture_name)

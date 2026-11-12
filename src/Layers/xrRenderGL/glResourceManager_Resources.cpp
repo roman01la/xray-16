@@ -118,7 +118,10 @@ bool CResourceManager::_LinkPP(SPass& pass)
         pp.pp = GLLinkMonolithicProgram(pp.cName.c_str(), pass.ps->sh, pass.vs->sh, pass.gs->sh);
 #ifdef XR_PLATFORM_WEB
         if (pp.pp)
+        {
+            pp.vertexInputs = NativeWebGPUVertexInputs(pp.pp);
             pp.constants.parse(&pp.pp, RC_dest_all);
+        }
 #else
         pp.constants.parse(&pp.pp, RC_dest_all);
 #endif

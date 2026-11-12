@@ -14,6 +14,10 @@ export function hideNetworkMenuButtons(source) {
   return source.replace(/^[ \t]*<btn\b(?=[^>]*\bname\s*=\s*["'](?:btn_net_game|btn_multiplayer)["'])[^>]*\/>[ \t]*\r?\n/gm,'');
 }
 
+export function hideDesktopExitButton(source) {
+  return source.replace(/^[ \t]*<btn\b(?=[^>]*\bname\s*=\s*["']btn_quit["'])[^>]*\/>[ \t]*\r?\n/gm,'');
+}
+
 async function readPackedLayouts(pack) {
   const source=await mkdtemp(join(tmpdir(),'xray-menu-'));
   try {
@@ -52,7 +56,7 @@ export async function stageBrowserMenu(frontend,pack,gameDir=process.env.XRAY_CO
   const files=new Map([[scriptPath,script]]);
   for(const [path,{data}] of layouts) {
     const source=data.toString('latin1');
-    const filtered=source.replace(/^[ \t]*<btn\b(?=[^>]*\bname\s*=\s*["']btn_quit["'])[^>]*\/>[ \t]*\r?\n/gm,'');
+    const filtered=hideDesktopExitButton(source);
     if(source===filtered)throw Error('No desktop exit button found in '+path);
     files.set('gamedata/'+path,Buffer.from(hideNetworkMenuButtons(filtered),'latin1'));
   }

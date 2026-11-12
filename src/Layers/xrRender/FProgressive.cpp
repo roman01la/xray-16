@@ -70,7 +70,11 @@ void FProgressive::Load(const char* N, IReader* data, u32 dwFlags)
 void FProgressive::Render(CBackend& cmd_list, float LOD, bool use_fast_geo)
 {
 #if RENDER != R_R1
-    if (m_fast && use_fast_geo)
+    if (m_fast && use_fast_geo
+#ifdef XR_PLATFORM_WEB
+        && cmd_list.SupportsVertexInputs(*m_fast->rm_geom)
+#endif
+        )
     {
         int lod_id = iFloor((1.f - clampr(LOD, 0.f, 1.f)) * float(xSWI->count - 1) + 0.5f);
         VERIFY(lod_id >= 0 && lod_id < int(xSWI->count));

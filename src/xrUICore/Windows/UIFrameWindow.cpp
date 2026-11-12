@@ -191,11 +191,17 @@ void CUIFrameWindow::DrawElements()
     UI().ClientToScreenScaled(rect.lt);
     UI().ClientToScreenScaled(rect.rb);
 
-    Fvector2 back_len = {0.0f, 0.0f};
+    // XML can size a frame before its texture loads, and UI scaling can
+    // change after SetWndSize. Fit the corners in screen space before tiling.
+    const float min_width = m_tex_rect[fmLT].width() + m_tex_rect[fmRT].width();
+    const float min_height = m_tex_rect[fmLT].height() + m_tex_rect[fmRB].height();
+    rect.rb.x = std::max(rect.rb.x, rect.lt.x + min_width);
+    rect.rb.y = std::max(rect.rb.y, rect.lt.y + min_height);
+    const Fvector2 back_len = {
+        std::max(0.0f, rect.width() - min_width),
+        std::max(0.0f, rect.height() - min_height),
+    };
     u32 rect_count = 4; // lt+rt+lb+rb
-    back_len.x = rect.width() - m_tex_rect[fmLT].width() - m_tex_rect[fmRT].width();
-    back_len.y = rect.height() - m_tex_rect[fmLT].height() - m_tex_rect[fmRB].height();
-    R_ASSERT(back_len.x + EPS_L >= 0.0f && back_len.y + EPS_L >= 0.0f);
 
     u32 cnt = 0;
     if (back_len.x > 0.0f) // top+bottom
@@ -203,13 +209,10 @@ void CUIFrameWindow::DrawElements()
     rect_count += cnt;
 
     if (back_len.y > 0.0f) // left+right
-        cnt = 2 * iCeil(back_len.y / m_tex_rect[fmL].height());
-    rect_count += cnt;
+        rect_count += 2 * iCeil(back_len.y / m_tex_rect[fmL].height());
 
     if (back_len.x > 0.0f && back_len.y > 0.0f) // back
-        cnt = iCeil(back_len.x / m_tex_rect[fmBK].width()) * iCeil(back_len.y / m_tex_rect[fmBK].height());
-
-    rect_count += cnt;
+        rect_count += iCeil(back_len.x / m_tex_rect[fmBK].width()) * iCeil(back_len.y / m_tex_rect[fmBK].height());
 
     rect_count *= 6;
 

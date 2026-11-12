@@ -131,6 +131,9 @@ private:
     GLuint vs;
     GLuint gs;
     GLuint pp;
+#ifdef XR_PLATFORM_WEB
+    u32 programVertexInputs{};
+#endif
 #else
 #   error No graphics API selected or enabled!
 #endif
@@ -407,7 +410,13 @@ private:
     ICF void set_GS(GLuint _gs, LPCSTR _n = 0);
 
     ICF void set_PP(GLuint _pp, pcstr _n = nullptr);
-    ICF void set_PP(ref_pp& _pp) { set_PP(_pp->pp, _pp->cName.c_str()); }
+    ICF void set_PP(ref_pp& _pp)
+    {
+#ifdef XR_PLATFORM_WEB
+        programVertexInputs = _pp->vertexInputs;
+#endif
+        set_PP(_pp->pp, _pp->cName.c_str());
+    }
 #   endif
 
     ICF void set_VS(ref_vs& _vs);
@@ -432,6 +441,12 @@ public:
 #endif
 
 public:
+#ifdef XR_PLATFORM_WEB
+    ICF bool SupportsVertexInputs(const SGeometry& geometry) const
+    {
+        return pp && (programVertexInputs & ~geometry.dcl->vertexInputs) == 0;
+    }
+#endif
 #if defined(USE_OGL)
     ICF bool is_TessEnabled() { return false; }
 #elif defined(USE_DX11)

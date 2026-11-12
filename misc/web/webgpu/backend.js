@@ -110,6 +110,8 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
     console.error("[WebGPU validation]", e.error.message);
   });
   device.lost.then((info) => {
+    if (info.reason !== "destroyed")
+      globalThis.__xrayReportWorkerCrash?.("gpu-lost", info.message || "WebGPU device lost");
     channel?.postMessage({ status: "GPU device lost: " + info.message });
     console.error("[WebGPU device lost]", info.message);
   });
@@ -1005,10 +1007,10 @@ export class GPUFrontend {
     }
     diagnostics.nativeBufferUploads++;
   }
-  updateDetailRecords(token, descriptors, heap, words, visible) {
+  updateDetailRecords(token, descriptors, heap, words, visible, pointerWords = 1) {
     this.flushNativeDraws?.();
     this.detailArena??=new DetailStorage(this);
-    this.detailArena.upload(token,descriptors,heap,words,visible);
+    this.detailArena.upload(token,descriptors,heap,words,visible,pointerWords);
   }
   gatherDetailRanges(token, ranges, count, changed, partial = false) {
     this.flushNativeDraws?.();

@@ -61,6 +61,15 @@ test('invalid entries anywhere in a backup are rejected before OPFS is touched',
   await assert.rejects(readSaveBackup(doc([entry('bomb.scop',bomb)])),/Invalid saved game/);
 });
 
+test('save backups are scoped to the campaign and old backups remain valid for CoP',async()=>{
+  const backup=await prepareSaveBackup(directory({'quicksave.scop':save()}),'soc');
+  assert.equal((await readSaveBackup(backup.blob,'soc')).length,1);
+  await assert.rejects(readSaveBackup(backup.blob),/belongs to another game/);
+  const legacy=doc([entry('quicksave.scop')]);
+  assert.equal((await readSaveBackup(legacy)).length,1);
+  await assert.rejects(readSaveBackup(legacy,'soc'),/belongs to another game/);
+});
+
 test('failed file writes roll back every new file and preserve existing saves',async()=>{
   const target=directory({'existing.scop':save(77)},name=>name==='second.scop');
   const files=await readSaveBackup(doc([entry('first.scop'),entry('second.scop')]));

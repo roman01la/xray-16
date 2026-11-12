@@ -34,9 +34,20 @@ bool task_prio_pred(const SGameTaskKey& k1, const SGameTaskKey& k2)
     return k1.game_task->m_priority > k2.game_task->m_priority;
 }
 
+CUIXml& CGameTaskManager::TaskDefinitions()
+{
+    // A-Life can deserialize tasks while the level's UI manager is being rebuilt.
+    if (!m_gameTaskXml.GetRoot())
+    {
+        m_gameTaskXml.ClearInternal();
+        m_gameTaskXml.Load(CONFIG_PATH, "gameplay", "game_tasks.xml", false);
+    }
+    return m_gameTaskXml;
+}
+
 CGameTaskManager::CGameTaskManager()
 {
-    m_gameTaskXml.Load(CONFIG_PATH, "gameplay", "game_tasks.xml", false);
+    TaskDefinitions();
 
     m_gametasks_wrapper = xr_new<CGameTaskWrapper>();
     m_gametasks_wrapper->registry().init(0); // actor's id
@@ -146,18 +157,22 @@ CGameTask* CGameTaskManager::GiveGameTaskToActor(CGameTask* t, u32 timeToComplet
 
 void CGameTaskManager::SetTaskState(CGameTask* task, ETaskState state, TASK_OBJECTIVE_ID objective_id /*= ROOT_TASK_OBJECTIVE*/)
 {
+    if (objective_id >= task->GetObjectivesCount())
+        return;
+
     m_flags.set(eChanged, TRUE);
 
     ETaskType type = eTaskTypeStoryline;
     if (m_flags.test(eMultipleTasks))
         type = task->GetTaskType();
 
+    const bool wasActiveTask = ActiveTask(type) == task;
     task->SetTaskState(state, objective_id);
 
     const bool isRoot      = objective_id == ROOT_TASK_OBJECTIVE;
     const bool isActiveObj = task->ActiveObjectiveIdx() == objective_id;
 
-    if ((isRoot || !task->HasObjectiveInProgress()) && ActiveTask() == task)
+    if ((isRoot || !task->HasObjectiveInProgress()) && wasActiveTask && g_active_task_id[type] == task->m_ID)
     {
         g_active_task_id[type] = "";
     }
@@ -213,12 +228,41 @@ void CGameTaskManager::UpdateTasks()
                     continue;
 
                 ETaskState const state = obj.UpdateState();
-
                 if ((state == eTaskStateFail) || (state == eTaskStateCompleted))
+                {
                     SetTaskState(t, state, i);
+                    if (t->GetTaskState() != eTaskStateInProgress)
+                        break;
+                    continue;
+                }
+
+                if (ShadowOfChernobylMode && !obj.m_linked_map_location && obj.m_map_location.size() &&
+                    obj.m_map_object_id != u16(-1) &&
+                    (obj.m_def_location_enabled ||
+                        (i > ROOT_TASK_OBJECTIVE && t->ObjectiveState(i - 1) == eTaskStateCompleted)))
+                {
+                    // Successive objectives can use the same marker. Give
+                    // the first active objective its own spot until it ends.
+                    bool alreadyShown = false;
+                    for (TASK_OBJECTIVE_ID j = 0; j < i; ++j)
+                    {
+                        const auto& previous = t->Objective(j);
+                        if (previous.m_linked_map_location && previous.m_map_object_id == obj.m_map_object_id &&
+                            previous.m_map_location == obj.m_map_location && previous.m_map_hint == obj.m_map_hint)
+                        {
+                            alreadyShown = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyShown)
+                        obj.CreateMapLocation(false);
+                }
             }
         }
     }
+
+    if (m_flags.test(eChanged))
+        UpdateActiveTask();
 
     for (int i = 0; i < eTaskTypeCount; ++i)
     {
@@ -226,13 +270,23 @@ void CGameTaskManager::UpdateTasks()
         if (activeTask)
         {
             CMapLocation* ml = activeTask->LinkedMapLocation();
+            if (ShadowOfChernobylMode && !ml)
+            {
+                for (TASK_OBJECTIVE_ID j = 0; j < activeTask->GetObjectivesCount(); ++j)
+                {
+                    const auto& objective = activeTask->Objective(j);
+                    if (objective.GetTaskState() == eTaskStateInProgress && objective.m_linked_map_location)
+                    {
+                        activeTask->SetActiveObjective(j);
+                        ml = objective.m_linked_map_location;
+                        break;
+                    }
+                }
+            }
             if (ml && !ml->PointerEnabled())
                 ml->EnablePointer();
         }
     }
-
-    if (m_flags.test(eChanged))
-        UpdateActiveTask();
 }
 
 void CGameTaskManager::UpdateActiveTask()
@@ -309,12 +363,24 @@ void CGameTaskManager::MapLocationRelcase(CMapLocation* ml)
     if (mwnd)
         mwnd->MapLocationRelcase(ml);
 
-    CGameTask* gt = HasGameTask(ml, false);
-    if (gt)
-        gt->RemoveMapLocations(true);
+    if (ShadowOfChernobylMode)
+    {
+        for (const auto& key : GetGameTasks())
+        {
+            auto* task = key.game_task;
+            for (TASK_OBJECTIVE_ID i = 0; i < task->GetObjectivesCount(); ++i)
+            {
+                auto& objective = task->Objective(i);
+                if (objective.m_linked_map_location == ml)
+                    objective.RemoveMapLocations(true);
+            }
+        }
+    }
+    else if (auto* task = HasGameTask(ml, false))
+        task->RemoveMapLocations(true);
 }
 
-CGameTask* CGameTaskManager::HasGameTask(const CMapLocation* ml, bool only_inprocess)
+CGameTask* CGameTaskManager::HasGameTask(const CMapLocation* ml, bool only_inprocess, TASK_OBJECTIVE_ID* objective_id)
 {
     auto it = GetGameTasks().begin();
     auto it_e = GetGameTasks().end();
@@ -322,11 +388,28 @@ CGameTask* CGameTaskManager::HasGameTask(const CMapLocation* ml, bool only_inpro
     for (; it != it_e; ++it)
     {
         CGameTask* gt = (*it).game_task;
-        if (gt->LinkedMapLocation() == ml)
-        {
-            if (only_inprocess && gt->GetTaskState() != eTaskStateInProgress)
-                continue;
+        if (only_inprocess && gt->GetTaskState() != eTaskStateInProgress)
+            continue;
 
+        if (ShadowOfChernobylMode && ml)
+        {
+            // SoC can display markers for several objectives of one task.
+            for (TASK_OBJECTIVE_ID i = 0; i < gt->GetObjectivesCount(); ++i)
+            {
+                const auto& objective = gt->Objective(i);
+                if (objective.m_linked_map_location != ml ||
+                    (only_inprocess && objective.GetTaskState() != eTaskStateInProgress))
+                    continue;
+
+                if (objective_id)
+                    *objective_id = i;
+                return gt;
+            }
+        }
+        else if (gt->LinkedMapLocation() == ml)
+        {
+            if (objective_id)
+                *objective_id = gt->ActiveObjectiveIdx();
             return gt;
         }
     }

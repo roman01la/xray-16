@@ -173,8 +173,12 @@ void Fvisual::Render(CBackend& cmd_list, float, bool use_fast_geo)
 #if RENDER == R_R1
     if (m_fast && ps_r1_force_geomx)
 #else
-    if (m_fast &&
-        (ps_r1_force_geomx || use_fast_geo && !cmd_list.is_TessEnabled()))
+    if (m_fast && (ps_r1_force_geomx || use_fast_geo && !cmd_list.is_TessEnabled())
+#ifdef XR_PLATFORM_WEB
+        // Alpha-tested shadows can need UVs packed in the tangent and binormal.
+        && cmd_list.SupportsVertexInputs(*m_fast->rm_geom)
+#endif
+        )
 #endif
     {
         cmd_list.set_Geometry(m_fast->rm_geom);

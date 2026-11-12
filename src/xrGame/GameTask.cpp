@@ -73,12 +73,48 @@ CGameTask::CGameTask(const TASK_ID& id)
     Load(id);
 }
 
+static void ReadTaskCallbacks(CUIXml& xml, XML_NODE node, SScriptTaskHelper& callbacks)
+{
+    // Keep XML callback names alongside scripted names so both can be rebound
+    // after deserialization. Avoid adding an XML callback a second time.
+    const auto read = [&](pcstr tag, xr_vector<shared_str>& names)
+    {
+        const int count = xml.GetNodesNum(node, tag);
+        for (int i = 0; i < count; ++i)
+        {
+            const shared_str name = xml.Read(node, tag, i, nullptr);
+            if (name.size() && std::find(names.begin(), names.end(), name) == names.end())
+                names.push_back(name);
+        }
+    };
+    read("function_complete", callbacks.m_s_complete_lua_functions);
+    read("function_fail", callbacks.m_s_fail_lua_functions);
+    read("function_call_complete", callbacks.m_s_lua_functions_on_complete);
+    read("function_call_fail", callbacks.m_s_lua_functions_on_fail);
+}
+
+void SGameTaskObjective::ReadTaskRules(CUIXml& xml, XML_NODE node)
+{
+    const auto read = [&](pcstr tag, xr_vector<shared_str>& infos)
+    {
+        const int count = xml.GetNodesNum(node, tag);
+        infos.resize(count);
+        for (int i = 0; i < count; ++i)
+            infos[i] = xml.Read(node, tag, i, nullptr);
+    };
+    read("infoportion_complete", m_completeInfos);
+    read("infoportion_fail", m_failInfos);
+    read("infoportion_set_complete", m_infos_on_complete);
+    read("infoportion_set_fail", m_infos_on_fail);
+    ReadTaskCallbacks(xml, node, m_pScriptHelper);
+}
+
 void CGameTask::Load(const TASK_ID& id)
 {
     m_ID = id;
 
-    auto& gameTaskXml = CGameTaskManager::m_gameTaskXml; // not multithread friendly
-    if (gameTaskXml.IsErrored())
+    auto& gameTaskXml = CGameTaskManager::TaskDefinitions(); // not multithread friendly
+    if (!gameTaskXml.GetRoot() || gameTaskXml.IsErrored())
     {
         Msg("! Trying to load task [%s], but failed to load gameplay/game_tasks.xml", m_ID.c_str());
         return;
@@ -167,95 +203,9 @@ void CGameTask::Load(const TASK_ID& id)
             objective.m_map_object_id = storyId2GameId(_sid);
         }
 
-        //------infoportion_complete
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "infoportion_complete");
-            objective.m_completeInfos.resize(info_num);
-
-            for (int j = 0; j < info_num; ++j)
-            {
-                objective.m_completeInfos[j] = gameTaskXml.Read(l_root, "infoportion_complete", j, nullptr);
-            }
-        }
-
-        //------infoportion_fail
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "infoportion_fail");
-            objective.m_failInfos.resize(info_num);
-
-            for (int j = 0; j < info_num; ++j)
-            {
-                objective.m_failInfos[j] = gameTaskXml.Read(l_root, "infoportion_fail", j, nullptr);
-            }
-        }
-
-        //------infoportion_set_complete
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "infoportion_set_complete");
-            objective.m_infos_on_complete.resize(info_num);
-            for (int j = 0; j < info_num; ++j)
-            {
-                objective.m_infos_on_complete[j] = gameTaskXml.Read(l_root, "infoportion_set_complete", j, nullptr);
-            }
-        }
-
-        //------infoportion_set_fail
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "infoportion_set_fail");
-            objective.m_infos_on_fail.resize(info_num);
-            for (int j = 0; j < info_num; ++j)
-            {
-                objective.m_infos_on_fail[j] = gameTaskXml.Read(l_root, "infoportion_set_fail", j, nullptr);
-            }
-        }
-
-        //------function_complete
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "function_complete");
-            objective.m_complete_lua_functions.resize(info_num);
-            for (int j = 0; j < info_num; ++j)
-            {
-                cpcstr str = gameTaskXml.Read(l_root, "function_complete", j, nullptr);
-                [[maybe_unused]] const bool functor_exists = GEnv.ScriptEngine->functor(str, objective.m_complete_lua_functions[j]);
-                THROW3(functor_exists, "Cannot find script function described in task objective  ", str);
-            }
-        }
-
-        //------function_fail
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "function_fail");
-            objective.m_fail_lua_functions.resize(info_num);
-            for (int j = 0; j < info_num; ++j)
-            {
-                cpcstr str = gameTaskXml.Read(l_root, "function_fail", j, nullptr);
-                [[maybe_unused]] const bool functor_exists = GEnv.ScriptEngine->functor(str, objective.m_fail_lua_functions[j]);
-                THROW3(functor_exists, "Cannot find script function described in task objective  ", str);
-            }
-        }
-
-        //------function_on_complete
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "function_call_complete");
-            objective.m_lua_functions_on_complete.resize(info_num);
-            for (int i = 0; i < info_num; ++i)
-            {
-                cpcstr str = gameTaskXml.Read(l_root, "function_call_complete", i, nullptr);
-                [[maybe_unused]] const bool functor_exists = GEnv.ScriptEngine->functor(str, objective.m_lua_functions_on_complete[i]);
-                THROW3(functor_exists, "Cannot find script function described in task objective  ", str);
-            }
-        }
-
-        //------function_on_fail
-        {
-            const int info_num = gameTaskXml.GetNodesNum(l_root, "function_call_fail");
-            objective.m_lua_functions_on_fail.resize(info_num);
-            for (int j = 0; j < info_num; ++j)
-            {
-                cpcstr str = gameTaskXml.Read(l_root, "function_call_fail", j, nullptr);
-                [[maybe_unused]] const bool functor_exists = GEnv.ScriptEngine->functor(str, objective.m_lua_functions_on_fail[j]);
-                THROW3(functor_exists, "Cannot find script function described in task objective  ", str);
-            }
-        }
+        objective.m_pScriptHelper = {};
+        objective.ReadTaskRules(gameTaskXml, l_root);
+        objective.CommitScriptHelperContents();
 
         gameTaskXml.SetLocalRoot(task_node);
     }
@@ -264,6 +214,9 @@ void CGameTask::Load(const TASK_ID& id)
 
 void SGameTaskObjective::SetTaskState(ETaskState state)
 {
+    if (ShadowOfChernobylMode && m_task_state == state)
+        return;
+
     m_task_state = state;
     if ((m_task_state == eTaskStateFail) || (m_task_state == eTaskStateCompleted))
     {
@@ -310,7 +263,8 @@ ETaskState CGameTask::ObjectiveState(TASK_OBJECTIVE_ID idx) const
 
 void CGameTask::SetActiveObjective(TASK_OBJECTIVE_ID idx)
 {
-    if (idx == ROOT_TASK_OBJECTIVE && !m_Objectives.empty())
+    if (idx == ROOT_TASK_OBJECTIVE && !m_Objectives.empty() &&
+        (!ShadowOfChernobylMode || !m_linked_map_location))
         idx = 1;
     m_active_objective = idx;
 }
@@ -364,7 +318,8 @@ void CGameTask::OnArrived()
     m_read = false;
 
     FillEncyclopedia();
-    CreateMapLocation(false);
+    if (!ShadowOfChernobylMode)
+        CreateMapLocation(false);
 }
 
 void CGameTask::FillEncyclopedia() const
@@ -418,11 +373,14 @@ void SGameTaskObjective::CreateMapLocation(bool on_load)
     }
     else
     {
+        if (ShadowOfChernobylMode && ai().get_alife() && !ai().alife().objects().object(m_map_object_id, true))
+            return;
         m_linked_map_location = Level().MapManager().AddMapLocation(m_map_location, m_map_object_id);
         m_linked_map_location->m_owner_task_id = m_parent->m_ID;
     }
 
-    VERIFY(m_linked_map_location);
+    if (!m_linked_map_location)
+        return;
 
     if (!on_load)
     {
@@ -431,7 +389,7 @@ void SGameTaskObjective::CreateMapLocation(bool on_load)
             m_linked_map_location->SetHint(m_map_hint);
         }
         m_linked_map_location->DisablePointer();
-        m_linked_map_location->SetSerializable(true);
+        m_linked_map_location->SetSerializable(!ShadowOfChernobylMode);
     }
 
     if (m_linked_map_location->complex_spot())
@@ -525,7 +483,14 @@ bool SGameTaskObjective::CheckFunctions(const task_state_functors& v) const
     for (; it != v.end(); ++it)
     {
         if ((*it).is_valid())
-            res = (*it)(m_parent->m_ID.c_str());
+        {
+            // SoC's shared task manager distinguishes the parent quest
+            // (index zero) from the steps that qualify it for turn-in.
+            if (ShadowOfChernobylMode)
+                res = (*it)(m_parent->m_ID.c_str(), m_idx);
+            else
+                res = (*it)(m_parent->m_ID.c_str());
+        }
         if (!res)
             break;
     }
@@ -634,8 +599,29 @@ void CGameTask::load(IReader& stream)
         load_data(m_Objectives[i], stream);
     }
 
+    // Info conditions are authored in XML and are absent from the save format.
+    // Rebind them without overwriting saved objective state or destinations.
+    if (ShadowOfChernobylMode)
+    {
+        auto& xml = CGameTaskManager::TaskDefinitions();
+        const XML_NODE node = xml.GetRoot() && !xml.IsErrored()
+            ? xml.NavigateToNodeWithAttribute("game_task", "id", m_ID.c_str()) : nullptr;
+        if (node)
+        {
+            const int count = std::min<int>(xml.GetNodesNum(node, "objective"), GetObjectivesCount());
+            for (int i = 0; i < count; ++i)
+            {
+                auto& objective = Objective(static_cast<TASK_OBJECTIVE_ID>(i));
+                objective.ReadTaskRules(xml, xml.NavigateToNode(node, "objective", i));
+            }
+        }
+    }
+
     CommitScriptHelperContents();
-    CreateMapLocation(true);
+    for (auto& objective : m_Objectives)
+        objective.CommitScriptHelperContents();
+    if (!ShadowOfChernobylMode)
+        CreateMapLocation(true);
 }
 
 void SGameTaskObjective::SetIconName_script(pcstr tex)

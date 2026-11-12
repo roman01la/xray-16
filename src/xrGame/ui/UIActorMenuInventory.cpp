@@ -242,6 +242,39 @@ bool RemoveItemFromList(CUIDragDropListEx* lst, PIItem pItem)
         return false;
 }
 
+void CUIActorMenu::OnInventoryItemDestroyed(PIItem item)
+{
+    // Corpses and stashes can lose items without sending the actor an inventory
+    // action. Release every cell that borrows the item before it is destroyed.
+    bool removed = false;
+    for (auto* list : m_pLists)
+    {
+        CUICellItem* cell = nullptr;
+        if (!list || !FindItemInList(list, item, cell))
+            continue;
+
+        if (CUIDragDropListEx::m_drag_item && CUIDragDropListEx::m_drag_item->ParentItem() == cell)
+            list->DestroyDragItem();
+        auto* removedCell = list->RemoveItem(cell, false);
+        // Removing one item from a stack can detach a different cell after
+        // swapping its data. Clear references to both the item and the cell.
+        if (CurrentItem() == cell || CurrentItem() == removedCell)
+            SetCurrentItem(nullptr);
+        if (m_upgrade_selected == cell || m_upgrade_selected == removedCell)
+            m_upgrade_selected = nullptr;
+        xr_delete(removedCell);
+        removed = true;
+    }
+    if (removed)
+    {
+        InfoCurItem(nullptr);
+        clear_highlight_lists();
+        m_highlight_clear = true;
+        if (GetMenuMode() == mmDeadBodySearch)
+            UpdateDeadBodyBag();
+    }
+}
+
 void CUIActorMenu::OnInventoryAction(PIItem pItem, u16 action_type)
 {
     CUIDragDropListEx* all_lists[] =

@@ -68,7 +68,8 @@ if (typeof ServiceWorkerGlobalScope !== 'undefined' && globalThis instanceof Ser
   self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
   self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
   self.addEventListener('message', event => {
-    if (event.data !== 'prepare-release' || !event.ports[0]) return;
+    if (event.data?.type !== 'prepare-release' || !event.ports[0]) return;
+    const migrateCopChunks = event.data.gameId === 'cop';
     const port = event.ports[0];
     listeners.add(port);
     const report = (done, total, label) => {
@@ -90,13 +91,13 @@ if (typeof ServiceWorkerGlobalScope !== 'undefined' && globalThis instanceof Ser
       });
       try {
         await migrate(LEGACY_RELEASE, await store(), /^\/\.xray-cache\/release-files\/([a-f0-9]{64})$/, 'Moving cached engine files to OPFS…');
-        if (await cacheStorage?.has(LEGACY_CHUNKS)) {
+        if (migrateCopChunks && await cacheStorage?.has(LEGACY_CHUNKS)) {
           await navigator.locks.request('xray-game-pack-install', async () => {
             await migrate(LEGACY_CHUNKS, await openInstallStore(ARCHIVE_CHUNKS), /\/(?:chunks|game-chunks)\/([a-f0-9]{64})\.bin$/, 'Moving installed game data to OPFS…');
           });
         }
         await cacheReleaseFiles(base, await files(), await store(), (done,total) => report(done,total,'Checking game engine files…'));
-        return retire;
+        return retire && migrateCopChunks;
       } catch (error) {
         if(error.name === 'QuotaExceededError')
           throw Error('There is not enough space to move the game to OPFS. Close older game tabs or free space, then retry.');
@@ -130,7 +131,7 @@ if (typeof ServiceWorkerGlobalScope !== 'undefined' && globalThis instanceof Ser
   });
 }
 
-export async function preparePublishedRelease(report) {
+export async function preparePublishedRelease(report, gameId = 'cop') {
   const workers = navigator.serviceWorker;
   if (!workers) throw Error('This browser needs service workers enabled to store the game.');
   const scriptURL = new URL('release-cache.mjs', base).href;
@@ -152,6 +153,6 @@ export async function preparePublishedRelease(report) {
         if (data.error) reject(Error(data.error)); else resolve(data.retireLegacy);
       } else report(data.done, data.total, data.label);
     };
-    workers.controller.postMessage('prepare-release', [port2]);
+    workers.controller.postMessage({type:'prepare-release', gameId}, [port2]);
   });
 }

@@ -273,7 +273,8 @@ void CUISequenceSimpleItem::Start()
             pda.Show_MapWnd(true);
             bShowPda = true;
         }
-        else if (!xr_stricmp(m_pda_section, "pda_tasks"))
+        else if (!xr_stricmp(m_pda_section, "pda_tasks") ||
+            (ShadowOfChernobylMode && !xr_stricmp(m_pda_section, "pda_quests")))
         {
             pda.SetActiveSubdialog("eptTasks");
             bShowPda = true;
@@ -290,12 +291,29 @@ void CUISequenceSimpleItem::Start()
         }
         else if (!xr_stricmp(m_pda_section, "pda_ranking"))
         {
-            pda.SetActiveSubdialog("eptRanking");
+            pda.SetActiveSubdialog(ShadowOfChernobylMode ? "eptStalkersRanking" : "eptRanking");
             bShowPda = true;
         }
         else if (!xr_stricmp(m_pda_section, "pda_logs"))
         {
             pda.SetActiveSubdialog("eptLogs");
+            bShowPda = true;
+        }
+        // Legacy SoC tutorial sections, also handled by IX-Ray. Use this
+        // engine's corresponding tab IDs (quests are eptTasks above).
+        else if (ShadowOfChernobylMode && !xr_stricmp(m_pda_section, "pda_contacts"))
+        {
+            pda.SetActiveSubdialog("eptContacts");
+            bShowPda = true;
+        }
+        else if (ShadowOfChernobylMode && !xr_stricmp(m_pda_section, "pda_diary"))
+        {
+            pda.SetActiveSubdialog("eptDiary");
+            bShowPda = true;
+        }
+        else if (ShadowOfChernobylMode && !xr_stricmp(m_pda_section, "pda_encyclopedia"))
+        {
+            pda.SetActiveSubdialog("eptEncyclopedia");
             bShowPda = true;
         }
         else if (!xr_stricmp(m_pda_section, "pda_show_second_task_wnd"))

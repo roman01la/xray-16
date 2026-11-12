@@ -520,6 +520,8 @@ void CUIAnswerItemIconed::Init(pcstr text, pcstr texture_name, Frect texture_rec
 {
     inherited::Init(text, "");
     m_icon->InitTexture(texture_name);
+    if (ShadowOfChernobylMode)
+        texture_rect.rb.add(texture_rect.lt);
     m_icon->SetTextureRect(texture_rect);
     m_icon->TextureOn();
     m_icon->SetStretchTexture(true);
