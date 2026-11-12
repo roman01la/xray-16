@@ -1042,16 +1042,8 @@ void CWeaponMagazined::InitAddons()
             m_zoom_params.m_sUseBinocularVision =
                 READ_IF_EXISTS(pSettings, r_string, GetScopeName(), "scope_alive_detector", 0);
             m_fRTZoomFactor = m_zoom_params.m_fScopeZoomFactor;
-            if (m_UIScope)
-            {
-                xr_delete(m_UIScope);
-            }
-
             if (!GEnv.isDedicatedServer)
-            {
-                m_UIScope = xr_new<CUIWindow>("Scope UI");
                 LoadScope(scope_tex_name);
-            }
         }
     }
     else

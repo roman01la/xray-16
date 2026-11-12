@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {readGameFiles} from '../../../server/tools/game-configs.mjs';
 import {hideDesktopExitButton} from './stage-browser-menu.mjs';
-import {patchSocAbort,patchSocBasicVideoScript,patchSocOptionsLayout,patchSocOptionsScript,patchSocTaskManager,patchSocVideoOptions} from './soc-compat.mjs';
+import {patchSocAbort,patchSocBasicVideoScript,patchSocGameplayOptions,patchSocOptionsLayout,patchSocOptionsScript,patchSocTaskManager,patchSocVideoOptions} from './soc-compat.mjs';
 const repo=resolve(import.meta.dirname,'../../..');
 const [engineArg,outputArg,gameArg,packArg]=process.argv.slice(2);
 if(!engineArg||!outputArg||!gameArg||!packArg)throw Error('Usage: stage-soc.mjs ENGINE_BIN OUTPUT NORMALIZED_GAME PACK');
@@ -34,23 +34,38 @@ const taskPath='scripts/task_manager.script',videoPath='scripts/ui_mm_opt_video_
 const globalsPath='scripts/_g.script';
 const optionsPath='config/ui/ui_mm_opt.xml';
 const optionsScript='scripts/ui_mm_opt_main.script';
+const gameplayOptions='scripts/ui_mm_opt_gameplay.script';
 const basicVideoScript='scripts/ui_mm_opt_video.script';
 const menuPath='config/ui/ui_mm_main.xml';
 const menuScript='scripts/ui_main_menu.script';
-const source=await readGameFiles(resolve(gameArg),[taskPath,videoPath,globalsPath,optionsPath,optionsScript,basicVideoScript,menuPath,menuScript]);
+const source=await readGameFiles(resolve(gameArg),[taskPath,videoPath,globalsPath,optionsPath,optionsScript,gameplayOptions,basicVideoScript,menuPath,menuScript]);
 await asset('gamedata/'+globalsPath,patchSocAbort(source.get(globalsPath).data));
 await asset('gamedata/'+taskPath,patchSocTaskManager(source.get(taskPath).data));
 await asset('gamedata/'+videoPath,patchSocVideoOptions(source.get(videoPath).data));
 await asset('gamedata/'+optionsPath,patchSocOptionsLayout(source.get(optionsPath).data));
-// Reuse CoP's caption in each supported SoC localization. The string table
-// ignores language directories containing only openxray.xml.
-for (const language of ['eng', 'rus', 'ukr']) {
+await asset('gamedata/'+gameplayOptions,patchSocGameplayOptions(source.get(gameplayOptions).data));
+const gameSource=JSON.parse(await readFile(join(gameArg,'soc-source-manifest.json'),'utf8'));
+const retailLabels={
+  fra:['Langue','Limite FPS en jeu'],
+  ita:['Lingua','Limite FPS in gioco'],
+  spa:['Idioma','Límite de FPS en el juego'],
+};
+const knownLanguages=['cze','eng','ger','pol','rus','ukr',...Object.keys(retailLabels)];
+const languages=knownLanguages.filter(language=>gameSource.sources.some(({name})=>
+  name.startsWith(`config/text/${language}/`) && name.endsWith('.xml'))).sort();
+for (const language of languages) {
   const path = `text/${language}/openxray.xml`;
-  const strings = await readFile(join(repo, 'res/gamedata/configs', path), 'latin1');
-  const caption = strings.match(/<string id="ui_mm_fps_limit">[\s\S]*?<\/string>/)?.[0];
-  if (!caption) throw Error('Missing FPS limit translation: ' + language);
+  const captions = retailLabels[language];
+  const sourceLanguage = captions ? 'eng' : language;
+  const strings = await readFile(join(repo, 'res/gamedata/configs', `text/${sourceLanguage}/openxray.xml`), 'latin1');
+  const entries = ['ui_mm_localization','ui_mm_fps_limit',...languages].map((id,i)=>{
+    if(captions && i<captions.length)return `<string id="${id}"><text>${captions[i]}</text></string>`;
+    const entry=strings.match(new RegExp(`<string id="${id}">[\\s\\S]*?<\\/string>`))?.[0];
+    if(!entry)throw Error(`Missing SoC settings translation: ${language}/${id}`);
+    return entry;
+  });
   const declaration = strings.match(/^<\?xml[^\n]*\?>/)?.[0] ?? '';
-  await asset('gamedata/config/'+path, Buffer.from(`${declaration}\n<string_table>\n${caption}\n</string_table>\n`, 'latin1'));
+  await asset('gamedata/config/'+path, Buffer.from(`${declaration}\n<string_table>\n${entries.join('\n')}\n</string_table>\n`, 'latin1'));
 }
 await asset('gamedata/'+optionsScript,patchSocOptionsScript(source.get(optionsScript).data));
 await asset('gamedata/'+basicVideoScript,patchSocBasicVideoScript(source.get(basicVideoScript).data));
@@ -60,7 +75,8 @@ if (browserMenu===menu) throw Error('No desktop exit button found in '+menuPath)
 await asset('gamedata/'+menuPath,Buffer.from(browserMenu,'latin1'));
 await asset('gamedata/'+menuScript,Buffer.concat([source.get(menuScript).data,Buffer.from('\n'),
   await readFile(join(import.meta.dirname,'browser-menu.script'))]));
-await writeFile(join(raw,'engine_data.json'),JSON.stringify({gameId:'soc',files,retired:[]}));
+const localization={languages,fallback:languages.includes('eng')?'eng':gameSource.language};
+await writeFile(join(raw,'engine_data.json'),JSON.stringify({gameId:'soc',files,retired:[],localization}));
 await writeFile(join(raw,'index.html'),(await readFile(join(raw,'index.html'),'utf8')).replace('<!doctype html>','<!doctype html>\n<html data-game="soc">'));
 execFileSync(process.execPath,[join(repo,'misc/web/webgpu/stage.mjs')],{env:{...process.env,XRAY_WEB_DIST_INPUT:raw,XRAY_WEB_OUTPUT:web,XRAY_WEB_GAME_ID:'soc'},stdio:'inherit'});
 await copyFile(join(repo,'src/xr_3da/stalker_soc.ico'),join(web,'favicon.ico'));

@@ -103,6 +103,7 @@ test("engine sync replaces same-size stale files and refuses corrupt or failed d
 test("campaign settings are seeded once in each game's own app-data directory", async () => {
   const source = await readFile(new URL("../page/ingest-worker.js", import.meta.url), "utf8");
   const files = new Map();
+  let localization;
   const directory = (path) => ({
     async getDirectoryHandle(name) { return directory(`${path}/${name}`); },
     async *entries() {
@@ -139,7 +140,7 @@ test("campaign settings are seeded once in each game's own app-data directory", 
       storage: { getDirectory: async () => directory("") },
       locks: { request: async (key, prepare) => prepare() },
     },
-    fetch: async () => ({ ok: true, json: async () => ({ files: [], retired: [] }) }),
+    fetch: async () => ({ ok: true, json: async () => ({ files: [], retired: [], localization }) }),
     postMessage: () => {},
   });
   vm.runInContext(source.replace("import {migrateStockBindings} from './stock-bindings.mjs';", ""), context);
@@ -177,4 +178,29 @@ test("campaign settings are seeded once in each game's own app-data directory", 
   files.delete(config);
   await context.syncEngineData("stream-cop", undefined, true);
   assert.equal(files.get(config), "_preset Default\ng_language ukr\n");
+
+  const socConfig = "/stream-soc/_appdata_/user.ltx";
+  const socSave = "/stream-soc/_appdata_/savedgames/Quicksave.scop";
+  localization = { languages: ["eng", "rus", "ukr"], fallback: "eng" };
+  files.delete(socConfig);
+  context.navigator.languages = ["ja-JP", "ru-RU", "uk-UA"];
+  await context.syncEngineData("stream-soc", undefined, true);
+  assert.equal(files.get(socConfig), "_preset Default\ng_language rus\n");
+  context.navigator.languages = ["uk-UA"];
+  await context.syncEngineData("stream-soc", undefined, true);
+  assert.equal(files.get(socConfig), "_preset Default\ng_language rus\n");
+  files.delete(socConfig);
+  files.set(socSave, "legacy SoC save");
+  await context.syncEngineData("stream-soc", undefined, true);
+  assert.equal(files.get(socConfig), "_preset Default\n");
+  assert.equal(files.get(socSave), "legacy SoC save");
+  files.delete(socConfig);
+  files.delete(socSave);
+  context.navigator.languages = ["pl-PL"];
+  await context.syncEngineData("stream-soc", undefined, true);
+  assert.equal(files.get(socConfig), "_preset Default\ng_language eng\n");
+  files.delete(socConfig);
+  localization = { languages: ["rus", "ukr"], fallback: "ukr" };
+  await context.syncEngineData("stream-soc", undefined, true);
+  assert.equal(files.get(socConfig), "_preset Default\ng_language ukr\n");
 });

@@ -22,7 +22,7 @@
 #include "clsid_game.h"
 #include "WeaponKnife.h"
 #include "WeaponBinocularsVision.h"
-#include "xrUICore/Windows/UIWindow.h"
+#include "xrUICore/Static/UIStatic.h"
 #include "ui/UIXmlInit.h"
 #include "Torch.h"
 #include "xrNetServer/NET_Messages.h"
@@ -469,7 +469,6 @@ void CWeapon::Load(LPCSTR section)
         m_zoom_params.m_fScopeZoomFactor = pSettings->r_float(cNameSect(), "scope_zoom_factor");
         if (!GEnv.isDedicatedServer)
         {
-            m_UIScope = xr_new<CUIWindow>("Scope UI");
             shared_str scope_tex_name = pSettings->r_string(cNameSect(), "scope_texture");
             LoadScope(scope_tex_name);
         }
@@ -533,10 +532,20 @@ void CWeapon::Load(LPCSTR section)
 
 void CWeapon::LoadScope(const shared_str& section)
 {
-    if (ShadowOfChernobylMode) // XXX: temporary check for SOC mode, to be removed
+    xr_delete(m_UIScope);
+    if (ShadowOfChernobylMode)
+    {
+        // SoC supplies a full-screen DDS path in scope_texture.
+        auto* scope = xr_new<CUIStatic>("Scope UI");
+        scope->SetWndPos(Fvector2().set(0.0f, 0.0f));
+        scope->SetWndSize(Fvector2().set(UI_BASE_WIDTH, UI_BASE_HEIGHT));
+        scope->SetStretchTexture(true);
+        scope->InitTexture(section.c_str());
+        m_UIScope = scope;
         return;
+    }
     pWpnScopeXml.Init();
-    R_ASSERT(m_UIScope);
+    m_UIScope = xr_new<CUIWindow>("Scope UI");
     CUIXmlInit::InitWindow(*pWpnScopeXml, section.c_str(), 0, m_UIScope);
 }
 

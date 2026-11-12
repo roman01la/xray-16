@@ -120,6 +120,24 @@ export function patchSocOptionsLayout(bytes) {
     '',
     '$&',
   ].join(newline));
+  const difficulty = /(<tab_gameplay>[\s\S]*?<\/list_difficulty>)/g;
+  if ([...source.matchAll(difficulty)].length !== 1)
+    throw Error('Unsupported SoC gameplay options layout');
+  source = source.replace(difficulty, [
+    '$1',
+    '',
+    '\t\t<cap_localization x="20" y="50" width="170" height="21">',
+    '\t\t\t<text font="letterica16" r="215" g="195" b="170">ui_mm_localization</text>',
+    '\t\t</cap_localization>',
+    '\t\t<list_localization x="194" y="50" width="261" height="21" list_length="6" always_show_scroll="0">',
+    '\t\t\t<options_item entry="g_language" group="mm_opt_gameplay"/>',
+    '\t\t\t<list_font font="letterica16" r="216" g="186" b="140"/>',
+    '\t\t\t<text_color>',
+    '\t\t\t\t<e r="216" g="186" b="140"/>',
+    '\t\t\t\t<d r="227" g="199" b="178"/>',
+    '\t\t\t</text_color>',
+    '\t\t</list_localization>',
+  ].join(newline));
   // SoC's original menu writes these commands without rebuilding render
   // targets or grass buffers. Use the shared renderer's apply-time reset.
   for (const entry of ['vid_mode', '_preset', 'r__detail_density']) {
@@ -162,6 +180,19 @@ export function patchSocBasicVideoScript(bytes) {
   if ([...source.matchAll(rendererControls)].length !== 1)
     throw Error('Unsupported SoC renderer option controls');
   return Buffer.from(source.replace(rendererControls, ''), 'latin1');
+}
+
+export function patchSocGameplayOptions(bytes) {
+  const source = bytes.toString('latin1');
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const difficulty = /^[ \t]*xml:InitComboBox\("tab_gameplay:list_difficulty",[^\r\n]+/gm;
+  if ([...source.matchAll(difficulty)].length !== 1)
+    throw Error('Unsupported SoC gameplay controls');
+  return Buffer.from(source.replace(difficulty, [
+    '$&',
+    '\txml:InitStatic("tab_gameplay:cap_localization", self)',
+    '\txml:InitComboBox("tab_gameplay:list_localization", self)',
+  ].join(newline)), 'latin1');
 }
 
 export function patchSocAbort(bytes) {

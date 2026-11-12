@@ -166,16 +166,16 @@ const gameLanguages = new Map([
   ["fr", "fra"], ["it", "ita"], ["pl", "pol"], ["ru", "rus"], ["uk", "ukr"],
 ]);
 
-function browserGameLanguage() {
+function browserGameLanguage(supported, fallback = "eng") {
   const preferences = navigator.languages?.length ? navigator.languages : [navigator.language];
   for (const locale of preferences) {
     const language = gameLanguages.get(locale?.split("-")[0].toLowerCase());
-    if (language) return language;
+    if (language && (!supported || supported.includes(language))) return language;
   }
-  return "eng";
+  return fallback;
 }
 
-async function seedUserConfig(app, useBrowserLanguage) {
+async function seedUserConfig(app, useBrowserLanguage, localization) {
   try {
     await app.getFileHandle("user.ltx");
     return;
@@ -193,7 +193,7 @@ async function seedUserConfig(app, useBrowserLanguage) {
         break;
       }
     }
-    if (!hasSave) settings += `g_language ${browserGameLanguage()}\n`;
+    if (!hasSave) settings += `g_language ${browserGameLanguage(localization?.languages, localization?.fallback)}\n`;
   }
   await writeBlob(app, "user.ltx", new Blob([settings]));
 }
@@ -203,7 +203,7 @@ async function syncEngineData(root, appDirectory = '_appdata_', hosted = false) 
   const manifest = await fetch("./engine_data.json");
   if (!manifest.ok)
     throw new Error("Cannot download engine manifest: HTTP " + manifest.status);
-  const { files, retired } = await manifest.json();
+  const { files, retired, localization } = await manifest.json();
   await removeRetired(game, retired);
   let checked=0;
   for (const entry of files) {
@@ -236,8 +236,11 @@ async function syncEngineData(root, appDirectory = '_appdata_', hosted = false) 
     await ensureDir(game, ["_appdata_", sub]);
   const prepareConfig = async () => {
     const app = await ensureDir(game, appDirectory.split("/"));
-    if (root === "stream-cop" || root === "stream-soc")
-      await seedUserConfig(app, hosted && root === "stream-cop" && appDirectory === "_appdata_");
+    if (root === "stream-cop" || root === "stream-soc") {
+      const detectLanguage = hosted && appDirectory === "_appdata_" &&
+        (root === "stream-cop" || localization?.languages?.length > 1);
+      await seedUserConfig(app, detectLanguage, root === "stream-soc" ? localization : undefined);
+    }
     try {
       await migrateStockBindings(app);
     } catch (error) {

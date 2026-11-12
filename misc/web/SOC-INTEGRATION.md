@@ -437,3 +437,29 @@ Controller finish a psychic attack.
 - In **Options → Video → Advanced**, check that the FPS selector offers Auto,
   30, 60, 100 and 120. Apply a value and reload to check persistence. New
   profiles default to 60 FPS.
+
+### Text languages
+
+Pass the extracted `config/text` directory as the fourth argument to
+`prepare-soc.mjs` to add retail text to the Ukrainian base. The private
+input combines the original North American retail disc with the official US
+1.0005 update. Keep the retail and update archives outside Git. The packer puts
+the additional text in `localization/retail_text.db`. For an incremental update
+to the existing SoC pack, append that archive and its source manifest entries
+to the existing normalized assets before running `pack-streaming.mjs`.
+
+**Options → Game → Language** offers Czech, English, French, German, Italian,
+Polish, Russian, Spanish and Ukrainian. On a fresh profile, the browser's
+language preference selects the first supported language and falls back to
+English. Test a profile with existing saves and one with a saved selection to
+verify that startup respects both. Spoken dialogue continues to use the base
+pack's audio. In CoP, the nine shipped text catalogs average 1.22 MB each and
+the Ukrainian audio and text archive is 166.13 MB.
+
+### Scope overlays and navigation
+
+- Aim with an AK-74 fitted with a PSO-1 and with a Vintorez to check attachable
+  and built-in scopes. SoC draws the original DDS overlay from `scope_texture`.
+- Retry the tunnel escort using a save from before the reported crash. The
+  script navigation bindings now reject invalid level vertex IDs before
+  accessing the graph.

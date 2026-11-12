@@ -70,7 +70,8 @@ Wasm integrity, isolation, and decoded CDN chunks for both titles.
 
 The root picker downloads the selected campaign only. Saves, settings, and
 installed game data are scoped to each campaign. CoP keeps its existing paths
-and historical metrics. SoC launches with the Ukrainian pack.
+and historical metrics. SoC uses the Ukrainian voice pack and ships nine text
+languages in the multilingual build.
 
 Apply `schema-soc.sql` to D1 before deploying the two-campaign Worker. The
 script can run more than once and leaves the existing CoP tables and current
