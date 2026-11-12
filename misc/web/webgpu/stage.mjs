@@ -93,7 +93,7 @@ if (!loader.includes(hook))
     "Emscripten worker loader changed; inspect startup hook before staging",
   );
 loader =
-  "import {installWebGPUBackend} from './backend.js';\nimport {createShaderCompilerPort} from './shader-compiler-client.mjs';\n" +
+  "import {createShaderCompilerPort} from './shader-compiler-client.mjs';\n" +
   loader
     .replace(
       "self.onmessage=function handleMessage(e)",
@@ -101,11 +101,21 @@ loader =
     )
     .replace(
       hook,
-      "wasmModule=msgData.wasmModule;globalThis.__xrayCrashChannelName=msgData.gpuDiagnosticsChannel?.name;await installWebGPUBackend(msgData.shaderCompilerPort,msgData.gpuDiagnosticsChannel);createWasm();",
+      "wasmModule=msgData.wasmModule;globalThis.__xrayCrashChannelName=msgData.gpuDiagnosticsChannel?.name;Module.xrayGPUDiagnosticsChannel=msgData.gpuDiagnosticsChannel;createWasm();",
     );
 const workerLoad = 'worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule})';
 if (!loader.includes(workerLoad)) throw Error('Emscripten worker transfer hook changed');
-loader = loader.replace(workerLoad, 'const shaderCompilerPort=createShaderCompilerPort();worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,shaderCompilerPort,gpuDiagnosticsChannel:globalThis.__xrayGPUDiagnosticsChannel},[shaderCompilerPort])');
+loader = loader.replace(workerLoad, 'worker.postMessage({cmd:1,handlers,wasmMemory,wasmModule,gpuDiagnosticsChannel:globalThis.__xrayGPUDiagnosticsChannel})');
+const threadStart = 'worker.postMessage(msg,threadParams.transferList)';
+const canvasReceived = 'PThread.receiveOffscreenCanvases(msgData);';
+if (!loader.includes(threadStart) || !loader.includes(canvasReceived))
+  throw Error('Emscripten canvas transfer hook changed');
+// Only a thread receiving the game canvas needs a compiler port or GPU device.
+// Complete asynchronous device creation before entering its synchronous WASM.
+loader = loader.replace(threadStart,
+  'const transfers=threadParams.transferList||[];if(msg.moduleCanvasId&&msg.offscreenCanvases?.[msg.moduleCanvasId]){msg.shaderCompilerPort=createShaderCompilerPort();transfers.push(msg.shaderCompilerPort)}worker.postMessage(msg,transfers)');
+loader = loader.replace(canvasReceived,
+  canvasReceived + 'if(msgData.shaderCompilerPort){if(!Module.canvas)throw Error("GPU worker did not receive its canvas");const {installWebGPUBackend}=await import("./backend.js");await installWebGPUBackend(msgData.shaderCompilerPort,Module.xrayGPUDiagnosticsChannel);}');
 // Pack installation completes before engine creation. Game reads never fetch.
 const streamHook=/new module\.ChunkReader(?:\(\))?(?=\);)/;
 if(!streamHook.test(loader))throw Error('Streaming reader hook changed');
