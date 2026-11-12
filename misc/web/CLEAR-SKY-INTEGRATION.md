@@ -1,9 +1,9 @@
 # Clear Sky browser integration
 
-Updated 2026-11-12. Clear Sky is integrated into the shared three-game startup
-selector. The local optimized build starts the opening scene and reaches
-Lebedev's dialogue. The deployment candidate is staged locally. Public asset
-upload, database migration, deployment and broader campaign testing are pending.
+Updated 2026-11-13. Clear Sky is deployed in the shared three-game startup
+selector at https://stalker-online.xyz/. The optimized build starts the opening
+scene and reaches Lebedev's dialogue. Asset upload, database setup and live
+transport checks are complete. Broader campaign testing remains manual.
 
 ## Engine and references
 
@@ -224,11 +224,13 @@ The current Clear Sky pack has 307 content-addressed chunks totaling
 compressed CDN redirect. The local preview reads decoded source chunks.
 Private symbol files are kept outside the static asset directory.
 
-Before publishing this candidate, run the existing chunk uploader for
+For subsequent publication, run the existing chunk uploader for
 `cs-publication`, apply `schema-cs.sql`, then deploy the Worker with
 `--assets ../cs-research/deployment-candidate/assets`. Keep the verified upload
-progress file for resumable retries. No Clear Sky chunks or new Worker version
-have been uploaded during preparation.
+progress file for resumable retries. Publication completed on 2026-11-13. All 307 gzip chunks were uploaded and
+checksum-verified, totaling 2,548,000,458 compressed bytes. The additive database
+schema was applied successfully. Cloudflare Worker version
+`185ec44a-62cd-4969-b625-f4082b00541b` serves the three-game site.
 
 ### Manual release checks
 
@@ -262,3 +264,8 @@ atmospheric depth, subtle ominous mood. Wide natural composition with open
 central midground so a game selection interface can overlay it. Match polished
 photographic game-environment concept art, no people, no logos, no text, no
 borders, no UI.”
+
+Live verification passed for all three engine hashes and WASM compilation,
+gzip CDN chunks, browser thread isolation and game selection. The three
+authenticated analytics pages returned HTTP 200 and the Clear Sky map manifest
+contains 10 levels. Gameplay encounter checks above remain for manual testing.
