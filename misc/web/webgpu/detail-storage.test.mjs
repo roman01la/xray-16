@@ -53,13 +53,32 @@ test('eviction protects all visible slots in a wasm64 pointer array', () => {
   const token = {};
   upload(token, [[1, 0, 5], [2, 0, 5]]);
   const retainedIndex = words[2];
-  // Slot 1 is the oldest and appears after slot 3. A high word equal to
-  // slot 2's ID must not protect that slot.
+  // Slot 1 is the oldest and appears after a pointer above 4 GiB.
   arena.upload(token, new Uint32Array([3, 0, 0, 5, 2560, 24, 28]),
     heap, words, new Uint32Array([3, 2, 1, 0]), 2);
   assert.equal(words[2], retainedIndex);
   assert.equal(words[4], 0xffffffff);
   assert.ok(arena.entries.has(3));
+});
+test('wasm64 descriptors preserve high addresses and distinct slot identities',()=>{
+ const {arena,r,writes}=fixture(),token={};
+ const high=0x100000000,words={},lowRows=new Uint8Array(320).fill(3),highRows=new Uint8Array(320).fill(9);
+ const heap={length:high+8192,subarray(start,end){
+  const rows=start>=high?highRows:lowRows;
+  assert.equal(end-start,320);return rows;
+ }};
+ const descriptors=new BigUint64Array([
+  1n,1n,0n,5n,1024n,8n,12n,
+  BigInt(high+1),1n,0n,5n,BigInt(high+1024),BigInt(high+8),BigInt(high+12),
+ ]);
+ arena.upload(token,descriptors,heap,words,new Uint32Array([1,0,1,1]),2);
+ assert.equal(arena.entries.size,2);
+ assert.equal(arena.entries.get(high+1).indexAddress,high+8);
+ assert.equal(words[(high+8)/4],2**DETAIL_PAGE_SHIFT);
+ assert.deepEqual(writes.slice(-2).map(write=>write.bytes[0]),[3,9]);
+ // Eviction must protect the high pointer even when its low word collides.
+ arena.upload(token,new BigUint64Array([2n,1n,0n,5n,1024n,16n,20n]),heap,words,new Uint32Array([1,1,2,0]),2);
+ assert.ok(arena.entries.has(high+1));assert.ok(!arena.entries.has(1));
 });
 test('count growth allocates safely and source generation changes upload new content',()=>{
   const {arena,upload,gather,words}=fixture(),token={};

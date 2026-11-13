@@ -157,7 +157,8 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
             auto& batch = batches[O];
             const double preparationStart = profileDetails ? emscripten_get_now() : 0.0;
             u32 instanceCount = batch.prepared.count;
-            const u64 producerVersion = web_visibleState[var_id][O].version;
+            const auto& visibility = web_visibleState[var_id][O];
+            const u64 producerVersion = visibility.version;
             const bool sameProducer = batch.producerVersion==producerVersion && batch.prepared.storage==hw_storageGeneration;
             const auto packRows = [&](SlotItemVec& items)
             {
@@ -179,36 +180,14 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                 items.packedRevision = items.revision;
             };
 
-            if (ShadowOfChernobylMode && (!batch.buffer || !sameProducer))
-            {
-                // Keep instancing, but bypass the persistent GPU slot cache
-                // and its compute gather for the SoC detail data.
-                web_detailUploadRows.clear();
-                for (auto* items : vis)
-                {
-                    packRows(*items);
-                    web_detailUploadRows.insert(web_detailUploadRows.end(), items->rows.begin(), items->rows.end());
-                }
-                const auto bytes = static_cast<u32>(web_detailUploadRows.size() * sizeof(Fvector4));
-                if (batch.buffer)
-                    UploadWebGPUBuffer(batch.buffer, web_detailUploadRows.data(), bytes);
-                else
-                    CreateWebGPUBuffer(&batch.buffer, web_detailUploadRows.data(), bytes);
-                instanceCount = static_cast<u32>(web_detailUploadRows.size() / 4);
-                batch.prepared = {Device.dwFrame, hw_storageGeneration, instanceCount, web_visibilityGeneration};
-                batch.producerVersion = producerVersion;
-                ++changedBatches;
-            }
-            else if (!ShadowOfChernobylMode &&
-                (!batch.buffer || (!sameProducer && !batch.prepared.matches(Device.dwFrame, web_visibilityGeneration, hw_storageGeneration))))
+            if (!batch.buffer || (!sameProducer && !batch.prepared.matches(Device.dwFrame, web_visibilityGeneration, hw_storageGeneration)))
             {
                 batch.descriptors.clear();
                 batch.dirtySlots.clear();
                 batch.dirtyRanges.clear();
-                batch.dirtySignatureOffsets.clear();
-                bool indicesChanged = batch.signature.size() != vis.size() * 3;
-                batch.signature.resize(vis.size() * 3);
-                u32 destination = 0, signatureOffset = 0;
+                const bool indicesChanged = !batch.buffer || batch.membershipVersion != visibility.membershipVersion ||
+                    batch.prepared.storage != hw_storageGeneration;
+                u32 destination = 0;
                 for (auto* items : vis)
                 {
                     const u32 first = destination;
@@ -220,21 +199,17 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                         items->storageIndex = u32(-1);
                         items->uploadedRevision = u64(-1);
                     }
-                    const u32 currentSignature = signatureOffset;
-                    signatureOffset += 3;
-                    indicesChanged |= xray::detail_cache::updateSignatureEntry(batch.signature.data() + currentSignature, *items);
                     if (!xray::detail_cache::needsUpload(*items))
                         continue;
                     packRows(*items);
-                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items)));
+                    batch.descriptors.push_back(static_cast<u64>(reinterpret_cast<uintptr_t>(items)));
                     batch.descriptors.push_back(static_cast<u32>(items->revision));
                     batch.descriptors.push_back(static_cast<u32>(items->revision >> 32));
                     batch.descriptors.push_back(static_cast<u32>(items->size()));
-                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(items->rows.data())));
-                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->storageIndex)));
-                    batch.descriptors.push_back(static_cast<u32>(reinterpret_cast<uintptr_t>(&items->visibleFrame)));
+                    batch.descriptors.push_back(static_cast<u64>(reinterpret_cast<uintptr_t>(items->rows.data())));
+                    batch.descriptors.push_back(static_cast<u64>(reinterpret_cast<uintptr_t>(&items->storageIndex)));
+                    batch.descriptors.push_back(static_cast<u64>(reinterpret_cast<uintptr_t>(&items->visibleFrame)));
                     batch.dirtySlots.push_back(items);
-                    batch.dirtySignatureOffsets.push_back(currentSignature);
                     batch.dirtyRanges.insert(batch.dirtyRanges.end(), {0, static_cast<u32>(items->size()), first, 0});
                 }
                 if (!batch.buffer) CreateWebGPUBuffer(&batch.buffer, nullptr, 0);
@@ -247,10 +222,8 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                         auto* items = batch.dirtySlots[i];
                         items->uploadedRevision = items->revision;
                         batch.dirtyRanges[i * 4] = items->storageIndex;
-                        // Upload can allocate or relocate this source range. Other
-                        // visible ranges are protected from eviction by the upload.
-                        indicesChanged |= xray::detail_cache::updateSignatureEntry(
-                            batch.signature.data() + batch.dirtySignatureOffsets[i], *items);
+                        // Relocation changes only this source range. A partial
+                        // update replaces its records at the same destination.
                     }
                 }
                 instanceCount = destination;
@@ -269,19 +242,38 @@ void CDetailManager::hw_Render_dump(CBackend& cmd_list, const Fvector4& consts, 
                     }
                 }
                 if (indicesChanged)
-                    GatherWebGPUDetailRanges(batch.buffer, batch.indices.data(), static_cast<u32>(vis.size()), instanceCount, true, false);
+                {
+                    xray::detail_cache::coalesceRanges(batch.indices);
+                    GatherWebGPUDetailRanges(batch.buffer, batch.indices.data(), static_cast<u32>(batch.indices.size() / 4), instanceCount, true, false);
+                }
                 else if (changed)
+                {
                     // Membership is unchanged: retain all unaffected output records.
-                    GatherWebGPUDetailRanges(batch.buffer, batch.dirtyRanges.data(), static_cast<u32>(batch.dirtySlots.size()), instanceCount, true, true);
+                    xray::detail_cache::coalesceRanges(batch.dirtyRanges);
+                    GatherWebGPUDetailRanges(batch.buffer, batch.dirtyRanges.data(), static_cast<u32>(batch.dirtyRanges.size() / 4), instanceCount, true, true);
+                }
                 changedBatches += changed || indicesChanged;
                 reusedBatches += !changed && !indicesChanged;
                 membershipChanges += indicesChanged;
                 contentChanges += changed;
                 batch.prepared = {Device.dwFrame, hw_storageGeneration, instanceCount, web_visibilityGeneration};
                 batch.producerVersion=producerVersion;
+                batch.membershipVersion=visibility.membershipVersion;
             }
             else
                 ++reusedBatches;
+            static const bool auditDetails = strstr(Core.Params, "-web_detail_audit") != nullptr;
+            if (auditDetails && !webPrepareOnly && Device.dwFrame % 60 == 0 && instanceCount)
+            {
+                web_detailAuditRows.clear();
+                for (auto* items : vis)
+                    web_detailAuditRows.insert(web_detailAuditRows.end(), items->rows.begin(), items->rows.end());
+                EM_ASM({
+                    const renderer = globalThis.__xrayWebGPU;
+                    renderer.auditDetailRows(globalThis.__xrayWebGPUHandles.buffers[$0],
+                        HEAPU8.subarray(Number($1), Number($1) + Number($2)));
+                }, batch.buffer, web_detailAuditRows.data(), web_detailAuditRows.size() * sizeof(Fvector4));
+            }
             if (profileDetails) preparationMs += emscripten_get_now() - preparationStart;
             if (!webPrepareOnly) web_classInstances[var_id] += instanceCount;
 #endif

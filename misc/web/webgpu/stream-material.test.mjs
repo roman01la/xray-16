@@ -36,3 +36,64 @@ test('materials survive unrelated bindings but invalidate on dependencies and mu
  p.materialDependencies[0].version=r.unitBindingGenerations[0];assert.equal(r.cachedMaterial(p),p.lastMaterial);
  r.resourceGeneration++;assert.equal(r.cachedMaterial(p),null);
 });
+
+test('submitted detail buffers reuse storage and upload only changed rows',()=>{
+ const {r,writes}=fixture(),i={};
+ const source=new Uint8Array(4096).fill(1);r.bufferData([0,source],i);
+ const gpu=i.gpu;i.detailEncoder={};r.encoder={};writes.length=0;
+ r.bufferData([0,source],i);assert.equal(writes.length,0);assert.equal(i.gpu,gpu);
+ const next=source.slice();next[3072]=9;
+ r.bufferData([0,next],i);
+ assert.equal(i.gpu,gpu);assert.equal(writes.length,1);assert.equal(writes[0].offset,3072);
+ assert.equal(writes[0].bytes.length,256);assert.deepEqual(gpu.bytes,next);
+});
+test('detail data already referenced by the current encoder keeps snapshot semantics',()=>{
+ const {r}=fixture(),i={};r.bufferData([0,new Uint8Array(512).fill(1)],i);
+ const previous=i.gpu;r.encoder={};i.detailEncoder=r.encoder;
+ r.bufferData([0,new Uint8Array(512).fill(2)],i);
+ assert.notEqual(i.gpu,previous);assert.equal(previous.bytes[0],1);assert.equal(i.gpu.bytes[0],2);
+});
+test('unsubmitted compute reads also prevent in-place detail updates',()=>{
+ const {r}=fixture(),i={};r.bufferData([0,new Uint8Array(512).fill(1)],i);
+ const previous=i.gpu;r.encoder={};i.detailEncoder={};i.detailComputeEncoder=r.encoder;
+ r.bufferData([0,new Uint8Array(512).fill(2)],i);
+ assert.notEqual(i.gpu,previous);assert.equal(previous.bytes[0],1);
+});
+test('GPU-written detail buffers cannot reuse a stale CPU shadow after submission',()=>{
+ const {r}=fixture(),i={};r.bufferData([0,new Uint8Array(512).fill(1)],i);
+ const previous=i.gpu;r.encoder={};i.detailEncoder={};i.detailComputeEncoder={};
+ previous.bytes.fill(9);
+ r.bufferData([0,new Uint8Array(512).fill(1)],i);
+ assert.notEqual(i.gpu,previous);assert.equal(previous.bytes[0],9);assert.equal(i.gpu.bytes[0],1);
+});
+test('pending shadow compaction reads retain the original detail buffer',()=>{
+ const {r}=fixture(),i={};r.bufferData([0,new Uint8Array(512).fill(1)],i);
+ const previous=i.gpu;r.encoder={};i.detailEncoder={};i.detailShadowReadEncoder=r.encoder;
+ r.bufferData([0,new Uint8Array(512).fill(2)],i);
+ assert.notEqual(i.gpu,previous);assert.equal(previous.bytes[0],1);
+ i.detailShadowReadEncoder={};
+ const submitted=i.gpu;r.bufferData([0,new Uint8Array(512).fill(3)],i);
+ assert.equal(i.gpu,submitted);assert.equal(i.gpu.bytes[0],3);
+});
+test('many separated dirty detail ranges fall back to one complete upload',()=>{
+ const {r,writes}=fixture(),i={};const bytes=new Uint8Array(256*3*140);
+ r.bufferData([0,bytes],i);i.detailEncoder={};r.encoder={};writes.length=0;
+ for(let block=0;block<140;block++)bytes[block*768]=1;
+ r.bufferData([0,bytes],i);
+ assert.equal(writes.length,1);assert.equal(writes[0].bytes.length,bytes.length);
+ assert.deepEqual(i.gpu.bytes.slice(0,bytes.length),bytes);
+});
+
+test('detail count changes reuse spare GPU capacity without losing new rows',()=>{
+ const {r,writes}=fixture(),i={};
+ r.bufferData([0,new Uint8Array(1024).fill(1)],i);
+ r.bufferData([0,new Uint8Array(1028).fill(1)],i);
+ const gpu=i.gpu;assert.equal(gpu.size,2048);
+ i.detailEncoder={};r.encoder={};writes.length=0;
+ const larger=new Uint8Array(1536).fill(1);larger[1500]=3;
+ r.bufferData([0,larger],i);
+ assert.equal(i.gpu,gpu);assert.equal(i.size,1536);assert.deepEqual(gpu.bytes.slice(0,1536),larger);
+ r.bufferData([0,larger.subarray(0,768)],i);assert.equal(i.size,768);
+ const next=larger.slice();next[1400]=4;r.bufferData([0,next],i);
+ assert.equal(i.gpu,gpu);assert.deepEqual(gpu.bytes.slice(0,1536),next);
+});

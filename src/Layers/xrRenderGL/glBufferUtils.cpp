@@ -362,13 +362,13 @@ void UploadWebGPUBuffer(GLuint buffer, const void* data, u32 size, u32 offset, b
 {
     xrUploadWebGPUBuffer(buffer, data, size, offset, replace);
 }
-EM_JS(int, xrUpdateWebGPUDetailRecords, (unsigned buffer, const unsigned* descriptors, unsigned count, const void* visible, unsigned visibleCount, unsigned pointerWords), {
+EM_JS(int, xrUpdateWebGPUDetailRecords, (unsigned buffer, const u64* descriptors, unsigned count, const void* visible, unsigned visibleCount, unsigned pointerWords), {
     globalThis.__xrayWebGPU.updateDetailRecords(globalThis.__xrayWebGPUHandles.buffers[buffer],
-        HEAPU32.subarray(Number(descriptors)/4,Number(descriptors)/4+count*7),HEAPU8,HEAPU32,
+        HEAPU64.subarray(Number(descriptors)/8,Number(descriptors)/8+count*7),HEAPU8,HEAPU32,
         HEAPU32.subarray(Number(visible)/4,Number(visible)/4+visibleCount*pointerWords),pointerWords);
     return 1;
 });
-void UpdateWebGPUDetailRecords(GLuint buffer, const u32* descriptors, u32 slotCount, const void* visible, u32 visibleCount)
+void UpdateWebGPUDetailRecords(GLuint buffer, const u64* descriptors, u32 slotCount, const void* visible, u32 visibleCount)
 {
     xrUpdateWebGPUDetailRecords(buffer, descriptors, slotCount, visible, visibleCount, sizeof(void*) / sizeof(u32));
 }

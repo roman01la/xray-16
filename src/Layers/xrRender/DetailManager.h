@@ -170,7 +170,14 @@ public:
 
     DetailVec objects;
 #ifdef XR_PLATFORM_WEB
-    struct WebVisibility { xr_vector<u64> revisions; size_t cursor=0; u64 version=0; bool changed=false; };
+    struct WebVisibility
+    {
+        xr_vector<u64> revisions;
+        xr_vector<u32> counts;
+        size_t cursor = 0;
+        u64 version = 0, membershipVersion = 0;
+        bool changed = false, membershipChanged = false;
+    };
     xr_vector<WebVisibility> web_visibleState[3];
     bool webPrepareOnly = false;
     // Threshold epoch for the per-slot exact-input refresh cache.
@@ -231,14 +238,15 @@ public:
 #ifdef XR_PLATFORM_WEB
     struct WebInstances
     {
-        xr_vector<u32> descriptors, signature, indices, dirtyRanges, dirtySignatureOffsets;
+        xr_vector<u64> descriptors;
+        xr_vector<u32> indices, dirtyRanges;
         xr_vector<SlotItemVec*> dirtySlots;
         u32 buffer = 0;
         xray::detail_cache::PreparedFrame prepared;
-        u64 producerVersion = u64(-1);
+        u64 producerVersion = u64(-1), membershipVersion = u64(-1);
     };
     xr_vector<WebInstances> hw_instances[3];
-    xr_vector<Fvector4> web_detailUploadRows;
+    xr_vector<Fvector4> web_detailAuditRows;
     u32 hw_storageGeneration = 1;
     u64 web_visibilityGeneration = 0;
 #endif

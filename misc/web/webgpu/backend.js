@@ -227,7 +227,22 @@ export class GPUFrontend {
     this.retired = [];
     this.streamPool = new Map();
     this.streamRetired = [];
+    this.pendingFrames = [];
 
+  }
+  pendingFrameCompletion() {
+    this.frameQueueEnabled = true;
+    return this.pendingFrames.length >= 2 ? this.pendingFrames[0] : null;
+  }
+  trackSubmittedFrame() {
+    if (!this.frameQueueEnabled) return;
+    const completion = this.device.queue.onSubmittedWorkDone();
+    this.pendingFrames.push(completion);
+    const retire = () => {
+      const index = this.pendingFrames.indexOf(completion);
+      if (index >= 0) this.pendingFrames.splice(index, 1);
+    };
+    completion.then(retire, retire);
   }
   configureNativeQueues(heap, pointers, handles) { installNativeQueues(this, heap, pointers, handles, () => diagnostics.drawBatches++); }
   configureDetailProfiling(heap, address) {
@@ -366,6 +381,46 @@ export class GPUFrontend {
       (a[4] ?? data.length - (a[3] || 0)) * (data.BYTES_PER_ELEMENT || 1));
     const size = align(source.length), dynamic = !!i.gpu;
     diagnostics.streamNewBytes += size;
+    // Submitted detail draws no longer read this buffer through an unsubmitted
+    // encoder. Preserve its allocation and upload only changed contiguous rows.
+    // A GPU-written detail buffer has no authoritative CPU shadow to compare.
+    // Other dynamic streams still require snapshot semantics within a frame.
+    if (dynamic && source.byteOffset % 4 === 0 && source.length === size && size <= i.gpu.size &&
+        i.detailEncoder && i.detailEncoder !== this.encoder && !i.detailComputeEncoder &&
+        i.detailShadowReadEncoder !== this.encoder) {
+      const written = i.gpuWrittenHighWater || 0;
+      if (i.cpu.length < size) {
+        const grown = new Uint8Array(size);
+        grown.set(i.cpu);i.cpu = grown;
+      }
+      const previous = new Uint32Array(i.cpu.buffer, i.cpu.byteOffset, size / 4);
+      const next = new Uint32Array(source.buffer, source.byteOffset, size / 4);
+      const ranges = [];
+      let start = -1, end = 0;
+      for (let block = 0; block < next.length; block += 64) {
+        const limit = Math.min(block + 64, next.length);
+        let changed = limit * 4 > written;
+        for (let word = block; word < limit; word++) {
+          if (previous[word] !== next[word]) { changed = true; break; }
+        }
+        if (changed) {
+          if (start < 0) start = block * 4;
+          end = limit * 4;
+        } else if (start >= 0 && block * 4 - end >= 256) {
+          ranges.push([start, end]);start = -1;
+        }
+      }
+      if (start >= 0) ranges.push([start, end]);
+      if (ranges.length > 128) ranges.splice(0, ranges.length, [0, size]);
+      for (const [start, end] of ranges) {
+        i.cpu.set(source.subarray(start, end), start);
+        this.device.queue.writeBuffer(i.gpu, start, i.cpu.subarray(start, end));
+        diagnostics.streamUploadedBytes += end - start;
+      }
+      i.size = size;i.highWater = size;
+      i.gpuWrittenHighWater = Math.max(written,size);
+      return;
+    }
     if (!i.cpu || i.cpu.length < size) i.cpu = new Uint8Array(size);
     i.cpu.set(source); i.cpu.fill(0,source.length,size); i.size = size; i.highWater = size;
     if (dynamic) this.streamSnapshot(i, i.cpu.subarray(0,size));
@@ -623,6 +678,7 @@ export class GPUFrontend {
       bindGroup:this.device.createBindGroup({layout:meta.extraUniformLayouts[index],entries:[{
         binding:0,resource:{buffer:this.uniformBuffer,offset:0,size:group.bytes}}]})
     }))];
+    meta.uniformAllocationBytes = meta.uniformBlocks.reduce((size, block) => size + align(block.uniformData.length, 256), 0);
     meta.uniformByName = new Map(meta.uniforms.map((u) => [u.name, u]));
     meta.modules = {
       vert: this.device.createShaderModule({
@@ -1022,12 +1078,39 @@ export class GPUFrontend {
     this.detailArena??=new DetailStorage(this);
     this.detailArena.gather(token,indices,changed);
   }
+  // Explicit diagnostic mode compares a completed GPU gather with the native
+  // contiguous records. It is never enabled during throughput measurements.
+  auditDetailRows(token, bytes) {
+    const audit = this.detailAudit ??= {checked:0,bytes:0,pending:0,skipped:0,errors:[]};
+    if (audit.pending >= 32) { audit.skipped++; return; }
+    const expected = bytes.slice();
+    const staging = this.device.createBuffer({size:bytes.length,
+      usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+    this.endPass();
+    this.enc().copyBufferToBuffer(this.info(token).gpu,0,staging,0,bytes.length);
+    this.flush();
+    audit.pending++;
+    staging.mapAsync(GPUMapMode.READ).then(() => {
+      const actual = new Uint8Array(staging.getMappedRange());
+      for (let index=0;index<expected.length;index++) {
+        if (actual[index] !== expected[index]) {
+          throw Error(`Detail gather differs at byte ${index} of ${expected.length}`);
+        }
+      }
+      audit.checked++;
+      audit.bytes+=expected.length;
+      staging.unmap();
+    }).catch(error => audit.errors.push(String(error)))
+      .finally(() => { staging.destroy(); audit.pending--; });
+  }
   deleteNativeBuffer(token) {
     this.flushNativeDraws?.();
     if (!token) return;
     this.flush();
     const info = this.info(token);
     if(this.detailArena?.release(info)){this.detailArena=null;this.grassShadowFilter?.release();this.grassShadowFilter=null;}
+    // SoC's direct-upload path has no detail arena to own filter cleanup.
+    if(info?.detailEncoder){this.grassShadowFilter?.release();this.grassShadowFilter=null;}
     info?.gpu?.destroy();
     if (this.vao.element === token) this.vao.element = null;
     token.deleted = true;
@@ -1521,12 +1604,17 @@ export class GPUFrontend {
         this.pipelineToken = token;
         this.pipelineTokenKey = this.pipelineStateKey;
       }
-      const states = (layout.preparedRecords ??= new WeakMap());
-      let targets = states.get(this.pipelineToken);
-      if (!targets) states.set(this.pipelineToken, targets = new WeakMap());
-      preparedKinds = targets.get(target.compatibility);
-      if (!preparedKinds) targets.set(target.compatibility, preparedKinds = new Map());
-      record = preparedKinds.get(drawKind);
+      if (layout.lastPipelineToken === this.pipelineToken &&
+          layout.lastTarget === target.compatibility && layout.lastDrawKind === drawKind) {
+        record = layout.lastPreparedRecord;
+      } else {
+        const states = (layout.preparedRecords ??= new WeakMap());
+        let targets = states.get(this.pipelineToken);
+        if (!targets) states.set(this.pipelineToken, targets = new WeakMap());
+        preparedKinds = targets.get(target.compatibility);
+        if (!preparedKinds) targets.set(target.compatibility, preparedKinds = new Map());
+        record = preparedKinds.get(drawKind);
+      }
       if (record) diagnostics.preparedHits++; else diagnostics.preparedMisses++;
     }
     let pipe = record?.pipeline;
@@ -1622,14 +1710,21 @@ export class GPUFrontend {
       record = {pipeline: pipe, bindings, hasUniform: p.activeBindings.includes(0)};
       preparedKinds?.set(drawKind, record);
     }
+    if (this.preparedEnabled !== false) {
+      layout.lastPipelineToken = this.pipelineToken;
+      layout.lastTarget = target.compatibility;
+      layout.lastDrawKind = drawKind;
+      layout.lastPreparedRecord = record;
+    }
     if (profileEnabled) {
       const now = performance.now();
       profile.drawPipelineMs = (profile.drawPipelineMs || 0) + now - drawMark;
       drawMark = now;
     }
     const bytes = p.uniformData;
-    const hasUniform = p.activeBindings.includes(0);
-    const needed = (p.uniformBlocks || [p]).reduce((n,block)=>n+align(block.uniformData.length,256),0) + (layout.tessellation ? 256 : 0);
+    const hasUniform = record.hasUniform;
+    p.uniformAllocationBytes ??= (p.uniformBlocks || [p]).reduce((n,block)=>n+align(block.uniformData.length,256),0);
+    const needed = p.uniformAllocationBytes + (layout.tessellation ? 256 : 0);
     if(this.uniformOffset+needed>this.uniformBuffer.size){
       this.flush(); this.uniformOffset=this.uniformUploaded=0; this.uniformEpoch=(this.uniformEpoch || 0)+1;
     }
@@ -1637,7 +1732,9 @@ export class GPUFrontend {
     record.extraUniforms ??= [];
     for(let i=1;i<(p.uniformBlocks?.length || 0);i++) {
       const block=p.uniformBlocks[i];
-      record.extraUniforms[i-1]={group:block.bindGroup,offset:this.allocateUniformBlock(block)};
+      const offset = this.allocateUniformBlock(block), previous = record.extraUniforms[i-1];
+      if (previous?.group !== block.bindGroup || previous.offset !== offset)
+        record.extraUniforms[i-1]={group:block.bindGroup,offset};
     }
     if (profileEnabled) {
       const now = performance.now();
@@ -1824,7 +1921,7 @@ export class GPUFrontend {
         filter.captureMain(p, geometry, count, instances, first, baseVertex);
       return null;
     }
-    const job = filter.cascadeJob(p, geometry, cascade);
+    const job = filter.cascadeJob(p, geometry, cascade, {count, instances, first, base: baseVertex});
     if (!job) return null;
     const info = this.info(geometry.attrs.get(12).buffer);
     return {args: job.args, offset: job.slot * 20,
@@ -2069,6 +2166,7 @@ export class GPUFrontend {
       timer.active = false; timer.busy = true;
     }
     this.flush();
+    this.trackSubmittedFrame();
     if (timer) timer.read.mapAsync(GPUMapMode.READ).then(() => {
       const times = new BigUint64Array(timer.read.getMappedRange());
       timer.ms = Number(times[1] - times[0]) / 1e6;
@@ -2091,6 +2189,8 @@ export class GPUFrontend {
       if (!benchmark.start) {
         benchmark.start = benchmark.last = now;
         benchmark.directStart = diagnostics.directDraws;
+        benchmark.detailWork = Object.fromEntries(["recordBytes", "indexBytes", "expandedRecords", "gathers", "evictions"]
+          .map(key => [key, this.detailArena?.metrics[key] || 0]));
         benchmark.work = Object.fromEntries(["streamUploadedBytes", "streamNewBytes", "materialRebuilds", "streamSnapshots", "streamBufferAllocations", "renderPasses", "drawBatches", "nativeTextureAllocations", "nativeTextureUploads", "nativeBufferUploads", "nativeQueries", "nativeTextureCopies", "nativeProgramSelections", "nativeVertexSelections", "nativePassRecords", "nativeClears", "foldedClears", "nativePresents", "bindingBatches", "bindingRecords", "stateBatches", "stateRecords", "uniformBatches", "uniformRecords", "uniformBytesCopied", "uniformReuses", "preparedHits", "preparedMisses", "materialHits"].map(k => [k, diagnostics[k]]));
       } else {
         benchmark.times.push(now - benchmark.last);
@@ -2105,6 +2205,8 @@ export class GPUFrontend {
               durationMs: now - benchmark.start,
               directDraws: diagnostics.directDraws - benchmark.directStart,
               work: Object.fromEntries(Object.entries(benchmark.work).map(([k,v]) => [k, diagnostics[k]-v])),
+              detailWork: Object.fromEntries(Object.entries(benchmark.detailWork)
+                .map(([key, value]) => [key, (this.detailArena?.metrics[key] || 0) - value])),
               fps: (sorted.length * 1000) / (now - benchmark.start),
               medianMs: q(0.5),
               p95Ms: q(0.95),

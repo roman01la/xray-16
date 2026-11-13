@@ -65,16 +65,21 @@ export class DetailStorage {
     const protectedIds = {has(id) {
       if (!protectedSet) {
         protectedSet = new Set();
-        // Descriptor IDs are the low word of the native slot pointer.
-        for (let i = 0; i < visible.length; i += pointerWords)
-          protectedSet.add(visible[i]);
+        for (let i = 0; i < visible.length; i += pointerWords) {
+          const high = pointerWords === 2 ? visible[i + 1] : 0;
+          protectedSet.add(visible[i] + high * 0x100000000);
+        }
       }
       return protectedSet.has(id);
     }};
     for(let i=0;i<descriptors.length;i+=7) {
-      const id=descriptors[i],lo=descriptors[i+1],hi=descriptors[i+2],n=descriptors[i+3],
-        pointer=descriptors[i+4],indexAddress=descriptors[i+5],seenAddress=descriptors[i+6];
-      if(!id||!n||pointer+n*64>heap.length||indexAddress%4||indexAddress+4>heap.length||seenAddress%4||seenAddress+4>heap.length)
+      // Native descriptors retain complete wasm64 addresses. Number represents
+      // every address in the supported 16 GiB heap exactly.
+      const id=Number(descriptors[i]),lo=Number(descriptors[i+1]),hi=Number(descriptors[i+2]),n=Number(descriptors[i+3]),
+        pointer=Number(descriptors[i+4]),indexAddress=Number(descriptors[i+5]),seenAddress=Number(descriptors[i+6]);
+      if(!id||!n||!Number.isSafeInteger(id)||!Number.isSafeInteger(pointer)||
+        !Number.isSafeInteger(indexAddress)||!Number.isSafeInteger(seenAddress)||
+        pointer+n*64>heap.length||indexAddress%4||indexAddress+4>heap.length||seenAddress%4||seenAddress+4>heap.length)
         throw Error("Invalid detail record range");
       let entry=this.entries.get(id);
       if(entry&&entry.capacity<n) {

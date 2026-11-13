@@ -91,7 +91,7 @@ export class DetailShadowFilter {
   }
   // Cascade detail draw: compact all registered batches once per cascade, then
   // hand each draw its indirect arguments and compacted instance buffer.
-  cascadeJob(p, g, cascade) {
+  cascadeJob(p, g, cascade, draw) {
     if (cascade !== this.cascade) {
       this.cascade = cascade;
       const matrix = readUniform(p, 'm_WVP');
@@ -99,7 +99,12 @@ export class DetailShadowFilter {
       this.jobs = jobs.length ? this.compact(this.bundles[cascade - 1] ??= {}, jobs, matrix) : null;
       if (this.jobs) this.metrics.compacts++;
     }
-    const job = this.jobs?.get(g) ?? null;
+    let job = this.jobs?.get(g) ?? null;
+    const entry = this.entries.get(g);
+    // A shadow-only visibility list may differ from the main draw. Preserve its
+    // original instances unless the compacted input describes exactly this draw.
+    if (draw && (!entry || entry.count !== draw.count || entry.instances !== draw.instances ||
+        entry.first !== draw.first || entry.base !== draw.base)) job = null;
     if (job) this.metrics.jobs++; else this.metrics.fallbacks++;
     return job;
   }
@@ -107,7 +112,12 @@ export class DetailShadowFilter {
     const r = this.r, d = r.device;
     if (!this.pipeline) this.pipeline = d.createComputePipeline({layout: 'auto',
       compute: {module: d.createShaderModule({code: filterWGSL, label: 'X-Ray grass shadow compaction'}), entryPoint: 'main'}});
-    const valid = jobs.filter(e => e.instances * 64 <= d.limits.maxStorageBufferBindingSize);
+    const valid = jobs.filter(e => {
+      const input = r.info(e.g.attrs.get(12).buffer);
+      const bytes = e.instances * 64;
+      return bytes > 0 && bytes <= d.limits.maxStorageBufferBindingSize &&
+        input?.gpu && bytes <= input.size && bytes <= input.gpu.size;
+    });
     if (!valid.length) return null;
     const bytes = Math.ceil(valid.length * 20 / 256) * 256;
     if (!bundle.args || bundle.args.size < bytes) {
@@ -116,6 +126,8 @@ export class DetailShadowFilter {
       bundle.groups = new Map();
     }
     bundle.jobCount = valid.length;
+    bundle.requestedInstances = valid.reduce((total, entry) => total + entry.instances, 0);
+    bundle.requestedTriangles = valid.reduce((total, entry) => total + entry.instances * entry.count / 3, 0);
     bundle.outputs ??= new Map();
     const indirect = new Uint32Array(valid.length * 5), params = new Uint8Array(valid.length * 256);
     const groups = [], result = new Map();
@@ -160,6 +172,8 @@ export class DetailShadowFilter {
       }
       pass.setBindGroup(0, saved.group);
       pass.dispatchWorkgroups(Math.ceil(e.instances / 64));
+      // Protect direct-upload buffers until this compute read is submitted.
+      r.info(e.g.attrs.get(12).buffer).detailShadowReadEncoder = r.encoder;
     }
     pass.end();
     bundle.encoder = r.encoder;
@@ -201,11 +215,12 @@ export class DetailShadowFilter {
     const copies = used.map(bundle => {
       const staging = this.r.device.createBuffer({size: bundle.args.size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ});
       this.r.enc().copyBufferToBuffer(bundle.args, 0, staging, 0, staging.size);
-      return {staging, jobCount: bundle.jobCount};
+      return {staging, jobCount: bundle.jobCount,
+        requestedInstances: bundle.requestedInstances, requestedTriangles: bundle.requestedTriangles};
     });
     this.r.flush();
     const result = [];
-    for (const {staging, jobCount} of copies) {
+    for (const {staging, jobCount, requestedInstances, requestedTriangles} of copies) {
       await staging.mapAsync(GPUMapMode.READ);
       const words = new Uint32Array(staging.getMappedRange());
       let draws = 0, instances = 0, triangles = 0;
@@ -215,7 +230,7 @@ export class DetailShadowFilter {
         instances += words[i + 1];
         triangles += words[i] * words[i + 1] / 3;
       }
-      result.push({draws, instances, triangles});
+      result.push({draws, instances, triangles, requestedInstances, requestedTriangles});
       staging.unmap();
       staging.destroy();
     }

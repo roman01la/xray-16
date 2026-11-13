@@ -397,11 +397,18 @@ visible slot list. A forced-eviction test checks that a visible slot after
 the first pointer remains protected. Manual check: load the bridge save on
 the highest preset with grass enabled and repeat the route to Garbage.
 
-The glitches recurred after the pointer stride fix and still cleared with
-`rs_detail off`. SoC now uploads visible grass instance data directly while
-retaining instanced draws. Repeat the same route with grass enabled to check
-whether the glitch survives without the persistent GPU cache. Also check that
-the Advanced Video shadow quality slider can be moved and applied.
+The glitches recurred after the pointer stride fix, so the first release used
+contiguous grass uploads as a workaround. SoC now shares CoP's persistent
+records and partial gathers again. Native descriptors and visibility signatures
+preserve full wasm64 addresses, including addresses above 4 GiB.
+
+The restored path passed 2,264 sampled GPU-to-engine comparisons across the
+Cordon bridge area, sparse/maximum density resets and Cordon–Garbage–Cordon
+travel. No mismatches or WebGPU validation errors occurred. A separate sparse
+heap test exercises high addresses and forced eviction. The original reported
+save was not used to establish the precise historical corruption cause.
+Performance captures and remaining frame-pacing limitations are recorded in
+[SoC outdoor profiling](perf/SOC-OUTDOORS.md).
 
 The loot crash reached `highlight_weapons_for_ammo` on item hover. The open
 inventory now removes cells for items that the engine is about to destroy.

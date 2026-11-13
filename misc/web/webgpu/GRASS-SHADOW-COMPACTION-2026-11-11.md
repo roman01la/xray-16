@@ -59,3 +59,23 @@ scenarios remain for the manual regression pass before a hosted release.
 Evidence: sibling `mechanics-test/grass-shadow-compaction-2026-11-11/`
 (fixture output in run logs, per-phase telemetry and screenshots for both
 runs, `toggle/toggle-results.json`, capture and analysis scripts).
+
+
+## SoC direct-upload verification, 13 November 2026
+
+SoC's default renderer also uses the shared marked cascade path when direct
+sunlight is active. Persistent grass storage has since been restored with
+full-width wasm64 descriptors and validated gathers. The
+shared filter now protects pending reads of directly uploaded source buffers,
+checks source ranges and main/shadow draw agreement, and releases its resources
+when direct-upload buffers are deleted. The conservative filter kernel is
+unchanged. The forced legacy renderer has a separate depth-texture binding
+failure and remains outside this verified path.
+
+At 1080p with maximum exposed SoC settings and fixed sunny weather, a sampled
+pair of cascades retained 225,728 of 8,899,740 requested grass triangles.
+Paired fixed-view windows measured 96.18–96.58 FPS with filtering and
+62.07–62.61 with it disabled. Rotating-view improvement was smaller.
+The real-GPU correctness fixture and 33 related unit tests passed. Details,
+timing caveats, screenshots and capture locations are recorded in
+[SoC outdoor profiling](../perf/SOC-OUTDOORS.md).

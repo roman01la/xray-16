@@ -380,6 +380,16 @@ int CApplication::Run()
     emscripten_set_main_loop_arg([](void* application)
     {
         auto* app = static_cast<CApplication*>(application);
+        // Yield before starting another simulation/render frame when the GPU
+        // queue is full. Synchronous WebGPU backpressure also blocks input.
+        if (ShadowOfChernobylMode && EM_ASM_INT({
+            const pending = globalThis.__xrayWebGPU?.pendingFrameCompletion();
+            if (!pending) return 0;
+            MainLoop.pause();
+            pending.then(() => MainLoop.resume(), () => MainLoop.resume());
+            return 1;
+        }))
+            return;
         if (!g_webFramePacer.IsFrameDue(emscripten_get_now()))
             return;
         if (!app->RunFrame())

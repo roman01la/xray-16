@@ -49,3 +49,23 @@ test('disabled compaction preserves audit markers and bypasses filter jobs',()=>
   assert.equal(job(),null);
   assert.deepEqual(calls,['frame','compact']);
 });
+
+test('shadow draw mismatch falls back instead of using unrelated main-view instances',()=>{
+ const {filter,geometry}=laterCascadeOnly();
+ Object.assign(filter.entries.get(geometry),{count:12,instances:20,first:3,base:7});
+ const program={};
+ assert.ok(filter.cascadeJob(program,geometry,2,{count:12,instances:20,first:3,base:7}));
+ for(const changed of [{count:15},{instances:21},{first:4},{base:8}]){
+  assert.equal(filter.cascadeJob(program,geometry,2,{count:12,instances:20,first:3,base:7,...changed}),null);
+ }
+});
+
+test('direct-upload detail deletion releases filtering without a persistent arena',()=>{
+ let released=0,destroyed=0;
+ const token={},info={detailEncoder:{},gpu:{destroy(){destroyed++;}}};
+ const renderer={flushNativeDraws(){},flush(){},info(){return info;},
+  grassShadowFilter:{release(){released++;}},vao:{element:token},bufferGeneration:0};
+ GPUFrontend.prototype.deleteNativeBuffer.call(renderer,token);
+ assert.equal(released,1);assert.equal(destroyed,1);
+ assert.equal(renderer.grassShadowFilter,null);assert.equal(renderer.vao.element,null);
+});

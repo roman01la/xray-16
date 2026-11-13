@@ -275,7 +275,7 @@ void CDetailManager::UpdateVisibleM()
 #ifdef XR_PLATFORM_WEB
     for (int i=0;i<3;++i) {
             web_visibleState[i].resize(objects.size());
-            for (auto& state:web_visibleState[i]) { state.cursor=0;state.changed=false; }
+            for (auto& state:web_visibleState[i]) { state.cursor=0;state.changed=false;state.membershipChanged=false; }
         }
     auto appendVisible = [&](u32 group,u32 object,SlotItemVec* items) {
         auto& vis=m_visibles[group][object];auto& state=web_visibleState[group][object];

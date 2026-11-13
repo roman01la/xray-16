@@ -20,16 +20,21 @@ test('detail cache invalidates only affected object/classes, retaining unchanged
 using namespace xray::detail_cache;
 struct List {uint64_t revision=0,uploadedRevision=0;uint32_t storageIndex=0,visibleFrame=0;size_t length=1;size_t size()const{return length;}};
 int main() {
- struct Epoch {std::vector<uint64_t> revisions;size_t cursor=0;uint64_t version=0;bool changed=false;} epoch;
+ struct Epoch {std::vector<uint64_t> revisions;std::vector<uint32_t> counts;size_t cursor=0;uint64_t version=0,membershipVersion=0;bool changed=false,membershipChanged=false;} epoch;
  List v0,v1;std::vector<List*> produced;
- auto publish=[&](std::initializer_list<List*> next){epoch.cursor=0;epoch.changed=false;for(auto* item:next)appendVisible(produced,epoch,item,42);finishVisible(produced,epoch);};
+ auto publish=[&](std::initializer_list<List*> next){epoch.cursor=0;epoch.changed=false;epoch.membershipChanged=false;for(auto* item:next)appendVisible(produced,epoch,item,42);finishVisible(produced,epoch);};
  publish({&v0,&v1});assert(epoch.version==1&&v0.visibleFrame==42);
  publish({&v0,&v1});assert(epoch.version==1);
  ++v1.revision;publish({&v0,&v1});assert(epoch.version==2);
+ assert(epoch.membershipVersion==1); // Content updates preserve the ordered output.
  publish({&v1,&v0});assert(epoch.version==3);
  publish({&v0});assert(epoch.version==4&&epoch.revisions.size()==1);
  publish({});assert(epoch.version==5&&produced.empty());publish({});assert(epoch.version==5);
  publish({&v0});assert(epoch.version==6);
+ const auto membership=epoch.membershipVersion;
+ v0.storageIndex=4096;publish({&v0});assert(epoch.membershipVersion==membership);
+ ++v0.length;publish({&v0});assert(epoch.membershipVersion==membership+1);
+ ++v0.revision;publish({&v0});assert(epoch.membershipVersion==membership+1);
  PreparedFrame prepared;
  assert(!prepared.matches(0,0,1));
  prepared={7,1,42,3};
@@ -43,6 +48,10 @@ int main() {
  std::array<std::vector<uint32_t>,90> saved;
  uint32_t count;
  for(int n=0;n<90;++n){slots[n/3][n%3].storageIndex=n*16;visible[n]={&slots[n/3][n%3]};assert(updateSignature(visible[n],saved[n],count));}
+ const auto address=uint64_t(reinterpret_cast<uintptr_t>(&slots[0][0]));
+ assert(saved[0].size()==4);
+ assert(saved[0][0]==uint32_t(address));assert(saved[0][1]==uint32_t(address>>32));
+ assert(saved[0][2]==slots[0][0].storageIndex);assert(saved[0][3]==1);
  auto updates=[&]{int changed=0;for(int n=0;n<90;++n){bool dirty=updateSignature(visible[n],saved[n],count);for(auto* list:visible[n]){dirty|=needsUpload(*list);list->uploadedRevision=list->revision;}changed+=dirty;}return changed;};
  for(int frame=0;frame<100;++frame)assert(updates()==0);
  invalidate(slots[4],1,1); assert(updates()==1); // scale: one object/class
@@ -67,6 +76,23 @@ int main() {
  std::vector<List*> members;
  std::vector<uint32_t> fused, reference;
  std::mt19937 rng(0x51a7);
+ std::vector<std::pair<List*,size_t>> previousMembership;
+ for(auto* value:produced)previousMembership.emplace_back(value,value->size());
+ for(int round=0;round<2000;++round){
+   auto& item=(rng()%2)?v0:v1;
+   item.length=1+rng()%4; ++item.revision; item.storageIndex=rng();
+   std::vector<List*> next;
+   for(unsigned n=0,size=rng()%4;n<size;++n)next.push_back((rng()%2)?&v0:&v1);
+   std::vector<std::pair<List*,size_t>> expectedMembership;
+   for(auto* value:next)expectedMembership.emplace_back(value,value->size());
+   const bool expectedChange=expectedMembership!=previousMembership;
+   const auto before=epoch.membershipVersion;
+   epoch.cursor=0;epoch.changed=false;epoch.membershipChanged=false;
+   for(auto* value:next)appendVisible(produced,epoch,value,43+round);
+   finishVisible(produced,epoch);
+   assert((epoch.membershipVersion!=before)==expectedChange);
+   previousMembership=expectedMembership;
+ }
  for(uint32_t i=0;i<records.size();++i){records[i].storageIndex=i*16;members.push_back(&records[i]);}
 
  for(int round=0;round<2000;++round){
@@ -74,16 +100,41 @@ int main() {
    if(round%7==0 && members.size()>4)members.pop_back();
    if(round%11==0 && members.size()<records.size())members.push_back(&records[members.size()]);
    auto* changed=members[rng()%members.size()];++changed->revision;changed->length=1+rng()%4;
-   bool dirty=fused.size()!=members.size()*3;fused.resize(members.size()*3);
+   bool dirty=fused.size()!=members.size()*SignatureWords;fused.resize(members.size()*SignatureWords);
    uint32_t total=0;
-   for(size_t i=0;i<members.size();++i){dirty|=updateSignatureEntry(fused.data()+i*3,*members[i]);total+=members[i]->size();}
+   for(size_t i=0;i<members.size();++i){dirty|=updateSignatureEntry(fused.data()+i*SignatureWords,*members[i]);total+=members[i]->size();}
    // Simulate allocation changes inside upload, after the first comparison.
    changed->storageIndex=round*32;
-   for(size_t i=0;i<members.size();++i)if(members[i]==changed)dirty|=updateSignatureEntry(fused.data()+i*3,*members[i]);
+   for(size_t i=0;i<members.size();++i)if(members[i]==changed)dirty|=updateSignatureEntry(fused.data()+i*SignatureWords,*members[i]);
    uint32_t expectedTotal=0;bool expected=updateSignature(members,reference,expectedTotal);
    assert(fused==reference);assert(total==expectedTotal);assert(!expected||dirty);
-   for(size_t i=0;i<members.size();++i)assert(!updateSignatureEntry(fused.data()+i*3,*members[i]));
+   for(size_t i=0;i<members.size();++i)assert(!updateSignatureEntry(fused.data()+i*SignatureWords,*members[i]));
  }
+
+ // Preserve the exact source/destination mapping through merged full and sparse updates.
+ auto expand=[](const std::vector<uint32_t>& ranges){
+   std::vector<std::pair<uint32_t,uint32_t>> result;
+   for(size_t i=0;i<ranges.size();i+=4)
+     for(uint32_t j=0;j<ranges[i+1];++j)result.emplace_back(ranges[i]+j,ranges[i+2]+j);
+   return result;
+ };
+ for(int round=0;round<2000;++round){
+   std::vector<uint32_t> ranges;
+   uint32_t source=0,destination=0;
+   for(unsigned i=0;i<100;++i){
+     uint32_t length=1+rng()%16;
+     source+=rng()%3; destination+=rng()%2;
+     ranges.insert(ranges.end(),{source,length,destination,0});
+     source+=length; destination+=length;
+   }
+   const auto expected=expand(ranges);const auto oldSize=ranges.size();
+   coalesceRanges(ranges);
+   assert(ranges.size()<=oldSize);assert(expand(ranges)==expected);
+ }
+ std::vector<uint32_t> boundary={2097150,2,0,0,2097152,4,2,0,2097156,4,6,0};
+ const auto expected=expand(boundary);coalesceRanges(boundary);
+ assert(boundary.size()==8);assert(expand(boundary)==expected);
+ std::vector<uint32_t> empty;coalesceRanges(empty);assert(empty.empty());
 
 }
 

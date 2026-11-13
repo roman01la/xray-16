@@ -119,3 +119,9 @@ Manual regression coverage still includes existing-save loading/saving, equipmen
 consumables, combat, NPC interactions, level travel, and Auto/custom FPS selection
 across monitors. Original engine networking classes remain where part of X-Ray;
 no custom gameplay service or browser network adapter is built or shipped.
+
+## Automated performance investigations
+
+Use the reusable [background Chrome profiling harness](perf/README.md) to load a
+checkpoint, measure frame times, capture page/worker CPU profiles and GPU traces,
+and compare optimized local releases under matching conditions.
