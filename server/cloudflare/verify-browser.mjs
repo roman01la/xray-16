@@ -50,6 +50,11 @@ try{
 })()`});
  if(result.exceptionDetails)throw Error(result.exceptionDetails.exception?.description||result.exceptionDetails.text);
  const verified=result.result.value;
+ // Exercise the actual startup bundle, with the compatibility gate stopping
+ // the multi-gigabyte installation. This catches top-level bootstrap errors.
+ await send('Page.addScriptToEvaluateOnNewDocument',{source:"Object.defineProperty(navigator,'gpu',{value:undefined});"});
+ await send('Network.setBlockedURLs',{urls:['*/analytics/event','*/crash-report']});
+ verified.startup=[];
  if(verified.titles.length>1){
   for(const {game} of verified.titles){
    await send('Page.navigate',{url:base});
@@ -59,9 +64,17 @@ try{
     const loaded=new Promise(resolve=>frame.addEventListener('load',resolve,{once:true}));
     document.querySelector('button[data-game="${game}"]').click();
     await loaded;
-    return location.pathname==='/' && !frame.hidden && frame.contentDocument.documentElement.dataset.game==='${game}';
+    if(location.pathname!=='/' || frame.hidden || frame.contentDocument.documentElement.dataset.game!=='${game}')return false;
+    for(let attempt=0;attempt<100;attempt++){
+     const page=frame.contentDocument;
+     if(page.querySelector('#boot-status').textContent.includes('This browser cannot run the game.'))
+      return !page.querySelector('#choose-game').hidden && page.querySelector('#start-game').disabled;
+     await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    throw Error('Startup did not reach the compatibility gate for ${game}');
    })()`});
    if(clicked.exceptionDetails || !clicked.result.value)throw Error('Picker did not open '+game);
+   verified.startup.push({game,bootstrapExecuted:true,compatibilityGate:true});
   }
  }
  console.log(JSON.stringify(verified,null,2));

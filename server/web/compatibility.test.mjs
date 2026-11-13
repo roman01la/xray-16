@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import {runInNewContext} from 'node:vm';
 import {checkGameCompatibility,showCompatibilityFailure} from './compatibility.mjs';
 const supported=()=>({
  isSecureContext:true,crossOriginIsolated:true,SharedArrayBuffer,WebAssembly,Worker:class{},OffscreenCanvas:class{},
@@ -49,4 +50,25 @@ test('gate precedes release downloads and runtime imports; publishing keeps it i
  assert.match(publish,/bundle-web\.mjs/);
  const bundler=await readFile(new URL('../../misc/web/tools/bundle-web.mjs',import.meta.url),'utf8');
  assert.match(bundler,/'game-ui\.mjs'/);assert.match(bundler,/bundle:true/);
+});
+
+test('startup resolves its own iframe when showing the game-selection link',async()=>{
+ const source=await readFile(new URL('./game-ui.mjs',import.meta.url),'utf8');
+ const bootstrap=source.slice(0,source.indexOf('const managingStorage='))
+  .replace(/^import .*;\n/gm,'').replace("import('./crash-reporter.mjs')","importModule()");
+ for(const game of ['cop','soc','cs'])for(const frameElement of [null,{}])for(const picker of ['0','1']){
+  const nodes=new Map();
+  const node=selector=>{
+   if(!nodes.has(selector))nodes.set(selector,{hidden:false,addEventListener(){},focus(){}});
+   return nodes.get(selector);
+  };
+  runInNewContext(bootstrap,{
+   window:{frameElement,addEventListener(){}},
+   document:{documentElement:{dataset:{game}},querySelector:node,addEventListener(){}},
+   location:{search:'?picker='+picker},URLSearchParams,
+   startCampaignAnalytics(){},installBrowserWindowMode(){},
+   importModule:async()=>({installCrashReporter(){}}),console,
+  });
+  assert.equal(node('#choose-game').hidden,picker!=='1'||!frameElement);
+ }
 });

@@ -62,7 +62,7 @@ capture.addEventListener('click',async()=>{
 });
 
 const params=new URLSearchParams(location.search);
-document.querySelector('#choose-game').hidden=params.get('picker')!=='1'||!frame;
+document.querySelector('#choose-game').hidden=params.get('picker')!=='1'||!window.frameElement;
 const managingStorage=params.get('storage')==='manage';
 const importingSaves=params.get('saves')==='import';
 const importButton=document.querySelector('#boot-import');
