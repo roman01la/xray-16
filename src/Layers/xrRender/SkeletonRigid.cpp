@@ -5,6 +5,9 @@
 #include "SkeletonCustom.h"
 #ifdef XR_PLATFORM_WEB
 #include "ConservativeBoneBounds.h"
+#ifndef MASTER_GOLD
+#include "SkeletonAnimated.h"
+#endif
 #endif
 
 namespace xray::render::RENDER_NAMESPACE
@@ -206,6 +209,50 @@ void CKinematics::CalculateBonesAdditionalTransforms(
     }
 }
 
+#if defined(XR_PLATFORM_WEB) && !defined(MASTER_GOLD)
+namespace
+{
+bool ValidBoneTransform(Fmatrix& transform)
+{
+    if (_valid(transform))
+        return true;
+
+    // Wasm preserves subnormals, unlike the engine's x86 flush-to-zero mode.
+    // Rotation and shell-relative pose math can leave this harmless roundoff.
+    // Keep NaNs and infinities visible to the assertion.
+    for (auto& row : transform.m)
+        for (float& component : row)
+            if (std::fpclassify(component) == FP_SUBNORMAL)
+                component = 0.f;
+    return _valid(transform);
+}
+} // namespace
+
+std::string CKinematics::DescribeInvalidBone(const CBoneData* bone, const Fmatrix* parent, u8 channel_mask)
+{
+    std::string_view model = crash_model_name.c_str() ? crash_model_name.c_str() : "unknown";
+    const auto separator = model.find_last_of("/\\");
+    if (separator != std::string_view::npos)
+        model.remove_prefix(separator + 1);
+    std::string description = make_string("model=%.160s bone=%.80s id=%u mask=0x%02x parent_valid=%d offsets=%u",
+        model.data(), bone->name.c_str(),
+        unsigned(bone->GetSelfID()), unsigned(channel_mask), _valid(*parent), unsigned(m_bones_offsets.size()));
+    if (auto* animated = PKinematicsAnimated(this))
+    {
+        const auto& blends = animated->LL_GetBlendInstance(bone->GetSelfID()).blend_vector();
+        description += make_string(" blends=%u", unsigned(blends.size()));
+        for (size_t i = 0; i < blends.size() && i < 6; ++i)
+        {
+            const auto* blend = blends[i];
+            description += make_string(" [motion=%u/%u channel=%u time=%.3g weight=%.3g]",
+                unsigned(blend->motionID.slot), unsigned(blend->motionID.idx), unsigned(blend->channel),
+                blend->timeCurrent, blend->blendAmount);
+        }
+    }
+    return description;
+}
+#endif
+
 void CKinematics::CLBone(const CBoneData* bd, CBoneInstance& bi, const Fmatrix* parent, u8 channel_mask /*= (1<<0)*/)
 {
     ZoneScoped;
@@ -217,19 +264,35 @@ void CKinematics::CLBone(const CBoneData* bd, CBoneInstance& bi, const Fmatrix* 
         if (bi.callback_overwrite())
         {
             if (bi.callback())
+            {
                 bi.callback()(&bi);
+#if defined(XR_PLATFORM_WEB) && !defined(MASTER_GOLD)
+                R_ASSERT3(ValidBoneTransform(bi.mTransform), "physics callback produced an invalid bone matrix",
+                    DescribeInvalidBone(bd, parent, channel_mask).c_str());
+#endif
+            }
         }
         else
         {
             BuildBoneMatrix(bd, bi, parent, channel_mask);
 #ifndef MASTER_GOLD
+#ifdef XR_PLATFORM_WEB
+            R_ASSERT3(ValidBoneTransform(bi.mTransform), "anim kils bone matrix",
+                DescribeInvalidBone(bd, parent, channel_mask).c_str());
+#else
             R_ASSERT2(_valid(bi.mTransform), "anim kils bone matrix");
+#endif
 #endif // #ifndef MASTER_GOLD
             if (bi.callback())
             {
                 bi.callback()(&bi);
 #ifndef MASTER_GOLD
+#ifdef XR_PLATFORM_WEB
+                R_ASSERT3(ValidBoneTransform(bi.mTransform), "callback produced an invalid bone matrix",
+                    DescribeInvalidBone(bd, parent, channel_mask).c_str());
+#else
                 R_ASSERT2(_valid(bi.mTransform), make_string("callback kils bone matrix bone: %s ", bd->name.c_str()));
+#endif
 #endif // #ifndef MASTER_GOLD
             }
         }

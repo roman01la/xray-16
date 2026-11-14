@@ -4,13 +4,17 @@ if (typeof WorkerGlobalScope !== 'undefined' && !globalThis.__xrayErrorHook) {
     const name = globalThis.__xrayCrashChannelName;
     if (!name || !message) return;
     const channel = new BroadcastChannel(name);
-    channel.postMessage({type: 'crash', kind, message, stack});
+    channel.postMessage({
+      type: 'crash', kind, message, stack,
+      context: globalThis.__xrayCrashRendererContext?.(),
+    });
     channel.close();
   };
   addEventListener('error', (e) => {
-    const stack = e.error && e.error.stack ? e.error.stack : '(no stack)';
+    const location = e.filename && e.lineno ? `at ${e.filename}:${e.lineno}:${e.colno || 0}` : '';
+    const stack = e.error?.stack || location;
     console.error('[worker trap] ' + e.message + '\n' + stack);
-    globalThis.__xrayReportWorkerCrash('worker', e.message, e.error?.stack);
+    globalThis.__xrayReportWorkerCrash('worker', e.message, stack);
   });
   addEventListener('unhandledrejection', (e) => {
     globalThis.__xrayReportWorkerCrash('worker', e.reason?.message || String(e.reason), e.reason?.stack);

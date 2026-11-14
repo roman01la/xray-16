@@ -548,7 +548,7 @@ void CInventory::Activate_deffered	(u32 slot, u32 _frame)
 
 void CInventory::Activate(u16 slot, bool bForce)
 {
-    if (!OnServer())
+    if (!OnServer() || slot > LastSlot())
     {
         return;
     }
@@ -572,8 +572,6 @@ void CInventory::Activate(u16 slot, bool bForce)
 #endif
         return;
     }
-
-    R_ASSERT2(slot <= LastSlot(), make_string("wrong slot number. Slot = %d, LastSlot() = %d", slot, LastSlot()).c_str());
 
     if (slot != NO_ACTIVE_SLOT && !m_slots[slot].CanBeActivated())
         return;
@@ -730,6 +728,8 @@ bool CInventory::Action(u16 cmd, u32 flags)
     break;
     case kARTEFACT:
     {
+        if (ARTEFACT_SLOT > LastSlot())
+            break;
         b_send_event = true;
         if (flags & CMD_START)
         {

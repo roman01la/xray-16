@@ -141,9 +141,12 @@ GAME_DATA server/web/analytics-maps/GAME`, where `GAME` is `cop`, `soc` or `cs` 
 
 Published releases report fatal assertions, engine worker failures, WebGPU device
 loss and launch exceptions through the same-origin `/crash-report` endpoint. The
-Worker forwards the game, release, map when available, and error stack to the
-project identified by `SENTRY_DSN`. Reporting runs on crashes only. It adds no
-Sentry browser SDK, tracing, or replay.
+Worker forwards the game, release, map, and phase (startup, loading, or gameplay)
+when available to the project identified by `SENTRY_DSN`. Reports include the
+stack captured on the faulting thread and, when available, the browser and OS
+family, coarse GPU details, render size, frame count, and GPU validation error
+count. Skeletal animation assertions include the model, bone, and active blends.
+Reporting runs on crashes only, without a Sentry browser SDK, tracing, or replay.
 
 Pass `--wasm-symbols BIN/xr_3da.js.symbols` when publishing to keep the exact
 release Wasm and its symbol map under `private-symbols/<release>/`. Use the

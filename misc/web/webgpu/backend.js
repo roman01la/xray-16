@@ -83,6 +83,18 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
     powerPreference: "high-performance",
   });
   if (!adapter) throw Error("No WebGPU adapter");
+  globalThis.__xrayCrashRendererContext = () => {
+    const renderer = globalThis.__xrayWebGPU;
+    return {
+      gpuVendor: adapter.info?.vendor,
+      gpuArchitecture: adapter.info?.architecture,
+      gpuFallback: adapter.info?.isFallbackAdapter ?? adapter.isFallbackAdapter,
+      renderWidth: renderer?.canvas.width,
+      renderHeight: renderer?.canvas.height,
+      renderedFrames: diagnostics.frames,
+      validationErrors: diagnostics.validationErrors,
+    };
+  };
   const features = [
     "texture-compression-bc",
     "texture-compression-bc-sliced-3d",

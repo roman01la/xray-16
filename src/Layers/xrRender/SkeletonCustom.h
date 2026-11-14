@@ -110,6 +110,10 @@ class CKinematics : public FHierrarhyVisual, public IKinematics
 protected: //--#SM+#--
     DEFINE_VECTOR(KinematicsABT::additional_bone_transform, BONE_TRANSFORM_VECTOR, BONE_TRANSFORM_VECTOR_IT)
     BONE_TRANSFORM_VECTOR m_bones_offsets;
+#if defined(XR_PLATFORM_WEB) && !defined(MASTER_GOLD)
+    shared_str crash_model_name;
+    std::string DescribeInvalidBone(const CBoneData* bone, const Fmatrix* parent, u8 channel_mask);
+#endif
 
 public:
 #ifdef DEBUG

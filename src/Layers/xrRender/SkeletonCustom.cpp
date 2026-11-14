@@ -167,6 +167,9 @@ void CKinematics::Load(const char* N, IReader* data, u32 dwFlags)
 {
     // Msg              ("skeleton: %s",N);
     inherited::Load(N, data, dwFlags);
+#if defined(XR_PLATFORM_WEB) && !defined(MASTER_GOLD)
+    crash_model_name = N;
+#endif
 
     pUserData = nullptr;
     m_lod = nullptr;
@@ -413,6 +416,9 @@ void CKinematics::Copy(dxRender_Visual* P)
 
     CKinematics* pFrom = dynamic_cast<CKinematics*>(P);
     VERIFY(pFrom);
+#if defined(XR_PLATFORM_WEB) && !defined(MASTER_GOLD)
+    crash_model_name = pFrom->crash_model_name;
+#endif
     pUserData = pFrom->pUserData;
     bones = pFrom->bones;
     iRoot = pFrom->iRoot;

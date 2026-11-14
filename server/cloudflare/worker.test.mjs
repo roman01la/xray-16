@@ -106,7 +106,10 @@ test('crash ingestion forwards one scrubbed fatal event and rejects invalid repo
  const report = {
   game:'soc', release, kind:'assertion', level:'l01_escape\\',
   message:'Expression : motion_ID.valid()\nFunction : ID_Cycle\nFile : /Users/private user/source/SkeletonAnimated.cpp',
-  stack:`Error: unreachable\n    at abort (${env.ORIGIN}/releases/${release}/xr_3da.js?private=1:3:3082)\n    at xr_3da.wasm:0x849659`,
+  stack:`Error: unreachable\n    at abort (${env.ORIGIN}/releases/${release}/xr_3da.js?private=1:3:3082)\n    at xr_3da.wasm:0x849659\n    at wasm://wasm/build:wasm-function[410]:0x849611\nwasm-function[415]:0x849689`,
+  context:{phase:'gameplay',browser:'Chrome',browserMajor:157,os:'Windows',
+   gpuVendor:'amd',gpuArchitecture:'rdna-2',gpuFallback:false,renderWidth:1920,renderHeight:1080,
+   renderedFrames:321,validationErrors:2,privateToken:'private',userAgent:'private'},
  };
  const request = (body, origin=env.ORIGIN) => new Request(env.ORIGIN+'/crash-report',{
   method:'POST', headers:{Origin:origin,'Content-Type':'application/json','CF-Connecting-IP':'192.0.2.2'},body,
@@ -121,9 +124,14 @@ test('crash ingestion forwards one scrubbed fatal event and rejects invalid repo
   assert.equal(header.event_id,crash.event_id);
   assert.equal(item.type,'event');
   assert.equal(crash.release,release);
-  assert.deepEqual(crash.tags,{game:'soc',kind:'assertion',map:'l01_escape'});
+  assert.deepEqual(crash.tags,{game:'soc',kind:'assertion',map:'l01_escape',phase:'gameplay'});
+  assert.deepEqual(crash.contexts.xray,{phase:'gameplay',browser:'Chrome',browserMajor:157,os:'Windows',
+   gpuVendor:'amd',gpuArchitecture:'rdna-2',gpuFallback:false,renderWidth:1920,renderHeight:1080,
+   renderedFrames:321,validationErrors:2});
   assert.deepEqual(crash.fingerprint,['soc','assertion','motion_ID.valid()','ID_Cycle']);
   assert.deepEqual(crash.exception.values[0].stacktrace.frames,[
+   {filename:'xr_3da.wasm',instruction_addr:'0x849689',in_app:true,function:'wasm-function[415]'},
+   {filename:'xr_3da.wasm',instruction_addr:'0x849611',in_app:true,function:'wasm-function[410]'},
    {filename:'xr_3da.wasm',instruction_addr:'0x849659',in_app:true},
    {function:'abort',filename:'xr_3da.js',lineno:3,colno:3082,in_app:true},
   ]);

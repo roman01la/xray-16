@@ -75,15 +75,20 @@ AssertionResult xrDebug::ShowMessage(pcstr title, pcstr message, bool simpleMode
     }
 #elif defined(XR_PLATFORM_WEB)
     emscripten_log(EM_LOG_ERROR | EM_LOG_CONSOLE, "%s: %s", title, message);
+    char stack[8192]{};
+    if (xr_stricmp(title, "fatal error") == 0)
+        emscripten_get_callstack(EM_LOG_JS_STACK | EM_LOG_NO_PATHS, stack, sizeof(stack));
     MAIN_THREAD_EM_ASM({
         const title = UTF8ToString($0);
         const message = UTF8ToString($1);
         if (title.toLowerCase() === "fatal error" && document.querySelector("#boot")) {
-            window.dispatchEvent(new CustomEvent("xray-crash", {detail:{kind:"assertion", message}}));
+            window.dispatchEvent(new CustomEvent("xray-crash", {
+                detail: {kind: "assertion", message, stack: UTF8ToString($2)}
+            }));
         } else {
             alert(title + "\n\n" + message);
         }
-    }, title, message);
+    }, title, message, stack);
     return simpleMode ? AssertionResult::ok : AssertionResult::abort;
 #else
     if (simpleMode)
