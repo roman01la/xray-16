@@ -582,6 +582,28 @@ float ValleyAngle( int2 u2ScreenCoord )
 #else
 
 //=================================================================================================================================
+#if defined(XR_WEBGPU_FRAGMENT) && SSAO_QUALITY >= 3
+float hdao_camera_depth(int2 coord)
+{
+#ifdef GBUFFER_OPTIMIZATION
+    float4 packed = texelFetch(g_txDepth, coord, MSAA_SAMPLE_INDEX);
+    return packed.z + packed.x * g_fHDAONormalScale;
+#else
+    return texelFetch(g_txDepth, coord, MSAA_SAMPLE_INDEX).z +
+        texelFetch(g_txNormal, coord, MSAA_SAMPLE_INDEX).z * g_fHDAONormalScale;
+#endif
+}
+
+float hdao_valley(int2 center, int2 offset, int2 maxCoord, float centerDepth)
+{
+    float2 diff = centerDepth - float2(
+        hdao_camera_depth(clamp(center + offset, int2(0), maxCoord)),
+        hdao_camera_depth(clamp(center - offset, int2(0), maxCoord)));
+    return all(lessThan(diff, float2(g_fHDAORejectRadius))) &&
+        all(greaterThan(diff, float2(g_fHDAOAcceptRadius))) ? 1.0 : 0.0;
+}
+#endif
+
 // HDAO PS: Performs valley detection in Camera Z space, and offsets by the Z 
 // component of the camera space normal
 //=================================================================================================================================
@@ -619,6 +641,66 @@ float	calc_new_hdao( float3 P, float3 N, float2 tc, float2 tcJ, uint iSample)
 	// Compute screen coord, and store off the inverse of the RT Size
 	u2CenterScreenCoord = int2( floor( tc * g_f2RTSize ) );
 	
+#ifdef XR_WEBGPU_FRAGMENT
+    const int2 maxCoord = int2(g_f2RTSize) - int2(1);
+    fCenterZ = hdao_camera_depth(u2CenterScreenCoord);
+    if (fCenterZ <= 0.5)
+        return 1.0;
+    fDot = ValleyAngle(u2CenterScreenCoord);
+
+    // Literal offsets keep the sample pattern out of per-fragment indexed storage.
+#define XR_HDAO_VALLEY(x, y, weight) \
+    fOcclusion += hdao_valley(u2CenterScreenCoord, int2(x, y), maxCoord, fCenterZ) * weight;
+    XR_HDAO_VALLEY(  0, -11, 0.1538)
+    XR_HDAO_VALLEY(  2, -10, 0.2155)
+    XR_HDAO_VALLEY(  0,  -9, 0.3077)
+    XR_HDAO_VALLEY(  5,  -9, 0.2080)
+    XR_HDAO_VALLEY(  2,  -8, 0.3657)
+    XR_HDAO_VALLEY(  7,  -8, 0.1823)
+    XR_HDAO_VALLEY(  0,  -7, 0.4615)
+    XR_HDAO_VALLEY(  5,  -7, 0.3383)
+    XR_HDAO_VALLEY(  2,  -6, 0.5135)
+    XR_HDAO_VALLEY(  7,  -6, 0.2908)
+    XR_HDAO_VALLEY(  8,  -6, 0.2308)
+    XR_HDAO_VALLEY(  0,  -5, 0.6154)
+    XR_HDAO_VALLEY(  5,  -5, 0.4561)
+    XR_HDAO_VALLEY( 10,  -5, 0.1400)
+    XR_HDAO_VALLEY(  2,  -4, 0.6560)
+    XR_HDAO_VALLEY(  7,  -4, 0.3798)
+    XR_HDAO_VALLEY(  0,  -3, 0.7692)
+    XR_HDAO_VALLEY(  5,  -3, 0.5515)
+    XR_HDAO_VALLEY( 10,  -3, 0.1969)
+    XR_HDAO_VALLEY(  2,  -2, 0.7824)
+    XR_HDAO_VALLEY(  7,  -2, 0.4400)
+    XR_HDAO_VALLEY(  0,  -1, 0.9231)
+    XR_HDAO_VALLEY(  5,  -1, 0.6078)
+    XR_HDAO_VALLEY( 10,  -1, 0.2269)
+    XR_HDAO_VALLEY(  2,   0, 0.8462)
+    XR_HDAO_VALLEY(  7,   0, 0.4615)
+    XR_HDAO_VALLEY(  5,   1, 0.6078)
+    XR_HDAO_VALLEY( 10,   1, 0.2269)
+    XR_HDAO_VALLEY(  2,   2, 0.7824)
+    XR_HDAO_VALLEY(  7,   2, 0.4400)
+    XR_HDAO_VALLEY(  5,   3, 0.5515)
+    XR_HDAO_VALLEY( 10,   3, 0.1969)
+    XR_HDAO_VALLEY(  2,   4, 0.6560)
+    XR_HDAO_VALLEY(  7,   4, 0.3798)
+    XR_HDAO_VALLEY(  5,   5, 0.4561)
+    XR_HDAO_VALLEY( 10,   5, 0.1400)
+    XR_HDAO_VALLEY(  2,   6, 0.5135)
+    XR_HDAO_VALLEY(  7,   6, 0.2908)
+    XR_HDAO_VALLEY(  5,   7, 0.3383)
+    XR_HDAO_VALLEY(  6,   7, 0.2908)
+    XR_HDAO_VALLEY( 10,   7, 0.0610)
+    XR_HDAO_VALLEY(  2,   8, 0.3657)
+    XR_HDAO_VALLEY(  7,   8, 0.1823)
+    XR_HDAO_VALLEY(  5,   9, 0.2080)
+    XR_HDAO_VALLEY(  2,  10, 0.2155)
+    XR_HDAO_VALLEY(  7,  10, 0.0610)
+    XR_HDAO_VALLEY(  5,  11, 0.0705)
+    XR_HDAO_VALLEY(  2,  12, 0.0642)
+#undef XR_HDAO_VALLEY
+#else
 	// Get the general valley angle, to scale the result by 
 	fDot = ValleyAngle( u2CenterScreenCoord );
 
@@ -655,6 +737,8 @@ float	calc_new_hdao( float3 P, float3 N, float2 tc, float2 tcJ, uint iSample)
 		fOcclusion += f2Compare.x * f2Compare.y * g_fHDAOSampleWeights[iValley];	
 	}
 					
+#endif
+
 	// Finally calculate the HDAO occlusion value
 	fOcclusion /= g_fWeightTotal;
 	fOcclusion *= g_fHDAOIntensity * fDot;

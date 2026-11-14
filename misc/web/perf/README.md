@@ -43,8 +43,8 @@ node misc/web/perf/run.mjs \
 
 `--game` accepts `cop`, `soc` or `cs`. A checkpoint is the existing private harness
 format containing `config` (user.ltx text) and `save` (base64 save bytes).
-Alternatively use `--save checkpoint.scop --config user.ltx`. SoC uses `.sav`,
-while CoP and CS use `.scop`. Fixtures must belong to the selected
+Alternatively use `--save FILE --config user.ltx`. SoC and CS use `.sav`,
+while CoP uses `.scop`. Fixtures must belong to the selected
 game. They stay outside Git and are never uploaded.
 
 `--new-game` starts a new game and exports a reusable `checkpoint.json` after

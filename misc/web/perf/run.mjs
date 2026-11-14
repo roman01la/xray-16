@@ -33,6 +33,7 @@ const viewport=scenario.viewport??{width:1920,height:1080};
 if(![viewport.width,viewport.height].every(v=>Number.isInteger(v)&&v>=320&&v<=8192))throw Error('Invalid viewport.');
 if(scenario.game && scenario.game!==args.game)throw Error('Scenario belongs to another game.');
 if(scenario.setupLua!==undefined && (typeof scenario.setupLua!=='string'||scenario.setupLua.length>32000))throw Error('Invalid setupLua.');
+const saveName=args.game==='cop'?'perfbench.scop':'perfbench.sav';
 const action=scenario.action;
 if(action && (action.type!=='holdKey'||!Number.isInteger(action.keyCode)||typeof action.key!=='string'||typeof action.code!=='string'))
   throw Error('An action must be holdKey with key, code and keyCode.');
@@ -175,7 +176,7 @@ try{
     const write=async(dir,name,bytes)=>{const stream=await(await dir.getFileHandle(name,{create:true})).createWritable();await stream.write(bytes);await stream.close();};
     await write(app,'user.ltx',${JSON.stringify(config)});
     const saved=${JSON.stringify(save?.toString('base64')??null)};
-    if(saved)await write(saves,${JSON.stringify(args.game==='soc'?'perfbench.sav':'perfbench.scop')},Uint8Array.from(atob(saved),x=>x.charCodeAt(0)));
+    if(saved)await write(saves,${JSON.stringify(saveName)},Uint8Array.from(atob(saved),x=>x.charCodeAt(0)));
     const scripts=await(await game.getDirectoryHandle('gamedata',{create:true})).getDirectoryHandle('scripts',{create:true});
     await write(scripts,'xray_perf_probe.script',${JSON.stringify(setup)});
     document.querySelector('#extra-args').value=${JSON.stringify((args['new-game']?'-start server(all/single/alife/new) client(localhost)':'-start server(perfbench/single/alife/load) client(localhost)')+' '+args['engine-args'])};
@@ -205,7 +206,7 @@ try{
       throw Error('Setting was not applied: '+name+' expected '+expected+' received '+actual);
   }
   if(args['new-game']){
-    const saved=await evaluate(`(async()=>{const root=await navigator.storage.getDirectory(),game=await root.getDirectoryHandle('stream-${args.game}'),dir=await(await game.getDirectoryHandle('_appdata_')).getDirectoryHandle('savedgames');const handle=await dir.getFileHandle(${JSON.stringify(args.game==='soc'?'perfbench.sav':'perfbench.scop')});const bytes=new Uint8Array(await(await handle.getFile()).arrayBuffer());let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s);})()`);
+    const saved=await evaluate(`(async()=>{const root=await navigator.storage.getDirectory(),game=await root.getDirectoryHandle('stream-${args.game}'),dir=await(await game.getDirectoryHandle('_appdata_')).getDirectoryHandle('savedgames');const handle=await dir.getFileHandle(${JSON.stringify(saveName)});const bytes=new Uint8Array(await(await handle.getFile()).arrayBuffer());let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s);})()`);
     await writeFile(join(output,'checkpoint.json'),JSON.stringify({config:effective,save:saved}));
     run.environment.checkpointHash=hash(Buffer.from(saved,'base64'));
   }

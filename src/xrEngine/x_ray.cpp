@@ -382,7 +382,7 @@ int CApplication::Run()
         auto* app = static_cast<CApplication*>(application);
         // Yield before starting another simulation/render frame when the GPU
         // queue is full. Synchronous WebGPU backpressure also blocks input.
-        if (ShadowOfChernobylMode && EM_ASM_INT({
+        if ((ShadowOfChernobylMode || ClearSkyMode) && EM_ASM_INT({
             const pending = globalThis.__xrayWebGPU?.pendingFrameCompletion();
             if (!pending) return 0;
             MainLoop.pause();

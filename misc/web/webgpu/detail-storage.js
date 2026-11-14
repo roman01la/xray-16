@@ -195,7 +195,8 @@ export class DetailStorage {
     if(changed||!info.detailRangeBuffer) {
       let end=0, expandedRecords=0;
       for(let i=0;i<ranges.length;i+=4) {
-        const [source,n,first,reserved]=ranges.subarray(i,i+4);
+        const source = ranges[i], n = ranges[i + 1];
+        const first = ranges[i + 2], reserved = ranges[i + 3];
         const page=this.pages[source>>>21];
         if(!page||!n||(partial?first<end:first!==end)||(partial&&first+n>count)||reserved||((source&2097151)+n)>page.capacity)throw Error('Invalid detail range span');
         end=first+n;expandedRecords+=n;
