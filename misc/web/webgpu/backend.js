@@ -277,7 +277,7 @@ export class GPUFrontend {
       detailChangedBatches:changedBatches,detailMembershipChanges:membershipChanges,detailContentChanges:contentChanges}))
       profile[key] = (profile[key] || 0) + value;
   }
-  recordEngineTimings(simulation, render, wait, vsync, limitMs, gameplay = false) {
+  recordEngineTimings(simulation, render, wait, vsync, limitMs, gameplay = false, luaMs = -1, luaGcMs = -1) {
     const now = performance.now(), previous = this.analyticsLast;
     this.analyticsLast = gameplay && this.analyticsVisible !== false ? now : null;
     if (this.analyticsLast !== null && previous != null) {
@@ -291,9 +291,12 @@ export class GPUFrontend {
     }
     this.framePacing = {vsync: !!vsync, limitMs};
     if (!phaseProfileEnabled && !telemetryAdapter) return;
-    const e = (this.engineProfile ??= { count: 0, simulation: 0, render: 0, wait: 0 });
+    const e = (this.engineProfile ??= { count: 0, simulation: 0, render: 0, wait: 0, luaCount: 0, lua: 0, luaGc: 0 });
     e.count++; e.simulation += simulation; e.render += render; e.wait += wait;
-    if (telemetryAdapter) this.framePacing = {vsync: !!vsync, limitMs};
+    if (luaMs >= 0 && luaGcMs >= 0) {
+      e.luaCount++; e.lua += luaMs; e.luaGc += luaGcMs;
+    }
+    return Boolean(telemetryAdapter);
   }
   id(o) {
     if (!o) return 0;
@@ -2248,6 +2251,10 @@ export class GPUFrontend {
         diagnostics.profile.engineSimulationMs = e.simulation / e.count;
         diagnostics.profile.engineRenderMs = e.render / e.count;
         diagnostics.profile.engineWaitMs = e.wait / e.count;
+        if (e.luaCount) {
+          diagnostics.profile.engineLuaMs = e.lua / e.luaCount;
+          diagnostics.profile.engineLuaGcMs = e.luaGc / e.luaCount;
+        }
         this.engineProfile = null;
       }
       for (const k in profile) profile[k] = 0;
@@ -2268,6 +2275,7 @@ export class GPUFrontend {
         timeMs: performance.timeOrigin + now, maxFrameMs,
         width: this.canvas.width, height: this.canvas.height, pacing: this.framePacing,
         simulationMs: diagnostics.profile.engineSimulationMs, renderMs: diagnostics.profile.engineRenderMs,
+        luaMs: diagnostics.profile.engineLuaMs, luaGcMs: diagnostics.profile.engineLuaGcMs,
         waitMs: diagnostics.profile.engineWaitMs, gpuMs: this.timer?.ms || null,
         validationErrors: diagnostics.validationErrors,
       } : {fps: diagnostics.fps,adapter:analyticsAdapter,gameplayPerformance:this.analyticsFrames,

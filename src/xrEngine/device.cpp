@@ -18,6 +18,7 @@
 #ifdef XR_PLATFORM_WEB
 #include <emscripten.h>
 #include "WebFramePacer.h"
+#include "xrScriptEngine/WebLuaTiming.hpp"
 
 void UpdateBrowserViewport(CRenderDevice& device);
 #endif
@@ -473,11 +474,19 @@ void CRenderDevice::ProcessFrame()
     const bool autoDisplayLimit = ps_fps_limit == 0 && g_pGameLevel && !Paused() &&
         !GEnv.isDedicatedServer;
     g_webFramePacer.SetFrameLimit(vsync && autoDisplayLimit ? 0 : frameLimit);
-    EM_ASM({
-        globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4, $5);
+    static bool luaTimingEnabled = false;
+    const auto luaTiming = luaTimingEnabled ? TakeWebLuaTiming() : WebLuaTiming{-1, -1};
+    const bool nextLuaTimingEnabled = EM_ASM_INT({
+        return globalThis.__xrayWebGPU?.recordEngineTimings($0, $1, $2, $3, $4, $5, $6, $7) ? 1 : 0;
     }, cpuSimulationEnd - cpuFrameStart, cpuRenderEnd - cpuSimulationEnd,
         cpuWaitEnd - cpuRenderEnd, static_cast<int>(vsync), frameBudgetMs,
-        static_cast<int>(g_pGameLevel && !Paused() && !dwPrecacheFrame && g_loading_events.empty()));
+        static_cast<int>(g_pGameLevel && !Paused() && !dwPrecacheFrame && g_loading_events.empty()),
+        luaTiming.callsMs, luaTiming.garbageCollectionMs);
+    if (nextLuaTimingEnabled != luaTimingEnabled)
+    {
+        SetWebLuaTimingEnabled(nextLuaTimingEnabled);
+        luaTimingEnabled = nextLuaTimingEnabled;
+    }
 #else
     const u32 updateDelta = 1000 / frameLimit;
     if (frameTime < updateDelta)

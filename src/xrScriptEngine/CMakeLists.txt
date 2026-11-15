@@ -1,5 +1,9 @@
 add_library(xrScriptEngine)
 
+if(EMSCRIPTEN)
+    target_sources(xrScriptEngine PRIVATE WebLuaTiming.cpp WebLuaTiming.hpp)
+endif()
+
 target_sources_grouped(
     TARGET xrScriptEngine
     NAME "Debug"

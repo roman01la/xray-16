@@ -32,6 +32,7 @@ set(LUA_MATH_LIBRARY m CACHE STRING "" FORCE)
 add_library(Lua51 ALIAS xrLua51)
 
 set(XRAY_WEB_EXECUTABLE_LINK_OPTIONS
+    -Wl,--wrap=lua_pcall,--wrap=lua_resume,--wrap=luaC_step,--wrap=luaC_fullgc
     -sPROXY_TO_PTHREAD
     -sOFFSCREENCANVAS_SUPPORT
     "-sOFFSCREENCANVASES_TO_PTHREAD=#canvas"

@@ -35,7 +35,7 @@ function createDiagnosticsHistory(panel) {
  graph.height=height*pixelRatio;
  graph.style.cssText='display:block;width:420px;max-width:100%;height:auto;margin-top:6px';
  graph.setAttribute('role','img');
- graph.setAttribute('aria-label','Last 60 seconds of FPS, slowest frame, CPU, GPU, and wait times');
+ graph.setAttribute('aria-label','Last 60 seconds of FPS, slowest frame, CPU, GPU, wait, Lua calls, and Lua garbage collection');
  const summary=document.createTextNode('Waiting for WebGPU frames…');
  panel.replaceChildren(summary,graph);
  const ctx=graph.getContext('2d');
@@ -44,9 +44,11 @@ function createDiagnosticsHistory(panel) {
   {key:'peak',label:'Slowest frame',color:'#ffb77d',x:46},
   {key:'cpu',label:'CPU',color:'#8ee2b6',x:156},
   {key:'gpu',label:'GPU',color:'#d4aaff',x:208},
-  {key:'wait',label:'Wait',color:'#c2c8bf',x:260}
+  {key:'wait',label:'Wait',color:'#c2c8bf',x:260},
+  {key:'lua',label:'Lua',color:'#f0d679',x:308},
+  {key:'luaGc',label:'Lua GC',color:'#f4a3a7',x:350}
  ];
- const ms=value=>Number.isFinite(value)?value.toFixed(1)+' ms':'—';
+ const ms=(value,precision=1)=>Number.isFinite(value)?value.toFixed(precision)+' ms':'—';
 
  function drawPlot(top,bottom,unit,series,step,time){
   let maximum=step;
@@ -88,13 +90,15 @@ function createDiagnosticsHistory(panel) {
   if(!Number.isFinite(d.fps))return;
   const time=d.timeMs??(performance.timeOrigin+performance.now());
   // The first present can publish a report before it has a frame interval.
-  if(d.maxFrameMs>0)samples.push({time,fps:d.fps,peak:d.maxFrameMs,cpu:d.simulationMs+d.renderMs,gpu:d.gpuMs,wait:d.waitMs});
+  if(d.maxFrameMs>0)samples.push({time,fps:d.fps,peak:d.maxFrameMs,cpu:d.simulationMs+d.renderMs,
+   gpu:d.gpuMs,wait:d.waitMs,lua:d.luaMs,luaGc:d.luaGcMs});
   while(samples.length&&samples[0].time<time-historyMs)samples.shift();
   const adapter=[d.adapter.vendor,d.adapter.architecture,d.adapter.device].filter(Boolean).join(' ')||'Unknown';
   const vsync=d.pacing?(d.pacing.vsync?'on':'off'):'—';
   summary.data=[
    `${d.fps.toFixed(1)} FPS · ${d.width}×${d.height} · WebGPU ${adapter}${d.adapter.fallback?' (fallback)':''}`,
    `CPU simulation ${ms(d.simulationMs)} · render ${ms(d.renderMs)} · GPU ${ms(d.gpuMs)}`,
+   `Lua calls ${ms(d.luaMs,2)} · Lua GC ${ms(d.luaGcMs,2)}`,
    `Slowest frame ${ms(d.maxFrameMs)} · wait ${ms(d.waitMs)} · budget ${ms(d.pacing?.limitMs)}`,
    `VSync ${vsync} · WebGPU validation errors ${d.validationErrors}`,
   ].join('\n');
