@@ -166,8 +166,6 @@ function file_data(fname)
 end
 
 function load_dialog:OnListItemClicked()
-	if self.list_box:GetSize()==0 then return end
-
 	local item			= self.list_box:GetSelectedItem()
 
 	if item == nil then
@@ -204,39 +202,23 @@ function load_dialog:OnListItemDbClicked()
 end
 
 function load_dialog:OnMsgYes()
-	local index = self.list_box:GetSelectedIndex()
-
-	if index == -1 then return end
-
-	if self.msgbox_id == 1 then
-		local item  = self.list_box:GetItemByIndex(index)
-
-		local fname = item.file_name
-
-		delete_save_game	(fname)
-
-		self.list_box:RemoveItem(item)
-
-		self:OnListItemClicked()
-	elseif self.msgbox_id == 2 then
-		self:load_game_internal()
-	end
-
+	local action = self.msgbox_id
+	local filename = self.confirmed_filename
 	self.msgbox_id = 0
+	self.confirmed_filename = nil
+	if filename == nil or not file_exist(filename .. saved_game_extension) then return end
+
+	if action == 1 then
+		delete_save_game(filename)
+		self:FillList()
+		self:OnListItemClicked()
+	elseif action == 2 then
+		self:load_game_internal(filename)
+	end
 end
 
-function load_dialog:load_game_internal()
+function load_dialog:load_game_internal(fname)
 	local console = get_console()
-
-	if self.list_box:GetSize()==0 then return end
-
-	local index = self.list_box:GetSelectedIndex()
-
-	if index == -1 then return end
-
-	local item  = self.list_box:GetItemByIndex(index)
-
-	local fname = item.file_name
 
 	if (alife() == nil) then
 		console:execute	("disconnect")
@@ -247,12 +229,6 @@ function load_dialog:load_game_internal()
 end
 
 function load_dialog:OnButton_load_clicked()
-	local console	= get_console()
-
-	if self.list_box:GetSize()==0 then
-		return
-	end
-
 	local item		= self.list_box:GetSelectedItem()
 	if item == nil then
 		return
@@ -268,15 +244,16 @@ function load_dialog:OnButton_load_clicked()
 	end
 
 	if (alife() == nil) then
-		self:load_game_internal				()
+		self:load_game_internal(fname)
 		return
 	end
 
 	if ( (db.actor ~= nil) and (db.actor:alive() == false) ) then
-		self:load_game_internal				()
+		self:load_game_internal(fname)
 		return
 	end
 
+	self.confirmed_filename = fname
 	self.msgbox_id							= 2
 	self.message_box:InitMessageBox			("message_box_confirm_load_save")
 	self.message_box:ShowDialog(true)
@@ -289,11 +266,10 @@ function load_dialog:OnButton_back_clicked()
 end
 
 function load_dialog:OnButton_del_clicked()
-	if self.list_box:GetSize()==0 then return end
-	local index = self.list_box:GetSelectedIndex()
+	local item = self.list_box:GetSelectedItem()
+	if item == nil then return end
 
-	if index == -1 then return end
-
+	self.confirmed_filename = item.file_name
 	self.msgbox_id = 1
 
 	self.message_box:InitMessageBox("message_box_delete_file_name")

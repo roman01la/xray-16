@@ -83,6 +83,17 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
     powerPreference: "high-performance",
   });
   if (!adapter) throw Error("No WebGPU adapter");
+  const readbackPresentation = gpuDiagnosticsChannel?.readbackPresentation === true;
+  let canvasImportFailed = false;
+  const reportCanvasImportFailure = message => {
+    if (readbackPresentation || !/Requested allocation size \(\d+\) is smaller than the image requires \(\d+\)/.test(message))
+      return false;
+    if (!canvasImportFailed) {
+      canvasImportFailed = true;
+      globalThis.__xrayReportWorkerCrash?.("gpu-lost", message);
+    }
+    return true;
+  };
   globalThis.__xrayCrashRendererContext = () => {
     const renderer = globalThis.__xrayWebGPU;
     return {
@@ -92,6 +103,8 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
       renderWidth: renderer?.canvas.width,
       renderHeight: renderer?.canvas.height,
       renderedFrames: diagnostics.frames,
+      gpuCanvasImportFailed: canvasImportFailed,
+      gpuPresentation: readbackPresentation ? "readback" : "direct",
       validationErrors: diagnostics.validationErrors,
     };
   };
@@ -118,11 +131,12 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
   device.addEventListener("uncapturederror", (e) => {
     diagnostics.validationErrors++;
     diagnostics.lastError = e.error.message;
+    reportCanvasImportFailure(diagnostics.lastError);
     channel?.postMessage(diagnostics);
     console.error("[WebGPU validation]", e.error.message);
   });
   device.lost.then((info) => {
-    if (info.reason !== "destroyed")
+    if (info.reason !== "destroyed" && !reportCanvasImportFailure(info.message))
       globalThis.__xrayReportWorkerCrash?.("gpu-lost", info.message || "WebGPU device lost");
     channel?.postMessage({ status: "GPU device lost: " + info.message });
     console.error("[WebGPU device lost]", info.message);
@@ -147,7 +161,9 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
       }
     }
     if(gpuDiagnosticsChannel?.detailed)telemetryAdapter=analyticsAdapter;
-    const renderer = new GPUFrontend(canvas, device, canvas.getContext("webgpu"));
+    const renderer = new GPUFrontend(canvas, device,
+      canvas.getContext(readbackPresentation ? "2d" : "webgpu", readbackPresentation ? {alpha: false} : undefined),
+      readbackPresentation);
     telemetryChannel?.addEventListener('message',({data})=>{
       if(data.type==='visibility'){renderer.analyticsVisible=!!data.visible;renderer.analyticsLast=null;renderer.analyticsFrames=null;}
     });
@@ -159,11 +175,63 @@ export async function installWebGPUBackend(shaderCompilerPort, gpuDiagnosticsCha
 
 }
 const align = (v, n = 4) => Math.ceil(v / n) * n;
-export class GPUFrontend {
+// Chromium's Vulkan canvas import can fail even when ordinary WebGPU render
+// targets work. Present through a 2D canvas on affected sessions only.
+export class CanvasReadback {
   constructor(canvas, device, context) {
+    Object.assign(this, {canvas, device, context});
+  }
+  view() {
+    const {width, height} = this.canvas;
+    if (this.target?.width !== width || this.target?.height !== height) {
+      this.target?.destroy();
+      this.target = this.device.createTexture({
+        size: [width, height],
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      });
+      this.targetView = this.target.createView();
+    }
+    return this.targetView;
+  }
+  copy(encoder) {
+    if (this.pending) return;
+    const {width, height} = this.target;
+    const rowBytes = width * 4;
+    const stride = align(rowBytes, 256);
+    const size = stride * height;
+    if (this.buffer?.size !== size) {
+      this.buffer?.destroy();
+      this.buffer = this.device.createBuffer({
+        size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+    }
+    const buffer = this.buffer;
+    encoder.copyTextureToBuffer({texture: this.target}, {buffer, bytesPerRow: stride}, [width, height]);
+    this.pending = true;
+    return async () => {
+      try {
+        await buffer.mapAsync(GPUMapMode.READ);
+        if (this.canvas.width !== width || this.canvas.height !== height) return;
+        if (this.image?.width !== width || this.image?.height !== height)
+          this.image = this.context.createImageData(width, height);
+        const bytes = new Uint8Array(buffer.getMappedRange());
+        for (let y = 0; y < height; ++y)
+          this.image.data.set(bytes.subarray(y * stride, y * stride + rowBytes), y * rowBytes);
+        this.context.putImageData(this.image, 0, 0);
+      } finally {
+        if (buffer.mapState === "mapped") buffer.unmap();
+        this.pending = false;
+      }
+    };
+  }
+}
+export class GPUFrontend {
+  constructor(canvas, device, context, readbackPresentation = false) {
     Object.assign(this, { canvas, device, context });
-    this.format = navigator.gpu.getPreferredCanvasFormat();
-    context.configure({ device, format: this.format, alphaMode: "opaque" });
+    this.format = readbackPresentation ? "rgba8unorm" : navigator.gpu.getPreferredCanvasFormat();
+    if (readbackPresentation) this.canvasReadback = new CanvasReadback(canvas, device, context);
+    else context.configure({ device, format: this.format, alphaMode: "opaque" });
     this.objects = new WeakMap();
     this.programs = new WeakMap();
     this.locations = new WeakMap();
@@ -2138,7 +2206,8 @@ export class GPUFrontend {
         @fragment fn fs(vertex: PresentVertex) -> @location(0) vec4f {
           let size = textureDimensions(image);
           let pixel = clamp(vec2i(vertex.uv * vec2f(size)), vec2i(0), vec2i(size) - vec2i(1));
-          return textureLoad(image, pixel, 0);
+          let color = textureLoad(image, pixel, 0);
+          return ${this.canvasReadback ? "vec4f(color.rgb, 1)" : "color"};
         }`;
       const mod = this.device.createShaderModule({ code });
       this.presentPipeline = this.device.createRenderPipeline({
@@ -2152,11 +2221,12 @@ export class GPUFrontend {
         primitive: { topology: "triangle-list" },
       });
     }
-    const pass = this.enc().beginRenderPass({
+    const encoder = this.enc();
+    const pass = encoder.beginRenderPass({
       ...(this.timer?.active ? { timestampWrites: { querySet: this.timer.set, endOfPassWriteIndex: 1 } } : {}),
       colorAttachments: [
         {
-          view: this.context.getCurrentTexture().createView(),
+          view: this.canvasReadback?.view() ?? this.context.getCurrentTexture().createView(),
           loadOp: "clear",
           storeOp: "store",
           clearValue: [0, 0, 0, 1],
@@ -2173,6 +2243,7 @@ export class GPUFrontend {
     pass.setBindGroup(0,presentGroup);
     pass.draw(3);
     pass.end();
+    const paintCanvas = this.canvasReadback?.copy(encoder);
     const readQueries = this.occlusion.resolve(this.enc());
     const timer = this.timer?.active ? this.timer : null;
     if (timer) {
@@ -2181,6 +2252,7 @@ export class GPUFrontend {
       timer.active = false; timer.busy = true;
     }
     this.flush();
+    paintCanvas?.().catch(error => console.error("WebGPU canvas readback", error));
     this.trackSubmittedFrame();
     if (timer) timer.read.mapAsync(GPUMapMode.READ).then(() => {
       const times = new BigUint64Array(timer.read.getMappedRange());

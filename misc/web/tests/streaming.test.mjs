@@ -49,9 +49,11 @@ test('manifest validation rejects writes, traversal, duplicate paths and missing
  for(const path of ['_appdata_/user.ltx','levels/../x.db','levels//x.db','https://test/x.db'])assert.throws(()=>validatePack({...pack,files:[...pack.files,{path,size:1}]}));
  assert.throws(()=>validatePack({...pack,files:[...pack.files,pack.files[0]]}));
 });
-test('streaming config preserves writable save and engine override paths',()=>{
- const source='$app_data_root$ = true| false| $fs_root$| _appdata_\\\n$arch_dir_resources$ = false| false| $fs_root$| resources\\\n$arch_dir_patches$ = false| true| $fs_root$| patches\\\n$game_saves$ = true| false| $app_data_root$| savedgames\\\n';
- const result=streamingConfig(source);assert.match(result,/\$app_data_root\$ = true\| false\| \$fs_root\$\| _appdata_/);assert.match(result,/\/stream\/resources\//);assert.match(result,/\$game_saves\$ = true\| false\| \$app_data_root\$/);
+test('streaming config uses embedded shaders for Clear Sky and preserves writable saves',()=>{
+ const source='$app_data_root$ = true| false| $fs_root$| _appdata_\\\n$arch_dir_resources$ = false| false| $fs_root$| resources\\\n$arch_dir_patches$ = false| true| $fs_root$| patches\\\n$game_shaders$ = true| true| $game_data$| shaders\\\n$game_saves$ = true| false| $app_data_root$| savedgames\\\n';
+ const result=streamingConfig(source,'cs');assert.match(result,/\$app_data_root\$ = true\| false\| \$fs_root\$\| _appdata_/);assert.match(result,/\/stream\/resources\//);
+ assert.match(result,/\$game_shaders\$ = true\| false\| \/xray-shaders\//);assert.match(result,/\$game_saves\$ = true\| false\| \$app_data_root\$/);
+ for(const game of ['cop','soc'])assert.match(streamingConfig(source,game),/\$game_shaders\$ = true\| true\| \$game_data\$\| shaders/);
  assert.ok(result.indexOf('$arch_dir_stream_patches$')<result.indexOf('$arch_dir_patches$'));
 });
 test('compact archive index reads do not download payload chunks',async()=>{

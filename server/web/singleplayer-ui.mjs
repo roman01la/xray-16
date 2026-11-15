@@ -4,6 +4,8 @@ const start=document.querySelector('#start-game');
 const backupButton=document.querySelector('#boot-backup');
 const backupStatus=document.querySelector('#backup-status');
 const canvas=document.querySelector('#canvas');
+const gpuPresentationKey='xray-gpu-readback:'+document.documentElement.dataset.game;
+const readbackPresentation=sessionStorage.getItem(gpuPresentationKey)==='1';
 let startupReady=false,enteredGame=false,firstMenuFrame=null,broken=false,installing=false,backingUp=false;
 const updateStart=()=>{
  if(start)start.disabled=!startupReady||broken||backingUp;
@@ -121,7 +123,7 @@ function createDiagnosticsHistory(panel) {
 
 if(fpsCounter||showDiagnostics){
  const name='xray-gpu-telemetry-'+crypto.randomUUID();
- globalThis.__xrayGPUDiagnosticsChannel={name,detailed:showDiagnostics};
+ globalThis.__xrayGPUDiagnosticsChannel={name,detailed:showDiagnostics,readbackPresentation};
  const channel=new BroadcastChannel(name);
  const visibility=()=>channel.postMessage({type:'visibility',visible:!document.hidden});
  document.addEventListener('visibilitychange',visibility);visibility();
@@ -151,6 +153,14 @@ window.addEventListener('xray-crash',({detail})=>{
  if(broken||detail?.kind==='launch')return;
  window.removeEventListener('beforeunload',confirmLeavingGame);
  if(document.pointerLockElement===canvas)document.exitPointerLock();
+ if(detail?.kind==='gpu-lost'&&detail.context?.gpuCanvasImportFailed&&!readbackPresentation){
+  sessionStorage.setItem(gpuPresentationKey,'1');
+  if(!startupReady){
+   broken=true;
+   location.reload();
+   return;
+  }
+ }
  fail('The game stopped unexpectedly. Reload to restart.');
 });
 window.addEventListener('xray-browser-navigation',()=>{

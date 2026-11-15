@@ -9,10 +9,11 @@ export function validatePack(pack) {
   if(!pack.files.some(f=>f.path.startsWith('resources/'))||!pack.files.some(f=>f.path.startsWith('levels/')))throw Error('Missing game archives');
   return pack;
 }
-export function streamingConfig(source) {
-  // Original patches remain in /stream/patches; engine overrides remain in OPFS.
+export function streamingConfig(source, gameId) {
   const aliases={arch_dir_levels:'levels',arch_dir_resources:'resources',arch_dir_localization:'localization'};
   let text=source.replace(/^(\$([^$]+)\$\s*=)[^\r\n]*$/gm,(line,prefix,name)=>aliases[name]?`${prefix} false| false| /stream/${aliases[name]}/`:line);
+  // Clear Sky's shipped GLSL stays readable if OPFS loses a loose file mid-session.
+  if(gameId==='cs')text=text.replace(/^(\$game_shaders\$\s*=)[^\r\n]*$/m,'$1 true| false| /xray-shaders/');
   text=text.replace(/^(\$arch_dir_patches\$)/m,'$arch_dir_stream_patches$ = false| false| /stream/patches/\n$1');
   return text;
 }
@@ -54,7 +55,7 @@ export async function installStreaming(manifestURL, root, onProgress) {
     const release=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(url.href));
     const suffix=Array.from(new Uint8Array(release).subarray(0,16),byte=>byte.toString(16).padStart(2,'0')).join('');
     const mount=`stream-${suffix}.mount`;
-    await write('fsgame.streaming.ltx',streamingConfig(await config.text()));
+    await write('fsgame.streaming.ltx',streamingConfig(await config.text(),gameId));
     await write(mount,base.href.slice(0,-1)+'\n'+pack.files.map(f=>f.path).join('\n')+'\n');
     report({ready:true,firstInstall});
     return {root,config:`/opfs/${root}/fsgame.streaming.ltx`,mount:`/opfs/${root}/${mount}`,archives:pack.files.length};

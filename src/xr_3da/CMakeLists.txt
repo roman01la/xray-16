@@ -38,7 +38,11 @@ set_target_properties(xr_3da PROPERTIES
 )
 
 if (EMSCRIPTEN)
-    target_link_options(xr_3da PRIVATE ${XRAY_WEB_EXECUTABLE_LINK_OPTIONS})
+    set(web_shaders "${XRAY_SOURCE_DIR}/res/gamedata/shaders/gl")
+    file(GLOB_RECURSE web_shader_sources CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE "${web_shaders}/*")
+    target_link_options(xr_3da PRIVATE ${XRAY_WEB_EXECUTABLE_LINK_OPTIONS}
+        "SHELL:--embed-file \"${web_shaders}@/xray-shaders/gl\"")
+    set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS ${web_shader_sources})
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/pre.js")
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/native-canvas-library.js")
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/audio-library.js")

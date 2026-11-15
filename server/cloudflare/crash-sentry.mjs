@@ -15,6 +15,7 @@ function crashContext(input) {
     phase: ['startup', 'level-loading', 'gameplay'],
     browser: ['Chrome', 'Edge', 'Firefox', 'Opera', 'Safari'],
     os: ['Windows', 'macOS', 'Linux', 'Android', 'iOS'],
+    gpuPresentation: ['direct', 'readback'],
   })) {
     if (allowed.includes(input[key])) context[key] = input[key];
   }
@@ -29,7 +30,9 @@ function crashContext(input) {
     if (typeof input[key] === 'string' && /^[a-z0-9][a-z0-9_-]{0,31}$/i.test(input[key]))
       context[key] = input[key];
   }
-  if (typeof input.gpuFallback === 'boolean') context.gpuFallback = input.gpuFallback;
+  for (const key of ['gpuFallback', 'gpuCanvasImportFailed']) {
+    if (typeof input[key] === 'boolean') context[key] = input[key];
+  }
   return context;
 }
 
