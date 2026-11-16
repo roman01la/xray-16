@@ -65,8 +65,12 @@ constexpr size_t MAX_MOUSE_EVENTS = 256;
 constexpr size_t MAX_CONTROLLER_EVENTS = 256;
 
 #ifdef XR_PLATFORM_WEB
+extern "C" void xray_web_enable_clipboard(int enabled);
+
 namespace
 {
+// Preserve paste order relative to keyboard events in SDL's input queue.
+constexpr Uint32 WebPasteWindowId = Uint32(-1);
 constexpr s32 WebMouseFixedPoint = 256;
 std::atomic<s32> webMouseDelta[2]{};
 float webMouseResidual[2]{};
@@ -81,6 +85,19 @@ void TakeWebMouseDelta(int (&offs)[2])
     }
 }
 } // namespace
+
+extern "C" EMSCRIPTEN_KEEPALIVE void xray_web_paste_text(const char* text)
+{
+    SDL_Event event{};
+    event.text.type = SDL_TEXTINPUT;
+    event.text.windowID = WebPasteWindowId;
+    while (const size_t length = SDL_utf8strlcpy(event.text.text, text, sizeof(event.text.text)))
+    {
+        if (SDL_PushEvent(&event) <= 0)
+            break;
+        text += length;
+    }
+}
 #endif
 
 CInput::CInput(const bool exclusive)
@@ -153,6 +170,9 @@ CInput::~CInput()
 {
     ZoneScoped;
 
+#ifdef XR_PLATFORM_WEB
+    xray_web_enable_clipboard(0);
+#endif
     GrabInput(false);
 
     for (auto& controller : controllers)
@@ -368,6 +388,18 @@ void CInput::KeyUpdate()
             break;
 
         case SDL_TEXTINPUT:
+#ifdef XR_PLATFORM_WEB
+            if (event.text.windowID == WebPasteWindowId)
+            {
+                xr_string paste = event.text.text;
+                while (i + 1 < count && events[i + 1].type == SDL_TEXTINPUT &&
+                    events[i + 1].text.windowID == WebPasteWindowId)
+                    paste += events[++i].text.text;
+                if (cnt == textInputCounter && IsTextInputEnabled())
+                    cbStack.back()->IR_OnTextPaste(paste.c_str());
+                break;
+            }
+#endif
             if (cnt != textInputCounter)
                 continue; // if input target changed, skip this frame
             cbStack.back()->IR_OnTextInput(event.text.text);
@@ -733,7 +765,12 @@ void CInput::EnableTextInput()
     ++textInputCounter;
 
     if (textInputCounter == 1)
+    {
         SDL_StartTextInput();
+#ifdef XR_PLATFORM_WEB
+        xray_web_enable_clipboard(1);
+#endif
+    }
 
     SDL_PumpEvents();
     SDL_FlushEvents(SDL_TEXTEDITING, SDL_TEXTINPUT);
@@ -746,7 +783,12 @@ void CInput::DisableTextInput()
         textInputCounter = 0;
 
     if (textInputCounter == 0)
+    {
         SDL_StopTextInput();
+#ifdef XR_PLATFORM_WEB
+        xray_web_enable_clipboard(0);
+#endif
+    }
 
     SDL_PumpEvents();
     SDL_FlushEvents(SDL_TEXTEDITING, SDL_TEXTINPUT);

@@ -445,6 +445,21 @@ void ide::IR_OnTextInput(pcstr text)
         io.AddInputCharactersUTF8(text);
 }
 
+#ifdef XR_PLATFORM_WEB
+void ide::IR_OnTextPaste(pcstr text)
+{
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantTextInput)
+        return;
+
+    // ImGui ignores character events while Ctrl is down. Queue the paste
+    // between modifier events so it works even if the shortcut is held.
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    io.AddInputCharactersUTF8(text);
+    io.AddKeyEvent(ImGuiMod_Ctrl, IR_GetKeyState(SDL_SCANCODE_LCTRL) || IR_GetKeyState(SDL_SCANCODE_RCTRL));
+}
+#endif
+
 void ide::IR_OnControllerPress(int key, const ControllerAxisState& state)
 {
     ImGuiIO& io = ImGui::GetIO();

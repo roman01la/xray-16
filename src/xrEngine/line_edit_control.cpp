@@ -370,6 +370,9 @@ void line_edit_control::on_key_press(int dik)
 
 void line_edit_control::on_text_input(const char *text)
 {
+    if (m_current_mode == im_read_only)
+        return;
+
     clamp_cur_pos();
     clear_inserted();
     compute_positions();
@@ -385,6 +388,8 @@ void line_edit_control::on_text_input(const char *text)
 
     for (char c : str)
     {
+        if (m_inserted_pos == m_buffer_size - 1)
+            break;
         if (char_is_allowed(c))
             insert_character(c);
     }

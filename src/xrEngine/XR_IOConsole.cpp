@@ -416,6 +416,13 @@ void CConsole::IR_OnTextInput(pcstr text)
     Device.editor().IR_OnTextInput(text);
 }
 
+#ifdef XR_PLATFORM_WEB
+void CConsole::IR_OnTextPaste(pcstr text)
+{
+    Device.editor().IR_OnTextPaste(text);
+}
+#endif
+
 void CConsole::ExecuteCommand(pcstr cmd_str, bool record_cmd)
 {
     u32 str_size = xr_strlen(cmd_str);

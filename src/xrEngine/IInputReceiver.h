@@ -34,6 +34,9 @@ public:
     virtual void IR_OnKeyboardRelease(int /*dik*/) {}
     virtual void IR_OnKeyboardHold(int /*dik*/) {}
     virtual void IR_OnTextInput(pcstr /*text*/) {}
+#ifdef XR_PLATFORM_WEB
+    virtual void IR_OnTextPaste(pcstr text) { IR_OnTextInput(text); }
+#endif
 
     virtual void IR_OnControllerPress(int /*dik*/, const ControllerAxisState& /*state*/) {}
     virtual void IR_OnControllerRelease(int /*dik*/, const ControllerAxisState& /*state*/) {}

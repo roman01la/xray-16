@@ -109,6 +109,9 @@ public:
     void IR_OnKeyboardRelease(int key) override;
     void IR_OnKeyboardHold(int key) override;
     void IR_OnTextInput(pcstr text) override;
+#ifdef XR_PLATFORM_WEB
+    void IR_OnTextPaste(pcstr text) override;
+#endif
 
     pcstr GetUserConfigFileName() override { return ConfigFile; }
 

@@ -46,6 +46,7 @@ if (EMSCRIPTEN)
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/pre.js")
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/native-canvas-library.js")
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/audio-library.js")
+    set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/clipboard-library.js")
     set_property(TARGET xr_3da APPEND PROPERTY LINK_DEPENDS "${XRAY_SOURCE_DIR}/misc/web/streaming/library.js")
     add_custom_target(web_dist ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory "${XRAY_SOURCE_DIR}/misc/web/dist"

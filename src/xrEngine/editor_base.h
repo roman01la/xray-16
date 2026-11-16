@@ -87,6 +87,9 @@ public:
     void IR_OnKeyboardRelease(int key) override;
     void IR_OnKeyboardHold(int key) override;
     void IR_OnTextInput(pcstr text) override;
+#ifdef XR_PLATFORM_WEB
+    void IR_OnTextPaste(pcstr text) override;
+#endif
 
     void IR_OnControllerPress(int key, const ControllerAxisState& state) override;
     void IR_OnControllerRelease(int key, const ControllerAxisState& state) override;

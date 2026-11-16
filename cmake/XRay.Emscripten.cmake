@@ -46,6 +46,7 @@ set(XRAY_WEB_EXECUTABLE_LINK_OPTIONS
     -sMALLOC=mimalloc
     "--js-library=${XRAY_SOURCE_DIR}/misc/web/native-canvas-library.js"
     "--js-library=${XRAY_SOURCE_DIR}/misc/web/audio-library.js"
+    "--js-library=${XRAY_SOURCE_DIR}/misc/web/clipboard-library.js"
     "--js-library=${XRAY_SOURCE_DIR}/misc/web/streaming/library.js"
     "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['$GL']"
     -sGL_ENABLE_GET_PROC_ADDRESS=0
