@@ -530,18 +530,63 @@ void CWeapon::Load(LPCSTR section)
     m_flags.set(FUsingCondition, READ_IF_EXISTS(pSettings, r_bool, section, "use_condition", true));
 }
 
+class CSoCScopeOverlay final : public CUIStatic
+{
+    CUIStatic m_matte{"Scope matte"};
+
+public:
+    explicit CSoCScopeOverlay(pcstr texture) : CUIStatic("Scope UI")
+    {
+        SetStretchTexture(true);
+        InitTexture(texture);
+
+        // Use the stock opaque UI texture as a solid black fill.
+        m_matte.InitTexture("ui" DELIMITER "ui_noise_00");
+        m_matte.SetStretchTexture(true);
+        m_matte.SetTextureColor(color_rgba(0, 0, 0, 255));
+    }
+
+    void Draw() override
+    {
+        // SoC's DDS is authored for a 4:3 screen even when stored as a square.
+        // Fit it inside the current viewport and cover any exposed margins.
+        const float aspectScale = UI().get_current_kx();
+        const float width = UI_BASE_WIDTH * std::min(1.0f, aspectScale);
+        const float height = UI_BASE_HEIGHT * std::min(1.0f, 1.0f / aspectScale);
+        const float x = (UI_BASE_WIDTH - width) * 0.5f;
+        const float y = (UI_BASE_HEIGHT - height) * 0.5f;
+        // Overlap by one output pixel so rounding cannot expose a seam.
+        if (x > 0.0f)
+        {
+            const float pixel = 1.0f / UI().ClientToScreenScaledX(1.0f);
+            DrawMatte(0.0f, 0.0f, x + pixel, UI_BASE_HEIGHT);
+            DrawMatte(x + width - pixel, 0.0f, UI_BASE_WIDTH, UI_BASE_HEIGHT);
+        }
+        else if (y > 0.0f)
+        {
+            const float pixel = 1.0f / UI().ClientToScreenScaledY(1.0f);
+            DrawMatte(0.0f, 0.0f, UI_BASE_WIDTH, y + pixel);
+            DrawMatte(0.0f, y + height - pixel, UI_BASE_WIDTH, UI_BASE_HEIGHT);
+        }
+
+        SetWndRect(Frect().set(x, y, x + width, y + height));
+        CUIStatic::Draw();
+    }
+
+private:
+    void DrawMatte(float left, float top, float right, float bottom)
+    {
+        m_matte.SetWndRect(Frect().set(left, top, right, bottom));
+        m_matte.Draw();
+    }
+};
+
 void CWeapon::LoadScope(const shared_str& section)
 {
     xr_delete(m_UIScope);
     if (ShadowOfChernobylMode)
     {
-        // SoC supplies a full-screen DDS path in scope_texture.
-        auto* scope = xr_new<CUIStatic>("Scope UI");
-        scope->SetWndPos(Fvector2().set(0.0f, 0.0f));
-        scope->SetWndSize(Fvector2().set(UI_BASE_WIDTH, UI_BASE_HEIGHT));
-        scope->SetStretchTexture(true);
-        scope->InitTexture(section.c_str());
-        m_UIScope = scope;
+        m_UIScope = xr_new<CSoCScopeOverlay>(section.c_str());
         return;
     }
     pWpnScopeXml.Init();
