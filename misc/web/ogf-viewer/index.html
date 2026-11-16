@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X-Ray Model Viewer</title>
+<link rel="stylesheet" href="./viewer.css">
+<script type="module" src="./viewer.mjs"></script>
+</head>
+<body>
+<header class="app-header">
+  <h1>X-Ray Model Viewer</h1>
+</header>
+<main>
+  <nav class="library" aria-label="Game asset catalog">
+    <label for="game">Game</label>
+    <select id="game"></select>
+    <div class="catalog-views catalog-types" aria-label="Asset type" role="group">
+      <button id="mesh-catalog" type="button" aria-pressed="true">Meshes</button>
+      <button id="map-catalog" type="button" aria-pressed="false">Maps</button>
+    </div>
+    <label id="search-label" for="search">Find a mesh</label>
+    <input type="search" id="search" placeholder="Name or archive path" autocomplete="off">
+    <div id="mesh-views" class="catalog-views" aria-label="Catalog view" role="group">
+      <button id="list-view" type="button" aria-pressed="true">List</button>
+      <button id="folder-view" type="button" aria-pressed="false">Folders</button>
+    </div>
+    <p id="results" class="catalog-status" role="status">Indexing game meshes…</p>
+    <div class="catalog-scroll" id="catalog-scroll">
+      <ul id="catalog" aria-label="Meshes"></ul>
+      <div id="catalog-end" aria-hidden="true" hidden></div>
+    </div>
+  </nav>
+  <section class="viewport" id="viewport" aria-label="Model viewport">
+    <canvas id="model" tabindex="0" aria-label="3D model. Use arrow keys to rotate and plus or minus to zoom."></canvas>
+    <p class="empty" id="empty">Select a mesh from the catalog.</p>
+    <div class="view-tools" id="view-tools" hidden>
+      <button id="front" type="button">Front</button>
+      <button id="frame" type="button">Reset view</button>
+      <label id="wireframe-tool"><input id="wireframe" type="checkbox"> Wireframe</label>
+    </div>
+    <p class="hint" id="hint" hidden>Drag to orbit · Scroll to zoom</p>
+  </section>
+  <aside class="inspector" aria-label="Model details">
+    <p class="eyeline" id="asset-kind">Model</p>
+    <h2 id="model-name">No model open</h2>
+    <p id="status" role="status" aria-live="polite"></p>
+    <dl id="stats" hidden>
+      <div><dt>Vertices</dt><dd id="vertices"></dd></div>
+      <div><dt>Triangles</dt><dd id="triangles"></dd></div>
+      <div id="bone-stat"><dt>Bones</dt><dd id="bones"></dd></div>
+    </dl>
+    <section id="animations" aria-labelledby="animation-heading" hidden>
+      <h3 id="animation-heading">Animations</h3>
+      <p id="animation-status" class="catalog-status" role="status"></p>
+      <div id="animation-picker" hidden>
+        <input id="clip-filter" type="search" placeholder="Find a clip" aria-label="Find an animation clip" autocomplete="off">
+        <select id="clip" aria-label="Animation clip"></select>
+      </div>
+      <div id="playback" hidden>
+        <div class="playback-actions">
+          <button id="play" type="button">Pause</button>
+          <label><input id="loop" type="checkbox"> Loop</label>
+          <label><input id="in-place" type="checkbox" checked> In place</label>
+        </div>
+        <input id="timeline" aria-label="Animation position" type="range" min="0" value="0" step="0.001">
+        <output id="clip-time" for="timeline"></output>
+      </div>
+    </section>
+    <section id="materials" hidden>
+      <h3>Mesh parts</h3>
+      <ul id="parts"></ul>
+    </section>
+  </aside>
+</main>
+</body>
+</html>

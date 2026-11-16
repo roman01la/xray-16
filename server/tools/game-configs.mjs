@@ -17,7 +17,7 @@ async function bytes(file,offset,size){
  while(done<size){const n=await file.read(out,done,size-done,offset+done);if(!n.bytesRead)throw Error('Truncated archive');done+=n.bytesRead;}
  return out;
 }
-async function payloadDecoder(){
+export async function payloadDecoder(){
  const dir=await mkdtemp(join(tmpdir(),'xray-lzo-')),binary=join(dir,'decode');
  try{
   const flags=execFileSync('pkg-config',['--cflags','--libs','lzo2'],{encoding:'utf8'}).trim().split(/\s+/);
