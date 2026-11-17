@@ -103,6 +103,7 @@ struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<Vertex> posed;
     std::vector<Skin> skin;
+    std::vector<float> windWeights;
     std::vector<uint16_t> indices;
     std::string texture;
     std::string shader;
@@ -417,6 +418,10 @@ uint32_t ogf_bone_count() { return model.boneCount; }
 uint32_t ogf_vertex_count(uint32_t mesh) { return static_cast<uint32_t>(model.meshes[mesh].vertices.size()); }
 uint32_t ogf_index_count(uint32_t mesh) { return static_cast<uint32_t>(model.meshes[mesh].indices.size()); }
 const Vertex* ogf_vertices(uint32_t mesh) { return model.meshes[mesh].vertices.data(); }
+const float* ogf_wind_weights(uint32_t mesh) {
+    const auto& weights = model.meshes[mesh].windWeights;
+    return weights.empty() ? nullptr : weights.data();
+}
 const uint16_t* ogf_indices(uint32_t mesh) { return model.meshes[mesh].indices.data(); }
 const char* ogf_texture(uint32_t mesh) { return model.meshes[mesh].texture.c_str(); }
 const char* ogf_shader(uint32_t mesh) { return model.meshes[mesh].shader.c_str(); }

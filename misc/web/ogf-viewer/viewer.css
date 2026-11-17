@@ -21,7 +21,7 @@ body { margin: 0; min-width: 280px; }
 }
 h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -.02em; }
 .view-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-button, .view-tools label {
+button, .view-tools label, .view-tools select {
   color: inherit;
   background: #242821;
   border: 1px solid #41483b;
@@ -31,7 +31,7 @@ button, .view-tools label {
   padding: 8px 12px;
 }
 button { cursor: pointer; }
-button:hover, .view-tools label:hover { background: #32392d; }
+button:hover, .view-tools label:hover, .view-tools select:hover { background: #32392d; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 main {
   min-height: calc(100dvh - 65px);
@@ -138,3 +138,13 @@ li { margin-bottom: 8px; }
   .hint { display: none; }
   .view-tools { left: 10px; bottom: 10px; }
 }
+
+#effect-location, #effect-trigger { margin-top: 8px; }
+#effect-location { width: 100%; }
+
+
+#weather { margin-bottom: 16px; }
+#weather select, #weather-time { width: 100%; }
+.weather-time { display: flex; justify-content: space-between; margin-top: 10px; }
+.weather-time output { font-variant-numeric: tabular-nums; }
+.weather-toggles { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; }

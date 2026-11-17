@@ -1,16 +1,30 @@
 import createOgfModule from './ogf.mjs';
 import {decodeDds} from './dds.mjs';
 import {createRenderer} from './renderer.mjs';
+import {createGrassViewer} from './grass-viewer.mjs';
+import {createEnvironmentPlayer} from './environment-runtime.mjs';
+import {createAssetSource} from './viewer-source.mjs';
+import {readParticleLibrary} from './particle-library.mjs';
+import {createParticleScene, particleDefinitions} from './particle-runtime.mjs';
 
 const byId = id => document.getElementById(id);
 const canvas = byId('model'), viewport = byId('viewport');
 const maxFileBytes = 64 * 1024 * 1024;
 const number = new Intl.NumberFormat();
 const textureKey = name => name.replaceAll('\\', '/').replace(/\.dds$/i, '').toLowerCase();
-const view = {yaw: Math.PI + 0.24, pitch: 0.08, zoom: 1, center: [0, 0, 0], radius: 1, wireframe: false, isMap: false};
+const view = {yaw: Math.PI + 0.24, pitch: 0.08, zoom: 1, center: [0, 0, 0], radius: 1, wireframe: false, isMap: false, cutaway: ''};
 let meshes = [], textures = new Map(), selectedPart = -1, frameId = 0;
-let renderer, wasm;
+let renderer, wasm, source;
 const clipPicker = byId('clip'), clipFilter = byId('clip-filter'), timeline = byId('timeline');
+let weather, grass;
+const grassEnabled = byId('grass-enabled');
+const weatherPanel = byId('weather'), weatherPreset = byId('weather-preset'), weatherTime = byId('weather-time');
+const weatherEnabled = byId('weather-enabled'), weatherPlay = byId('weather-play'), weatherAudio = byId('weather-audio');
+const effectLocation = byId('effect-location'), effectToggle = byId('effects-enabled');
+const libraries = new Map(), placementsByGame = new Map();
+let particleScene, effectsLight, mapEffects, mapBurst, sceneLibrary, lastMapDraw = 0, renderedParticles;
+const particleTextures = new Map(), particleHandles = new Map();
+
 const playback = {clips: [], active: null, time: 0, playing: false, previousFrame: null};
 
 function status(message, error = false) {
@@ -22,10 +36,13 @@ function status(message, error = false) {
 try {
   renderer = createRenderer(canvas);
   wasm = await createOgfModule();
+  source = createAssetSource(wasm);
 } catch (error) {
   status(error.message, true);
   throw error;
 }
+
+let weatherFrame;
 
 function render() {
   if (frameId) return;
@@ -45,8 +62,33 @@ function render() {
       }
       updatePose();
     }
-    renderer.draw(selectedPart < 0 ? meshes : [meshes[selectedPart]], view);
-    if (playback.playing) render();
+    const animateEffects = particleScene && effectToggle.checked && !view.wireframe &&
+      (!view.isMap || view.zoom >= 3 || mapBurst);
+    const animateWeather = view.isMap && weather?.animating;
+    if ((!animateEffects && !animateWeather) || !view.isMap || timestamp - lastMapDraw >= 33) {
+      if (animateEffects) {
+        particleScene.advance(timestamp, view);
+        mapBurst?.advance(timestamp, view);
+        renderedParticles = particleScene.batches();
+        if (mapBurst) {
+          const burst = mapBurst.batches();
+          for (const [def, data] of burst.buffers) {
+            const base = renderedParticles.buffers.get(def);
+            if (base) base.push(...data);
+            else renderedParticles.buffers.set(def, data);
+          }
+          if (mapBurst.finished) mapBurst = undefined;
+        }
+        renderedParticles.textures = particleTextures;
+      } else renderedParticles = undefined;
+      weatherFrame = view.isMap ? weather?.frame(timestamp, view.center) : undefined;
+      if (weatherFrame && weatherPlay.checked) updateWeatherClock();
+      renderer.draw(selectedPart < 0 ? meshes : [meshes[selectedPart]], view, renderedParticles,
+        effectToggle.checked ? effectsLight : undefined, weatherFrame,
+        grassEnabled.checked ? grass?.forView(view) : undefined);
+      lastMapDraw = timestamp;
+    }
+    if (playback.playing || animateEffects || animateWeather) render();
   });
 }
 
@@ -65,13 +107,18 @@ function loadWasm(bytes, loader, extra) {
   }
 }
 
-function uploadAsset(name, isMap = false) {
+function uploadWasmMeshes(isMap, position) {
   const next = [];
   let vertexTotal = 0, triangleTotal = 0;
   try {
     for (let part = 0; part < wasm._ogf_mesh_count(); part++) {
       const vertexCount = wasm._ogf_vertex_count(part), indexCount = wasm._ogf_index_count(part);
-      const vertices = new Float32Array(wasm.HEAPU8.buffer, wasm._ogf_vertices(part), vertexCount * 8);
+      let vertices = new Float32Array(wasm.HEAPU8.buffer, wasm._ogf_vertices(part), vertexCount * 8);
+      if (position) {
+        vertices = vertices.slice();
+        for (let p = 0; p < vertices.length; p += 8)
+          for (let axis = 0; axis < 3; axis++) vertices[p + axis] += position[axis];
+      }
       const indices = new Uint16Array(wasm.HEAPU8.buffer, wasm._ogf_indices(part), indexCount);
       const lower = [Infinity, Infinity, Infinity], upper = [-Infinity, -Infinity, -Infinity];
       for (let p = 0; p < vertices.length; p += 8) {
@@ -80,11 +127,14 @@ function uploadAsset(name, isMap = false) {
           upper[axis] = Math.max(upper[axis], vertices[p + axis]);
         }
       }
+      const shader = wasm.UTF8ToString(wasm._ogf_shader(part));
+      const weights = isMap ? wasm._ogf_wind_weights(part) : 0;
+      const wind = weights ? new Float32Array(wasm.HEAPU8.buffer, weights, vertexCount) : null;
       next.push({
-        ...renderer.createMesh(vertices, indices, isMap),
+        ...renderer.createMesh(vertices, indices, isMap, wind),
         vertexCount,
         name: wasm.UTF8ToString(wasm._ogf_texture(part)),
-        shader: wasm.UTF8ToString(wasm._ogf_shader(part)),
+        shader, water: isMap && /^(?:effects[\\/])?water/i.test(shader), distortion: /[\\/]xdistort/i.test(shader),
         lower, upper,
       });
       vertexTotal += vertexCount;
@@ -95,6 +145,11 @@ function uploadAsset(name, isMap = false) {
     throw error;
   }
 
+  return {next, vertexTotal, triangleTotal};
+}
+
+function uploadAsset(name, isMap = false) {
+  const {next, vertexTotal, triangleTotal} = uploadWasmMeshes(isMap);
   meshes.forEach(renderer.deleteMesh);
   meshes = next;
   selectedPart = -1;
@@ -103,9 +158,11 @@ function uploadAsset(name, isMap = false) {
   byId('triangles').textContent = number.format(triangleTotal);
   byId('bones').textContent = number.format(wasm._ogf_bone_count());
   view.isMap = isMap;
+  view.cutaway = isMap ? byId('cutaway').value : '';
+  byId('cutaway').hidden = !isMap;
   view.wireframe = !isMap && byId('wireframe').checked;
   byId('front').textContent = isMap ? 'Top' : 'Front';
-  byId('hint').textContent = isMap ? 'Drag to orbit · Shift-drag to pan · Scroll to zoom' : 'Drag to orbit · Scroll to zoom';
+  byId('hint').textContent = isMap ? 'Drag to orbit · Middle-drag or Shift-drag to pan · Scroll to zoom' : 'Drag to orbit · Middle-drag to pan · Scroll to zoom';
   for (const id of ['stats', 'view-tools', 'hint']) byId(id).hidden = false;
   for (const id of ['materials', 'bone-stat', 'wireframe-tool']) byId(id).hidden = isMap;
   byId('empty').hidden = true;
@@ -256,7 +313,15 @@ for (const id of ['loop', 'in-place']) {
 }
 
 function frameModel() {
-  if (!meshes.length) return;
+  if (!meshes.length) {
+    if (catalogMode === 'effects') {
+      view.center = [0, 0.5, 0];
+      view.radius = 6;
+      view.zoom = 1;
+      render();
+    }
+    return;
+  }
   const visible = selectedPart < 0 ? meshes : [meshes[selectedPart]];
   const lower = [0, 1, 2].map(axis => Math.min(...visible.map(mesh => mesh.lower[axis])));
   const upper = [0, 1, 2].map(axis => Math.max(...visible.map(mesh => mesh.upper[axis])));
@@ -270,6 +335,11 @@ function resetView(front = false) {
   view.pitch = view.isMap ? (front ? Math.PI / 2 : 1.05) : (front ? 0 : 0.08);
   frameModel();
 }
+function primeOrbit() {
+  if (!view.isMap || !meshes.length) return;
+  const target = renderer.orbitTarget(meshes, view, weatherFrame);
+  if (target) view.center = target;
+}
 function orbit(dx, dy) {
   view.yaw += dx * 0.008;
   view.pitch = Math.max(-1.55, Math.min(1.55, view.pitch + dy * 0.008));
@@ -282,34 +352,43 @@ function zoom(amount) {
 
 let pointer;
 canvas.addEventListener('pointerdown', e => {
-  if (!meshes.length || !e.isPrimary || e.button !== 0) return;
+  if ((!meshes.length && !particleScene) || !e.isPrimary || (e.button !== 0 && e.button !== 1)) return;
+  if (e.button === 1) e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
-  pointer = [e.clientX, e.clientY];
+  pointer = {x: e.clientX, y: e.clientY, button: e.button, orbiting: false};
 });
 canvas.addEventListener('pointermove', e => {
   if (!pointer || !canvas.hasPointerCapture(e.pointerId)) return;
-  if (view.isMap && e.shiftKey) {
+  const dx = pointer.x - e.clientX, dy = e.clientY - pointer.y;
+  if (pointer.button === 1 || (view.isMap && e.shiftKey)) {
     const units = 2 * view.radius / (0.96 * view.zoom * Math.min(canvas.clientWidth, canvas.clientHeight));
-    const dx = (pointer[0] - e.clientX) * units, dy = (e.clientY - pointer[1]) * units;
     const sx = Math.sin(view.yaw), cx = Math.cos(view.yaw), sy = Math.sin(view.pitch), cy = Math.cos(view.pitch);
-    view.center[0] += dx * cx - dy * sx * sy;
-    view.center[1] += dy * cy;
-    view.center[2] -= dx * sx + dy * cx * sy;
+    view.center[0] += (dx * cx - dy * sx * sy) * units;
+    view.center[1] += dy * cy * units;
+    view.center[2] -= (dx * sx + dy * cx * sy) * units;
+    pointer.orbiting = false;
     render();
-  } else {
-    orbit(pointer[0] - e.clientX, e.clientY - pointer[1]);
+  } else if (dx || dy) {
+    if (!pointer.orbiting) {
+      primeOrbit();
+      pointer.orbiting = true;
+    }
+    orbit(dx, dy);
   }
-  pointer = [e.clientX, e.clientY];
+  pointer.x = e.clientX;
+  pointer.y = e.clientY;
 });
 canvas.addEventListener('lostpointercapture', () => { pointer = undefined; });
+canvas.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 canvas.addEventListener('wheel', e => {
-  if (!meshes.length) return;
+  if (!meshes.length && !particleScene) return;
   e.preventDefault();
   const factor = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight : 1;
   zoom(-e.deltaY * factor * 0.001);
 }, {passive: false});
 canvas.addEventListener('keydown', e => {
-  if (!meshes.length) return;
+  if (!meshes.length && !particleScene) return;
+  if (!e.repeat && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) primeOrbit();
   switch (e.key) {
     case 'ArrowLeft': orbit(-12, 0); break;
     case 'ArrowRight': orbit(12, 0); break;
@@ -327,6 +406,10 @@ byId('wireframe').addEventListener('change', e => {
   view.wireframe = e.target.checked;
   render();
 });
+byId('cutaway').addEventListener('change', e => {
+  view.cutaway = view.isMap ? e.target.value : '';
+  render();
+});
 new ResizeObserver(render).observe(viewport);
 
 const games = byId('game'), search = byId('search'), catalog = byId('catalog');
@@ -341,14 +424,16 @@ const mapNames = {
   marsh: 'Great Swamps', military: 'Army Warehouses', radar: 'Radar',
   sarcofag: 'Sarcophagus', stancia: 'Chernobyl NPP', stancia_2: 'Chernobyl NPP North',
 };
-let browsingMaps = startingUrl.searchParams.has('map') || startingUrl.searchParams.get('view') === 'maps';
+let catalogMode = startingUrl.searchParams.has('effect') || startingUrl.searchParams.get('view') === 'effects' ? 'effects' :
+  startingUrl.searchParams.has('map') || startingUrl.searchParams.get('view') === 'maps' ? 'maps' : 'meshes';
 const sakharov = 'meshes/actors/ucheniy/ucheniy_2.ogf';
 const expandedFolders = new Set();
 let paths = [], selectedPath, catalogRequest, modelRequest;
 let catalogView = 'list', flatMatches = [], renderedMatches = 0;
 
 function displayName(path) {
-  if (browsingMaps) {
+  if (catalogMode === 'effects') return path.split('\\').pop();
+  if (catalogMode === 'maps') {
     const name = mapId(path).replace(/^l\d+[a-z]?_/, '');
     return mapNames[name] ?? name.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());
   }
@@ -441,14 +526,14 @@ function renderCatalog() {
   const query = search.value.trim().toLowerCase();
   const terms = query.split(/\s+/);
   const matches = paths.filter(path => terms.every(term => (path + ' ' + displayName(path)).toLowerCase().includes(term)));
-  const type = browsingMaps ? ' maps' : ' meshes';
+  const type = ' ' + catalogMode;
   byId('results').textContent = matches.length === paths.length ? number.format(paths.length) + type :
     number.format(matches.length) + ' of ' + number.format(paths.length) + type;
   catalogObserver.unobserve(catalogEnd);
   catalogEnd.hidden = true;
   catalog.replaceChildren();
   catalogScroll.scrollTop = 0;
-  if (!browsingMaps && catalogView === 'folders') {
+  if (catalogMode === 'meshes' && catalogView === 'folders') {
     catalog.append(folderItems(folderTree(matches), '', Boolean(query)));
     return;
   }
@@ -478,7 +563,11 @@ function setUrl(path) {
   url.searchParams.set('game', games.value);
   url.searchParams.delete('model');
   url.searchParams.delete('map');
-  if (browsingMaps) {
+  url.searchParams.delete('effect');
+  if (catalogMode === 'effects') {
+    url.searchParams.set('view', 'effects');
+    if (path) url.searchParams.set('effect', path);
+  } else if (catalogMode === 'maps') {
     url.searchParams.set('view', 'maps');
     if (path) url.searchParams.set('map', mapId(path));
   } else {
@@ -490,11 +579,7 @@ function setUrl(path) {
 
 function texturePath(name) {
   const path = name.replaceAll('\\', '/').toLowerCase();
-  return 'textures/' + path.replace(/\.dds$/, '') + '.dds';
-}
-
-function assetUrl(game, path) {
-  return './api/asset?' + new URLSearchParams({game, path});
+  return 'textures/' + path.replace(/\.(?:dds|tga|bmp|png)$/, '') + '.dds';
 }
 
 async function loadAnimations(game, model, signal) {
@@ -508,11 +593,7 @@ async function loadAnimations(game, model, signal) {
   const refs = Array.from({length: wasm._ogf_reference_count()}, (_, i) => wasm.UTF8ToString(wasm._ogf_reference(i)));
   if (refs.length) {
     try {
-      const query = new URLSearchParams({game, model});
-      refs.forEach(reference => query.append('ref', reference));
-      const response = await fetch('./api/motions?' + query, {signal});
-      if (!response.ok) throw new Error('Could not resolve animation references.');
-      const sources = await response.json();
+      const sources = await source.motions(game, model, refs, signal);
       const files = new Set();
       for (const {reference, paths} of sources) {
         if (!paths.length) problems.push('Missing ' + reference);
@@ -520,9 +601,7 @@ async function loadAnimations(game, model, signal) {
       }
       for (const path of files) {
         try {
-          const file = await fetch(assetUrl(game, path), {signal});
-          if (!file.ok) throw new Error('Could not read OMF');
-          const bytes = await file.arrayBuffer();
+          const bytes = await source.asset(game, path, signal);
           if (signal.aborted) return;
           const before = wasm._ogf_clip_count();
           loadWasm(bytes, wasm._ogf_add_motions);
@@ -561,97 +640,315 @@ function dropTextures() {
   textures.clear();
 }
 
-async function assetBytes(game, path, signal) {
-  const response = await fetch(assetUrl(game, path), {signal});
-  if (!response.ok) throw new Error('Could not read ' + path + ' from the game archive.');
-  return response.arrayBuffer();
-}
+// Defaults from CBlender_BmmD, used for maps without material metadata.
+const defaultTerrainLayers = ['grass', 'asphalt', 'earth', 'yantar'].map(name => 'detail/detail_grnd_' + name);
 
-// The R2 terrain shader combines these default detail layers with an RGBA mask.
-const terrainLayers = ['grass', 'asphalt', 'earth', 'yantar'].map(name => 'detail/detail_grnd_' + name);
-
-function blendTerrain(mask, layers) {
-  const {width, height} = mask;
-  const pixels = new Uint8Array(mask.pixels.length);
-  const repeats = 16;
-  const color = [0, 0, 0];
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      const weight = mask.pixels[i] + mask.pixels[i + 1] + mask.pixels[i + 2] + mask.pixels[i + 3];
-      color.fill(0);
-      for (let layer = 0; layer < 4; layer++) {
-        const detail = layers[layer];
-        const dx = Math.floor(x * repeats * detail.width / width) % detail.width;
-        const dy = Math.floor(y * repeats * detail.height / height) % detail.height;
-        const j = (dy * detail.width + dx) * 4;
-        const blend = weight ? mask.pixels[i + layer] / weight : layer === 2 ? 1 : 0;
-        for (let c = 0; c < 3; c++) color[c] += detail.pixels[j + c] * blend;
-      }
-      for (let c = 0; c < 3; c++) pixels[i + c] = Math.round(color[c]);
-      pixels[i + 3] = 255;
-    }
+async function loadMapTextures(game, level, signal, terrainMaterials, levelTextures) {
+  const localTextures = levelTextures ? new Set(levelTextures[level]) : undefined;
+  function localPath(shared) {
+    const relative = shared.slice('textures/'.length);
+    // Older hosted indexes may omit the level texture list.
+    if (localTextures?.has(relative) ?? relative.startsWith('terrain/'))
+      return 'levels/' + level + '/' + relative;
   }
-  return {width, height, pixels};
-}
-
-async function loadMapTextures(game, signal) {
   const surfaces = new Map();
   for (const mesh of meshes) {
     if (!mesh.name) continue;
-    const key = textureKey(mesh.name);
+    const key = mesh.water && /waterryaska$/i.test(mesh.shader) ? 'water/water_ryaska1' : textureKey(mesh.name);
     if (!surfaces.has(key)) surfaces.set(key, []);
     surfaces.get(key).push(mesh);
   }
-  const pending = surfaces.values();
-  let missing = 0, details;
-  const fetchTexture = name => assetBytes(game, texturePath(name), signal);
-  const decodeTexture = async name => decodeDds(await fetchTexture(name), renderer.maxTextureSize);
-
-  async function mapTexture(name) {
-    try {
-      const bytes = await fetchTexture(name);
-      if (!signal.aborted) return renderer.mapTexture(bytes);
-    } catch (error) {
-      if (!textureKey(name).startsWith('terrain/terrain_') || signal.aborted) throw error;
-      const mask = await decodeTexture(name + '_mask');
-      details ??= Promise.all(terrainLayers.map(decodeTexture));
-      const layers = await details;
-      if (!signal.aborted) return renderer.texture(blendTerrain(mask, layers));
+  const pending = source.orderTextures(game, [...surfaces], ([name]) => {
+    const shared = texturePath(name);
+    return localPath(shared) ?? shared;
+  }).values();
+  const requests = new Map();
+  let missing = 0;
+  function textureFor(name, terrain = false) {
+    const shared = texturePath(name);
+    if (!requests.has(shared)) {
+      const local = localPath(shared);
+      const request = (async () => {
+        const bytes = local
+          ? await source.asset(game, local, signal).catch(() => {
+            signal.throwIfAborted();
+            return source.asset(game, shared, signal);
+          })
+          : await source.asset(game, shared, signal);
+        signal.throwIfAborted();
+        const handle = terrain ? renderer.terrainTexture(bytes) : renderer.mapTexture(bytes);
+        textures.set(shared, {handle});
+        return handle;
+      })().catch(() => null);
+      requests.set(shared, request);
     }
+    return requests.get(shared);
   }
 
+  const waterMeshes = meshes.filter(mesh => mesh.water);
+  const waterNormals = waterMeshes.length ? textureFor('water/water_normal').then(handle => {
+    if (!signal.aborted) for (const mesh of waterMeshes) mesh.waterNormal = handle;
+  }) : undefined;
+
   async function load() {
-    for (const parts of pending) {
+    for (const [name, parts] of pending) {
       if (signal.aborted) return;
-      const name = parts[0].name;
-      try {
-        const handle = await mapTexture(name);
-        if (signal.aborted) {
-          if (handle) renderer.deleteTexture(handle);
-          return;
-        }
-        textures.set(textureKey(name), {handle});
-        for (const part of parts) part.texture = handle;
-      } catch {
+      const terrain = name.startsWith('terrain/terrain_');
+      const base = textureFor(name, terrain);
+      if (!terrain) {
+        const handle = await base;
         if (signal.aborted) return;
-        missing++;
+        if (!handle) missing++;
+        for (const part of parts) part.texture = handle;
+        continue;
+      }
+
+      const groups = new Map();
+      for (const part of parts) {
+        const shader = textureKey(part.shader);
+        if (!groups.has(shader)) groups.set(shader, []);
+        groups.get(shader).push(part);
+      }
+      const [handle, mask] = await Promise.all([base, textureFor(name + '_mask', true)]);
+      if (signal.aborted) return;
+      const metadata = terrainMaterials?.textures[name];
+      const defaultDetail = metadata?.detail ?? defaultTerrainLayers[2];
+      let hasDetail = false;
+      for (const [shader, group] of groups) {
+        const configured = terrainMaterials?.shaders[shader];
+        const layerNames = mask ? configured ?? defaultTerrainLayers : [defaultDetail];
+        const layers = await Promise.all(layerNames.map(layer => textureFor(layer, true)));
+        if (signal.aborted) return;
+        const material = layers.some(Boolean) ? {mask, layers, scale: metadata?.scale ?? 128} : undefined;
+        hasDetail ||= Boolean(material);
+        for (const part of group) {
+          part.texture = handle;
+          part.terrain = material;
+        }
+      }
+      if (!handle && !hasDetail) missing++;
+    }
+  }
+  await Promise.all([waterNormals, ...Array.from({length: 4}, load)]);
+  if (signal.aborted) return;
+  status(missing ? 'Static geometry · ' + number.format(missing) + ' textures unavailable' : 'Static geometry');
+  render();
+}
+
+async function particleLibrary(game, signal) {
+  if (!libraries.has(game)) {
+    const bytes = await source.asset(game, 'particles.xr', signal);
+    signal.throwIfAborted();
+    libraries.set(game, readParticleLibrary(bytes, game));
+  }
+  return libraries.get(game);
+}
+
+async function effectPlacements(game, signal) {
+  if (!placementsByGame.has(game)) {
+    const data = await source.placements(game, signal);
+    signal.throwIfAborted();
+    placementsByGame.set(game, data);
+  }
+  return placementsByGame.get(game);
+}
+
+function clearWeather() {
+  weatherFrame = undefined;
+  grass?.dispose();
+  grass = undefined;
+  byId('grass-option').hidden = true;
+  byId('grass-status').hidden = true;
+  weather?.dispose();
+  weather = undefined;
+  weatherPanel.hidden = true;
+}
+
+function startGrass(game, level, metadata, signal) {
+  if (!metadata?.maps.includes(level) || signal.aborted) return;
+  const status = byId('grass-status');
+  grass = createGrassViewer({game, level, source, renderer, passable: metadata.passable, signal, invalidate: render,
+    report(message) {
+      status.textContent = message;
+      status.hidden = !message;
+    }});
+  byId('grass-option').hidden = false;
+  render();
+}
+
+grassEnabled.addEventListener('change', render);
+
+function updateWeatherClock() {
+  weatherTime.max = weather.duration;
+  weatherTime.step = weather.event ? 1 : 60;
+  weatherTime.disabled = weather.duration === 0 || !weatherEnabled.checked;
+  weatherTime.value = weather.time;
+  const hours = Math.floor(weather.time / 3600);
+  const minutes = Math.floor(weather.time / 60) % 60;
+  const seconds = Math.floor(weather.time) % 60;
+  const clock = byId('weather-clock');
+  const value = weather.event ? [hours, minutes, seconds] : [hours, minutes];
+  const text = value.map(x => String(x).padStart(2, '0')).join(':');
+  if (clock.textContent !== text) clock.textContent = text;
+}
+
+function startWeather(game, level, data, signal) {
+  if (!data?.main || signal.aborted) return;
+  weather = createEnvironmentPlayer({renderer, source, game, level, data, signal, invalidate: render});
+  const cycles = document.createElement('optgroup'), events = document.createElement('optgroup');
+  cycles.label = 'Weather cycles';
+  events.label = 'Weather events';
+  for (const [id, preset] of Object.entries(data.presets).sort(([a], [b]) => a.localeCompare(b))) {
+    if (id.startsWith('[')) continue;
+    const label = id.replace(/^fx:(?:fx_)?/, '').replace(/^default_/, '').replaceAll('_', ' ');
+    (preset.event ? events : cycles).append(new Option(label[0].toUpperCase() + label.slice(1), id));
+  }
+  weatherPreset.replaceChildren(cycles);
+  if (events.childElementCount) weatherPreset.append(events);
+  weatherPreset.value = weather.preset;
+  weatherEnabled.checked = true;
+  weatherPlay.checked = false;
+  weatherAudio.checked = false;
+  weatherPreset.disabled = weatherPlay.disabled = weatherAudio.disabled = false;
+  updateWeatherClock();
+  weatherPanel.hidden = false;
+  render();
+}
+
+weatherPreset.addEventListener('change', () => {
+  if (!weather) return;
+  weather.setPreset(weatherPreset.value);
+  updateWeatherClock();
+  render();
+});
+weatherTime.addEventListener('input', () => {
+  if (!weather) return;
+  weather.setTime(Number(weatherTime.value));
+  updateWeatherClock();
+  render();
+});
+weatherPlay.addEventListener('change', () => { weather?.setPlaying(weatherPlay.checked); render(); });
+weatherAudio.addEventListener('change', () => { weather?.setSound(weatherAudio.checked); render(); });
+weatherEnabled.addEventListener('change', () => {
+  if (!weather) return;
+  weather.setEnabled(weatherEnabled.checked);
+  if (!weatherEnabled.checked) weatherAudio.checked = false;
+  weatherPreset.disabled = weatherPlay.disabled = weatherAudio.disabled = !weatherEnabled.checked;
+  updateWeatherClock();
+  render();
+});
+
+function clearEffects() {
+  particleScene = effectsLight = mapEffects = mapBurst = sceneLibrary = undefined;
+  byId('effects').hidden = true;
+  for (const handle of particleHandles.values()) renderer.deleteTexture(handle);
+  particleHandles.clear();
+  particleTextures.clear();
+}
+
+async function startEffects(game, library, entries, signal, {map = false} = {}) {
+  if (!entries.length || signal.aborted) return;
+  sceneLibrary = library;
+  const panel = byId('effects'), message = byId('effects-status');
+  panel.hidden = false;
+  message.textContent = 'Loading particle textures…';
+  effectLocation.hidden = !map;
+  effectLocation.replaceChildren(new Option('Focus an effect', ''));
+  byId('effect-trigger').hidden = true;
+  if (map) {
+    mapEffects = entries;
+    entries.forEach((entry, i) => effectLocation.add(new Option(entry.name, String(i))));
+  } else if (entries[0].light) {
+    effectsLight = {...entries[0].light, position: entries[0].position};
+  }
+  const names = new Set(entries.flatMap(entry => [entry.idle, entry.burst]).filter(Boolean));
+  const definitions = [...particleDefinitions(library, names)];
+  const paths = [...new Set(definitions.flatMap(def => def.textures).filter(Boolean))];
+  const ordered = source.orderTextures(game, paths, texturePath).values();
+  async function load() {
+    for (const texture of ordered) {
+      if (signal.aborted) return;
+      try {
+        const bytes = await source.asset(game, texturePath(texture), signal);
+        if (signal.aborted) return;
+        particleHandles.set(texture, renderer.mapTexture(bytes));
+      } catch (error) {
+        if (signal.aborted) return;
       }
     }
   }
   await Promise.all(Array.from({length: 4}, load));
   if (signal.aborted) return;
-  status(missing ? 'Static geometry · ' + number.format(missing) + ' textures unavailable' : 'Static geometry');
+  let missing = 0;
+  for (const def of definitions) {
+    const [first, second] = def.textures;
+    const distortionOnly = /\\xdistort$/.test(def.shader);
+    const base = !distortionOnly && particleHandles.get(first);
+    const distort = /\\x(?:distort|add)$/.test(def.shader) && particleHandles.get(distortionOnly ? first : second);
+    if (!base && !distort) missing++;
+    particleTextures.set(def, {base, distort});
+  }
+  particleScene = createParticleScene(library, entries, {map});
+  message.textContent = (map ? number.format(entries.length) + ' placed effects · Zoom in or choose a location' : [...names].join(', ')) +
+    (missing ? ' · ' + missing + ' emitters missing textures' : '');
   render();
+}
+
+effectToggle.addEventListener('change', () => {
+  particleScene?.restart();
+  render();
+});
+byId('effect-replay').addEventListener('click', () => {
+  particleScene?.restart();
+  mapBurst = undefined;
+  render();
+});
+effectLocation.addEventListener('change', () => {
+  const entry = effectLocation.value === '' ? undefined : mapEffects?.[Number(effectLocation.value)];
+  const trigger = byId('effect-trigger');
+  trigger.hidden = !entry?.burst;
+  trigger.textContent = entry?.name.includes('campfire') ? 'Play fire burst' : 'Trigger anomaly';
+  effectsLight = entry?.light && {...entry.light, position: entry.position};
+  if (entry) {
+    view.center = [...entry.position];
+    view.zoom = Math.max(1, Math.min(60, view.radius / 22));
+  }
+  render();
+});
+byId('effect-trigger').addEventListener('click', () => {
+  const entry = mapEffects?.[Number(effectLocation.value)];
+  if (entry?.burst && sceneLibrary) {
+    mapBurst = createParticleScene(sceneLibrary, [entry], {burst: true, loop: false});
+    render();
+  }
+});
+
+async function placeMapArtefacts(game, placements, signal) {
+  for (const {mesh, position} of placements) {
+    if (!mesh || signal.aborted) continue;
+    try {
+      const bytes = await source.asset(game, mesh, signal);
+      if (signal.aborted) return;
+      loadWasm(bytes, wasm._ogf_load);
+      meshes.push(...uploadWasmMeshes(true, position).next);
+    } catch (error) {
+      if (signal.aborted) return;
+      console.warn('Could not render placed artefact', mesh, error);
+    } finally {
+      wasm._ogf_release_level();
+    }
+  }
 }
 
 async function selectAsset(path) {
   modelRequest?.abort();
   if (playback.active) updateMeshVertices(false);
   resetPlayback();
+  clearEffects();
+  clearWeather();
   render();
   const {signal} = modelRequest = new AbortController();
-  const game = games.value, isMap = browsingMaps;
+  const game = games.value, isMap = catalogMode === 'maps';
   selectedPath = path;
   setUrl(path);
   for (const button of catalog.querySelectorAll('button')) {
@@ -660,10 +957,30 @@ async function selectAsset(path) {
   }
   status('Loading ' + displayName(path) + '…');
   try {
-    const bytes = await assetBytes(game, path, signal);
+    if (catalogMode === 'effects') {
+      const library = await particleLibrary(game, signal);
+      if (signal.aborted) return;
+      if (library.unsupported.has(path)) throw new Error('This effect has no supported sprite definition.');
+      view.isMap = false;
+      view.cutaway = '';
+      view.wireframe = false;
+      byId('model-name').textContent = displayName(path);
+      byId('front').textContent = 'Front';
+      byId('hint').textContent = 'Drag to orbit · Middle-drag to pan · Scroll to zoom';
+      byId('wireframe-tool').hidden = true;
+      byId('cutaway').hidden = true;
+      for (const id of ['view-tools', 'hint']) byId(id).hidden = false;
+      byId('empty').hidden = true;
+      canvas.classList.add('loaded');
+      resetView();
+      status('');
+      await startEffects(game, library, [{idle: path, position: [0, 0, 0]}], signal);
+      return;
+    }
+    const bytes = await source.asset(game, path, signal);
     if (signal.aborted) return;
     if (isMap) {
-      const geometry = await assetBytes(game, path + '.geom', signal);
+      const geometry = await source.asset(game, path + '.geom', signal);
       if (signal.aborted) return;
       loadWasm(bytes, wasm._ogf_load_level, geometry);
       try {
@@ -672,8 +989,16 @@ async function selectAsset(path) {
         wasm._ogf_release_level();
       }
       dropTextures();
+      const data = await effectPlacements(game, signal);
+      const entries = data.maps[mapId(path)] ?? [];
+      await placeMapArtefacts(game, entries, signal);
+      if (signal.aborted) return;
       status('Loading map textures…');
-      await loadMapTextures(game, signal);
+      await loadMapTextures(game, mapId(path), signal, data.terrain, data.levelTextures);
+      startWeather(game, mapId(path), data.environment, signal);
+      startGrass(game, mapId(path), data.grass, signal);
+      if (entries.length && !signal.aborted)
+        await startEffects(game, await particleLibrary(game, signal), entries, signal, {map: true});
       return;
     }
     if (!bytes.byteLength || bytes.byteLength > maxFileBytes) throw new Error('The model exceeds the viewer’s 64 MiB limit.');
@@ -687,9 +1012,7 @@ async function selectAsset(path) {
     const names = new Set(meshes.map(mesh => mesh.name).filter(Boolean));
     for (const name of names) {
       try {
-        const result = await fetch(assetUrl(game, texturePath(name)), {signal});
-        if (!result.ok) throw new Error('Texture not found');
-        const buffer = await result.arrayBuffer();
+        const buffer = await source.asset(game, texturePath(name), signal);
         if (signal.aborted) return;
         const image = decodeDds(buffer);
         textures.set(textureKey(name), {handle: renderer.texture(image), preview: thumbnail(image)});
@@ -701,6 +1024,9 @@ async function selectAsset(path) {
     refreshMaterials();
     if (missing.length) status('Missing or unsupported textures: ' + missing.join(', ') + '.', true);
     await animations;
+    const attached = (await effectPlacements(game, signal)).models[path];
+    if (attached && !signal.aborted)
+      await startEffects(game, await particleLibrary(game, signal), [{...attached, position: [0, 0, 0]}], signal);
   } catch (error) {
     if (!signal.aborted) status(error.message, true);
   }
@@ -710,6 +1036,8 @@ async function selectGame(initial = false) {
   catalogRequest?.abort();
   modelRequest?.abort();
   resetPlayback();
+  clearEffects();
+  clearWeather();
   const {signal} = catalogRequest = new AbortController();
   const game = games.value;
   paths = [];
@@ -726,15 +1054,16 @@ async function selectGame(initial = false) {
   catalogObserver.unobserve(catalogEnd);
   catalogEnd.hidden = true;
   byId('empty').hidden = false;
-  const kind = browsingMaps ? 'map' : 'mesh';
-  byId('asset-kind').textContent = browsingMaps ? 'Map' : 'Model';
-  byId('model-name').textContent = browsingMaps ? 'No map open' : 'No model open';
-  byId('empty').textContent = 'Select a ' + kind + ' from the catalog.';
-  byId('search-label').textContent = 'Find a ' + kind;
-  catalog.setAttribute('aria-label', browsingMaps ? 'Maps' : 'Meshes');
-  byId('mesh-views').hidden = browsingMaps;
-  byId('mesh-catalog').setAttribute('aria-pressed', String(!browsingMaps));
-  byId('map-catalog').setAttribute('aria-pressed', String(browsingMaps));
+  const kind = {maps: 'map', meshes: 'mesh', effects: 'effect'}[catalogMode];
+  byId('asset-kind').textContent = {maps: 'Map', meshes: 'Model', effects: 'Effect'}[catalogMode];
+  byId('model-name').textContent = 'No ' + (kind === 'mesh' ? 'model' : kind) + ' open';
+  const article = kind === 'effect' ? 'an ' : 'a ';
+  byId('empty').textContent = 'Select ' + article + kind + ' from the catalog.';
+  byId('search-label').textContent = 'Find ' + article + kind;
+  catalog.setAttribute('aria-label', catalogMode);
+  byId('mesh-views').hidden = catalogMode !== 'meshes';
+  for (const [id, mode] of [['mesh-catalog', 'meshes'], ['map-catalog', 'maps'], ['effect-catalog', 'effects']])
+    byId(id).setAttribute('aria-pressed', String(catalogMode === mode));
   canvas.classList.remove('loaded');
   for (const id of ['stats', 'materials', 'view-tools', 'hint']) byId(id).hidden = true;
   status('');
@@ -742,14 +1071,16 @@ async function selectGame(initial = false) {
   render();
   setUrl();
   try {
-    const endpoint = browsingMaps ? './api/maps?' : './api/catalog?';
-    const response = await fetch(endpoint + new URLSearchParams({game}), {signal});
-    if (!response.ok) throw new Error('The game catalog could not be loaded.');
-    const catalogPaths = await response.json();
+    const catalogPaths = await source.catalog(game, catalogMode === 'maps', signal);
     if (signal.aborted) return;
-    paths = catalogPaths;
-    const first = initial && browsingMaps ? paths.find(path => mapId(path) === startingUrl.searchParams.get('map')) :
-      initial ? startingUrl.searchParams.get('model') ?? (game === 'soc' ? sakharov : null) : null;
+    paths = catalogMode === 'effects' ? (await particleLibrary(game, signal)).names : catalogPaths;
+    if (signal.aborted) return;
+    let first;
+    if (initial) {
+      if (catalogMode === 'maps') first = paths.find(path => mapId(path) === startingUrl.searchParams.get('map'));
+      else if (catalogMode === 'effects') first = startingUrl.searchParams.get('effect');
+      else first = startingUrl.searchParams.get('model') ?? (game === 'soc' ? sakharov : null);
+    }
     if (first && paths.includes(first)) selectedPath = first;
     renderCatalog();
     if (selectedPath) await selectAsset(selectedPath);
@@ -765,19 +1096,17 @@ catalog.addEventListener('click', event => {
 search.addEventListener('input', renderCatalog);
 byId('list-view').addEventListener('click', () => setCatalogView('list'));
 byId('folder-view').addEventListener('click', () => setCatalogView('folders'));
-for (const [id, maps] of [['mesh-catalog', false], ['map-catalog', true]]) {
+for (const [id, mode] of [['mesh-catalog', 'meshes'], ['map-catalog', 'maps'], ['effect-catalog', 'effects']]) {
   byId(id).addEventListener('click', () => {
-    if (browsingMaps === maps) return;
-    browsingMaps = maps;
+    if (catalogMode === mode) return;
+    catalogMode = mode;
     void selectGame();
   });
 }
 games.addEventListener('change', () => { void selectGame(); });
 
 try {
-  const response = await fetch('./api/games');
-  if (!response.ok) throw new Error('Start the OGF viewer server to browse game archives.');
-  const installed = await response.json();
+  const installed = await source.games();
   for (const {id, name} of installed) games.add(new Option(name, id));
   const requested = startingUrl.searchParams.get('game');
   if (installed.some(game => game.id === requested)) games.value = requested;

@@ -10,6 +10,21 @@ export function readDds(buffer, maxSize = 4096) {
   if (!width || !height || width > maxSize || height > maxSize)
     throw new Error('DDS dimensions must be between 1 and ' + maxSize + ' pixels');
 
+  const flags = view.getUint32(80, true), bits = view.getUint32(88, true);
+  if ((flags & 0x40) && !(flags & 4) && (bits === 24 || bits === 32)) {
+    const bytesPerPixel = bits / 8;
+    const pitch = view.getUint32(8, true) & 8 ? view.getUint32(20, true) : width * bytesPerPixel;
+    if (pitch < width * bytesPerPixel || 128 + pitch * height > view.byteLength)
+      throw new Error('Truncated DDS image');
+    const shifts = [92, 96, 100, 104].map(offset => {
+      const mask = view.getUint32(offset, true);
+      if (!mask) return -1;
+      for (let shift = 0; shift < bits; shift += 8) if (mask === (255 << shift >>> 0)) return shift;
+      throw new Error('Unsupported DDS channel mask');
+    });
+    return {view, width, height, bytesPerPixel, pitch, shifts, format: 'RGB'};
+  }
+
   const format = String.fromCharCode(...new Uint8Array(buffer, 84, 4));
   if (!['DXT1', 'DXT3', 'DXT5'].includes(format))
     throw new Error('Use a DXT1, DXT3 or DXT5 DDS, or a PNG or JPEG texture');
@@ -24,8 +39,21 @@ export function readDds(buffer, maxSize = 4096) {
 }
 
 export function decodeDds(buffer, maxSize) {
-  const {view, height, width, format, blockSize, columns, rows} = readDds(buffer, maxSize);
+  const {view, height, width, format, blockSize, columns, rows, bytesPerPixel, pitch, shifts} = readDds(buffer, maxSize);
   const pixels = new Uint8Array(width * height * 4);
+  if (format === 'RGB') {
+    const source = new Uint8Array(buffer);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const offset = 128 + y * pitch + x * bytesPerPixel, target = (y * width + x) * 4;
+        for (let channel = 0; channel < 4; channel++) {
+          const shift = shifts[channel];
+          pixels[target + channel] = shift >= 0 ? source[offset + shift / 8] : channel === 3 ? 255 : 0;
+        }
+      }
+    }
+    return {width, height, pixels};
+  }
   const colors = new Uint8Array(16);
   const alphas = new Uint8Array(8);
   const rgb565 = (index, value) => {
@@ -85,4 +113,28 @@ export function decodeDds(buffer, maxSize) {
     }
   }
   return {width, height, pixels};
+}
+
+// DDS cubemap faces are stored in +X, -X, +Y, -Y, +Z, -Z order. Each
+// face includes its mip chain before the next face begins.
+export function decodeDdsCube(buffer) {
+  const info = readDds(buffer);
+  const {view, width, height, blockSize, bytesPerPixel, pitch} = info;
+  const faces = view.getUint32(112, true);
+  if ((faces & 0xfe00) !== 0xfe00 || width !== height) throw new Error('Expected a complete DDS cubemap');
+  const mips = Math.min(view.getUint32(28, true) || 1, 1 + Math.floor(Math.log2(width)));
+  const base = blockSize ? Math.ceil(width / 4) * Math.ceil(height / 4) * blockSize : pitch * height;
+  let stride = base;
+  for (let i = 1; i < mips; i++) {
+    const w = Math.max(1, width >> i);
+    stride += blockSize ? Math.ceil(w / 4) ** 2 * blockSize : w * w * bytesPerPixel;
+  }
+  if (128 + stride * 6 > view.byteLength) throw new Error('Truncated DDS cubemap');
+
+  const face = new Uint8Array(128 + base);
+  face.set(new Uint8Array(buffer, 0, 128));
+  return Array.from({length: 6}, (_, i) => {
+    face.set(new Uint8Array(buffer, 128 + i * stride, base), 128);
+    return decodeDds(face.buffer);
+  });
 }

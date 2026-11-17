@@ -18,6 +18,7 @@
     <div class="catalog-views catalog-types" aria-label="Asset type" role="group">
       <button id="mesh-catalog" type="button" aria-pressed="true">Meshes</button>
       <button id="map-catalog" type="button" aria-pressed="false">Maps</button>
+      <button id="effect-catalog" type="button" aria-pressed="false">Effects</button>
     </div>
     <label id="search-label" for="search">Find a mesh</label>
     <input type="search" id="search" placeholder="Name or archive path" autocomplete="off">
@@ -37,6 +38,11 @@
     <div class="view-tools" id="view-tools" hidden>
       <button id="front" type="button">Front</button>
       <button id="frame" type="button">Reset view</button>
+      <select id="cutaway" aria-label="Cutaway" hidden>
+        <option value="">Cutaway off</option>
+        <option value="back">Hide back faces</option>
+        <option value="front">Hide front faces</option>
+      </select>
       <label id="wireframe-tool"><input id="wireframe" type="checkbox"> Wireframe</label>
     </div>
     <p class="hint" id="hint" hidden>Drag to orbit · Scroll to zoom</p>
@@ -50,6 +56,33 @@
       <div><dt>Triangles</dt><dd id="triangles"></dd></div>
       <div id="bone-stat"><dt>Bones</dt><dd id="bones"></dd></div>
     </dl>
+    <section id="weather" aria-labelledby="weather-heading" hidden>
+      <h3 id="weather-heading">Environment</h3>
+      <label for="weather-preset">Weather</label>
+      <select id="weather-preset"></select>
+      <div class="weather-time">
+        <label for="weather-time">Time</label>
+        <output id="weather-clock" for="weather-time"></output>
+      </div>
+      <input id="weather-time" type="range" min="0" max="86399" step="60" value="46800">
+      <div class="weather-toggles">
+        <label><input id="weather-enabled" type="checkbox" checked> Preview</label>
+        <label><input id="weather-play" type="checkbox"> Advance time</label>
+        <label><input id="weather-audio" type="checkbox"> Ambient sound</label>
+        <label id="grass-option" hidden><input id="grass-enabled" type="checkbox" checked> Ground cover</label>
+      </div>
+      <p id="grass-status" class="catalog-status" role="status" hidden></p>
+    </section>
+    <section id="effects" aria-labelledby="effects-heading" hidden>
+      <h3 id="effects-heading">Effects</h3>
+      <p id="effects-status" class="catalog-status" role="status"></p>
+      <div class="playback-actions">
+        <button id="effect-replay" type="button">Replay</button>
+        <label><input id="effects-enabled" type="checkbox" checked> Show effects</label>
+      </div>
+      <select id="effect-location" aria-label="Focus a map effect" hidden></select>
+      <button id="effect-trigger" type="button" hidden>Trigger anomaly</button>
+    </section>
     <section id="animations" aria-labelledby="animation-heading" hidden>
       <h3 id="animation-heading">Animations</h3>
       <p id="animation-status" class="catalog-status" role="status"></p>

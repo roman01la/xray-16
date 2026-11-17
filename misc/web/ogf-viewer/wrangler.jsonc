@@ -1,0 +1,18 @@
+{
+  "name": "stalker-online-viewer",
+  "account_id": "b49f562ad79d2cfcb9148a2427ee2454",
+  "compatibility_date": "2026-11-11",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "../../../build/hosted-viewer",
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "routes": [
+    {
+      "pattern": "stalker-online.xyz/viewer*",
+      "zone_id": "8b5aa91ab220d839bee1091cf3342885"
+    }
+  ]
+}

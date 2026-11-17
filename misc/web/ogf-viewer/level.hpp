@@ -155,7 +155,7 @@ std::vector<Mesh> readLevel(Bytes level, Bytes geometry) {
     }
 
     std::vector<Mesh> meshes;
-    std::vector<size_t> batches(materials.size(), SIZE_MAX);
+    std::vector<std::array<size_t, 2>> batches(materials.size(), {SIZE_MAX, SIZE_MAX});
     Reader visuals(levelChunk(level, 3));
     while (visuals.remaining()) {
         const auto visual = nextChunk(visuals).reader().bytes();
@@ -167,7 +167,7 @@ std::vector<Mesh> readLevel(Bytes level, Bytes geometry) {
         if (type != 0 && type != 2 && !tree) continue; // Hierarchies and alternate LOD billboards.
         if (material >= materials.size()) throw std::runtime_error("Invalid level visual material");
         const auto& [shader, texture] = materials[material];
-        if (shader.starts_with("effects\\") || shader.starts_with("water")) continue;
+        if (shader.starts_with("effects\\") && !shader.starts_with("effects\\water")) continue;
 
         Reader container(levelChunk(visual, 21));
         const auto vb = container.u32(), vertexBase = container.u32();
@@ -204,7 +204,7 @@ std::vector<Mesh> readLevel(Bytes level, Bytes geometry) {
             Reader placement(levelChunk(visual, 12));
             for (auto& value : matrix) value = placement.f32();
         }
-        auto& batch = batches[material];
+        auto& batch = batches[material][tree ? 1 : 0];
         if (batch == SIZE_MAX || meshes[batch].vertices.size() + vertexCount > maxBatchVertices) {
             batch = meshes.size();
             meshes.emplace_back();
@@ -213,8 +213,20 @@ std::vector<Mesh> readLevel(Bytes level, Bytes geometry) {
         }
         auto& mesh = meshes[batch];
         const auto base = mesh.vertices.size();
-        for (size_t i = 0; i < vertexCount; ++i)
-            mesh.vertices.push_back(decodeLevelVertex(vertices[vb], vertexBase + i, tree ? &matrix : nullptr));
+        const auto& buffer = vertices[vb];
+        for (size_t i = 0; i < vertexCount; ++i) {
+            const auto index = vertexBase + i;
+            const auto vertex = decodeLevelVertex(buffer, index, tree ? &matrix : nullptr);
+            mesh.vertices.push_back(vertex);
+            if (tree) {
+                float rigidity = 0.65f;
+                if (buffer.uv.type == 7) { // SHORT4. The third component controls tree sway.
+                    Reader tc(buffer.data.subspan(index * buffer.stride + buffer.uv.offset + 4, 2));
+                    rigidity = std::clamp(std::bit_cast<int16_t>(tc.u16()) / 2048.f, 0.f, 2.f);
+                }
+                mesh.windWeights.push_back(std::max(0.f, vertex.position[1] - matrix[13]) * rigidity);
+            }
+        }
         Reader elements(indices[ib].subspan(indexBase * 2, indexCount * 2));
         for (size_t i = 0; i < indexCount; ++i) {
             const auto index = elements.u16();
