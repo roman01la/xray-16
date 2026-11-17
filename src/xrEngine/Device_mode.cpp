@@ -28,8 +28,8 @@ SDL_Point BrowserRenderSize(u64 viewport)
     if (!viewportWidth || !viewportHeight)
         return {width, height};
 
-    // SoC's original HUD and menus are laid out for 4:3 and wider.
-    if (ShadowOfChernobylMode)
+    // The original SoC and Clear Sky layouts support 4:3 and wider.
+    if (ShadowOfChernobylMode || ClearSkyMode)
         viewportHeight = std::min(viewportHeight, viewportWidth * 0.75);
 
     const double scale = std::min(double(width) / viewportWidth, double(height) / viewportHeight);

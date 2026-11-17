@@ -519,21 +519,17 @@ void CUIHudStatesWnd::SetAmmoIcon(const shared_str& sect_name)
     {
         h = texture_rect.height() * 0.65f;
         w = texture_rect.width() * 0.65f;
-        float posx_16 = 8.33f;
-        float posx = 10.0f;
+#ifdef XR_PLATFORM_WEB
+        const float aspectFactor = UI().get_current_kx();
+#else
+        const float aspectFactor = UI().is_widescreen() ? 0.833f : 1.f;
+#endif
         if (texture_rect.width() > 2.01f * INV_GRID_WIDTH)
-        {
             w = INV_GRID_WIDTH * 1.5f;
-        }
-        if (texture_rect.width() < 1.01f * INV_GRID_WIDTH)
-        {
-            m_ui_weapon_icon->SetTextureOffset(UI().is_widescreen() ? posx_16 : posx, 0.0f);
-        }
-        else
-        {
-            m_ui_weapon_icon->SetTextureOffset(0.0f, 0.0f);
-        }
-        m_ui_weapon_icon->SetWidth(UI().is_widescreen() ? w * 0.833f : w);
+
+        const float offset = texture_rect.width() < 1.01f * INV_GRID_WIDTH ? 10.f * aspectFactor : 0.f;
+        m_ui_weapon_icon->SetTextureOffset(offset, 0.f);
+        m_ui_weapon_icon->SetWidth(w * aspectFactor);
     }
     else
     {

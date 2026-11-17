@@ -269,21 +269,21 @@ void CUIMainIngameWnd::Init()
     }
 
     HUD_SOUND_ITEM::LoadSound("maingame_ui", "snd_new_contact", m_contactSnd, SOUND_TYPE_IDLE);
-    m_hudAspect = UI().is_widescreen() ? 16.f / 9.f : 4.f / 3.f;
+    const float wideLayoutAspect = ClearSkyMode ? 16.f / 10.f : 16.f / 9.f;
+    m_hudAspect = UI().is_widescreen() ? wideLayoutAspect : 4.f / 3.f;
     UpdateHudAspect();
 }
 
 void CUIMainIngameWnd::UpdateHudAspect()
 {
 #ifdef XR_PLATFORM_WEB
-    if (!ShadowOfChernobylMode)
+    if (!ShadowOfChernobylMode && !ClearSkyMode)
         return;
     const float aspect = float(Device.dwWidth) / Device.dwHeight;
     if (fsimilar(aspect, m_hudAspect))
         return;
     const float factor = m_hudAspect / aspect;
-    // SoC's XML layouts target either 4:3 or 16:9. Preserve the shape of
-    // each HUD group while its edge or centre remains anchored on resize.
+    // Preserve the shape of each HUD group around its edge or centre anchor.
     const auto resize = [factor](CUIWindow* window)
     {
         const float centre = window->GetWndCenterPos().x;
@@ -293,13 +293,20 @@ void CUIMainIngameWnd::UpdateHudAspect()
     };
     for (auto* child : GetChildWndList())
     {
-        if (child == m_ui_hud_states)
+        if (ShadowOfChernobylMode && child == m_ui_hud_states)
         {
             for (auto* indicator : child->GetChildWndList())
                 resize(indicator);
         }
         else
             resize(child);
+    }
+    if (ClearSkyMode)
+    {
+        // UpdatePickUpItem uses these cached dimensions to centre its icon.
+        const float center = UI_BASE_WIDTH / 2.f;
+        m_iPickUpItemIconX = center + (m_iPickUpItemIconX - center) * factor;
+        m_iPickUpItemIconWidth *= factor;
     }
     UIZoneMap->RescaleHorizontal(factor);
     m_hudAspect = aspect;
@@ -366,6 +373,10 @@ void CUIMainIngameWnd::SetMPChatLog(CUIWindow* pChat, CUIWindow* pLog)
 void CUIMainIngameWnd::Update()
 {
     ZoneScoped;
+#ifdef XR_PLATFORM_WEB
+    if (ClearSkyMode)
+        UpdateHudAspect();
+#endif
 
     CUIWindow::Update();
     CActor* pActor = smart_cast<CActor*>(Level().CurrentViewEntity());
